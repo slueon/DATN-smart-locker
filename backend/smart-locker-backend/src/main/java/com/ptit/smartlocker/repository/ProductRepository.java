@@ -1,0 +1,12 @@
+package com.ptit.smartlocker.repository;
+
+import com.ptit.smartlocker.entity.Product;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface ProductRepository extends JpaRepository<Product, Long> {
+    List<Product> findByRequiredSize(String requiredSize);
+}

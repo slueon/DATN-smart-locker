@@ -1,0 +1,30 @@
+# Dependency directories
+node_modules/
+frontend/node_modules/
+target/
+backend/smart-locker-backend/target/
+
+# Build outputs
+dist/
+frontend/dist/
+build/
+*.class
+
+# IDE and Editor files
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# Temporary and log files
+*.log
+~$*
+*.tmp
+
+# Operating System files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,34 @@
+package com.ptit.smartlocker.repository;
+
+import com.ptit.smartlocker.entity.LockerSlotSchedule;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface LockerSlotScheduleRepository extends JpaRepository<LockerSlotSchedule, Long> {
+
+    Optional<LockerSlotSchedule> findByLocker_LockerIdAndScheduleDate(String lockerId, LocalDate scheduleDate);
+
+    /**
+     * Khóa dòng (Pessimistic Write Lock - SELECT ... FOR UPDATE)
+     * Ngăn chặn hoàn toàn tranh chấp đặt chỗ đồng thời (Race Condition/Double-Booking)
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM LockerSlotSchedule s WHERE s.locker.lockerId = :lockerId AND s.scheduleDate = :scheduleDate")
+    Optional<LockerSlotSchedule> findWithLockByLockerIdAndDate(
+            @Param("lockerId") String lockerId,
+            @Param("scheduleDate") LocalDate scheduleDate
+    );
+
+    List<LockerSlotSchedule> findByLocker_LockerIdAndScheduleDateGreaterThanEqualOrderByScheduleDateAsc(
+            String lockerId, LocalDate fromDate
+    );
+}
