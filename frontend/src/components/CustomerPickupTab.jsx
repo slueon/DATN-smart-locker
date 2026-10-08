@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import LockerMap from './LockerMap';
 import { store } from '../services/store';
+import { pickupApi } from '../services/api';
 import {
   Package, Clock, CheckCircle2, AlertTriangle, QrCode,
   Search, MapPin, X, AlertCircle, Timer,
   RefreshCw, ShieldCheck, Key, ChevronRight, Check,
-  Calendar, Layers, ArrowUpRight
+  Calendar, Layers, ArrowUpRight, Copy, Sparkles
 } from 'lucide-react';
 
 export default function CustomerPickupTab({ currentUser }) {
@@ -19,6 +20,32 @@ export default function CustomerPickupTab({ currentUser }) {
   const [qrModalOrder, setQrModalOrder] = useState(null);
   const [qrToken, setQrToken] = useState('');
   const [qrTimeLeft, setQrTimeLeft] = useState(60);
+
+  // State OTP 5 phút
+  const [otpModalOrder, setOtpModalOrder] = useState(null);
+  const [generatingOtpId, setGeneratingOtpId] = useState(null);
+  const [copiedOtp, setCopiedOtp] = useState(false);
+  const [otpToast, setOtpToast] = useState(null);
+  const [nowTime, setNowTime] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTime(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Đồng bộ order trong modal khi store thay đổi
+  useEffect(() => {
+    if (otpModalOrder) {
+      const fresh = orders.find((o) => o.orderId === otpModalOrder.orderId);
+      if (fresh) setOtpModalOrder(fresh);
+    }
+    if (qrModalOrder) {
+      const fresh = orders.find((o) => o.orderId === qrModalOrder.orderId);
+      if (fresh) setQrModalOrder(fresh);
+    }
+  }, [orders]);
 
   useEffect(() => {
     loadOrders();
@@ -96,11 +123,57 @@ export default function CustomerPickupTab({ currentUser }) {
     };
   };
 
-  const handleRequestOtp = (order) => {
-    const newOtp = store.requestOtpForOrder(order.orderId);
-    if (newOtp) {
-      alert(`Đã gửi mã OTP (${newOtp}) về Hộp Thư Thông Báo trên thanh menu của bạn!`);
+  const getOtpStatus = (order) => {
+    if (!order || !order.otpCode || !order.otpExpiresAt) {
+      return { isGenerated: false, isExpired: false, remainingSeconds: 0 };
     }
+    const expiryMs = new Date(order.otpExpiresAt).getTime();
+    const diff = Math.floor((expiryMs - nowTime) / 1000);
+    if (diff <= 0) {
+      return { isGenerated: true, isExpired: true, remainingSeconds: 0 };
+    }
+    return { isGenerated: true, isExpired: false, remainingSeconds: diff };
+  };
+
+  const formatSeconds = (totalSeconds) => {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  const handleGenerateOtp = async (order) => {
+    if (!order) return;
+    setGeneratingOtpId(order.orderId);
+    try {
+      let apiOtp = null;
+      try {
+        const res = await pickupApi.requestOtp(order.orderId);
+        if (res.data && res.data.data) {
+          apiOtp = res.data.data;
+        }
+      } catch (e) {
+        // Fallback to local store
+      }
+
+      const result = store.requestOtpForOrder(order.orderId, apiOtp);
+      loadOrders();
+      setCopiedOtp(false);
+      setOtpToast(`Đã tạo mã OTP nhận hàng mới (Hiệu lực 5 phút: ${result?.otpCode || ''})!`);
+      setTimeout(() => setOtpToast(null), 4000);
+    } catch (err) {
+      console.error('Lỗi tạo OTP:', err);
+    } finally {
+      setGeneratingOtpId(null);
+    }
+  };
+
+  const handleCopyOtp = (code) => {
+    if (!code) return;
+    try {
+      navigator.clipboard?.writeText(code);
+      setCopiedOtp(true);
+      setTimeout(() => setCopiedOtp(false), 2000);
+    } catch (e) {}
   };
 
   const filteredOrders = orders.filter((o) => {
@@ -376,20 +449,130 @@ export default function CustomerPickupTab({ currentUser }) {
                       </p>
                     </button>
 
-                    {/* Method 2: PIN 6 Digits */}
-                    <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
-                      <div className="flex items-center justify-between text-xs font-semibold text-slate-800 mb-1">
-                        <span className="flex items-center gap-1.5">
-                          <Key className="w-3.5 h-3.5 text-amber-600" /> Mã PIN 6 Số:
-                        </span>
-                        <span className="font-mono text-sm font-bold text-blue-700 bg-slate-100 px-2 py-0.5 rounded">
-                          {selectedOrder.otpCode || '123456'}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500">
-                        Nhập trực tiếp mã PIN trên màn hình cảm ứng Kiosk nếu không quét mã.
-                      </p>
-                    </div>
+                    {/* Method 2: OTP 5 Phút (Thay thế Mã PIN 6 số) */}
+                    {(() => {
+                      const otpStatus = getOtpStatus(selectedOrder);
+                      return (
+                        <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col justify-between">
+                          {/* Trường hợp 1: Đã tạo OTP và còn trong thời hạn 5 phút */}
+                          {otpStatus.isGenerated && !otpStatus.isExpired && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                                <span className="flex items-center gap-1.5 text-slate-800">
+                                  <ShieldCheck className="w-4 h-4 text-emerald-600" /> Mã OTP Mở Tủ:
+                                </span>
+                                <span className={`font-mono text-xs px-2 py-0.5 rounded-md font-bold flex items-center gap-1 ${
+                                  otpStatus.remainingSeconds <= 60 
+                                    ? 'bg-rose-50 text-rose-700 border border-rose-200 animate-pulse' 
+                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                }`}>
+                                  <Timer className="w-3 h-3" />
+                                  {formatSeconds(otpStatus.remainingSeconds)}
+                                </span>
+                              </div>
+
+                              {/* Dãy số OTP nổi bật */}
+                              <div className="flex items-center justify-between bg-slate-50 border border-slate-200/90 rounded-lg p-2 px-3">
+                                <div className="font-mono text-base font-extrabold text-blue-700 tracking-widest">
+                                  {selectedOrder.otpCode}
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleCopyOtp(selectedOrder.otpCode)}
+                                    title="Sao chép OTP"
+                                    className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200/70 rounded transition cursor-pointer"
+                                  >
+                                    {copiedOtp ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                                  </button>
+                                  <button
+                                    onClick={() => handleGenerateOtp(selectedOrder)}
+                                    disabled={generatingOtpId === selectedOrder.orderId}
+                                    title="Đổi mã mới (5 phút)"
+                                    className="p-1 text-slate-500 hover:text-blue-600 hover:bg-slate-200/70 rounded transition cursor-pointer"
+                                  >
+                                    <RefreshCw className={`w-3.5 h-3.5 ${generatingOtpId === selectedOrder.orderId ? 'animate-spin text-blue-600' : ''}`} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Thanh tiến trình thời gian 5 phút */}
+                              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full transition-all duration-1000 ${
+                                    otpStatus.remainingSeconds <= 60 ? 'bg-rose-500' : 'bg-emerald-500'
+                                  }`}
+                                  style={{ width: `${(otpStatus.remainingSeconds / 300) * 100}%` }}
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                <span>Nhập 6 số trên màn hình Kiosk để mở tủ</span>
+                                <button
+                                  onClick={() => setOtpModalOrder(selectedOrder)}
+                                  className="text-blue-600 hover:underline font-semibold cursor-pointer"
+                                >
+                                  Phóng to
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Trường hợp 2: OTP đã hết hạn sau 5 phút */}
+                          {otpStatus.isGenerated && otpStatus.isExpired && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between text-xs font-semibold">
+                                <span className="flex items-center gap-1.5 text-slate-700">
+                                  <AlertCircle className="w-4 h-4 text-rose-500" /> Mã OTP Mở Tủ:
+                                </span>
+                                <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                                  Hết hiệu lực (quá 5p)
+                                </span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-500">
+                                Mã OTP trước đó đã hết hiệu lực. Nhấn nút bên dưới để tạo mã OTP mới.
+                              </p>
+
+                              <button
+                                onClick={() => handleGenerateOtp(selectedOrder)}
+                                disabled={generatingOtpId === selectedOrder.orderId}
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${generatingOtpId === selectedOrder.orderId ? 'animate-spin' : ''}`} />
+                                <span>Tạo Mã OTP Mới (5 phút)</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Trường hợp 3: Chưa tạo OTP */}
+                          {!otpStatus.isGenerated && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                                <span className="flex items-center gap-1.5">
+                                  <Key className="w-3.5 h-3.5 text-blue-600" /> Mã OTP Mở Tủ:
+                                </span>
+                                <span className="text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded font-medium">
+                                  Hiệu lực 5 phút
+                                </span>
+                              </div>
+
+                              <p className="text-[11px] text-slate-500">
+                                Nhấn vào mã OTP để hệ thống tạo mã 6 số nhập tại Kiosk. Mã có hiệu lực trong 5 phút.
+                              </p>
+
+                              <button
+                                onClick={() => handleGenerateOtp(selectedOrder)}
+                                disabled={generatingOtpId === selectedOrder.orderId}
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                              >
+                                <ShieldCheck className={`w-4 h-4 ${generatingOtpId === selectedOrder.orderId ? 'animate-spin' : ''}`} />
+                                <span>{generatingOtpId === selectedOrder.orderId ? 'Đang tạo OTP...' : 'Tạo Mã OTP (Hiệu lực 5 phút)'}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               )}
@@ -513,12 +696,29 @@ export default function CustomerPickupTab({ currentUser }) {
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 text-left space-y-1 mb-4">
               <p><strong>Trạm tủ:</strong> {qrModalOrder.lockerName}</p>
               <p><strong>Ngăn:</strong> Ngăn #{qrModalOrder.compartmentIndex}</p>
-              {qrModalOrder.otpCode && (
-                <p className="pt-1 border-t border-slate-200 flex items-center justify-between">
-                  <span className="text-slate-500">Hoặc nhập PIN:</span>
-                  <span className="font-mono font-bold text-blue-700 tracking-wider text-sm">{qrModalOrder.otpCode}</span>
-                </p>
-              )}
+              {(() => {
+                const modalOtpStatus = getOtpStatus(qrModalOrder);
+                if (modalOtpStatus.isGenerated && !modalOtpStatus.isExpired) {
+                  return (
+                    <div className="pt-1 border-t border-slate-200 flex items-center justify-between">
+                      <span className="text-slate-500">Hoặc nhập OTP (còn {formatSeconds(modalOtpStatus.remainingSeconds)}):</span>
+                      <span className="font-mono font-bold text-blue-700 tracking-wider text-sm">{qrModalOrder.otpCode}</span>
+                    </div>
+                  );
+                } else {
+                  return (
+                    <div className="pt-1 border-t border-slate-200 flex items-center justify-between">
+                      <span className="text-slate-500">Mã OTP (5 phút):</span>
+                      <button
+                        onClick={() => handleGenerateOtp(qrModalOrder)}
+                        className="text-blue-600 hover:underline font-bold text-xs cursor-pointer"
+                      >
+                        Tạo mã OTP
+                      </button>
+                    </div>
+                  );
+                }
+              })()}
             </div>
 
             <div className="flex gap-2">
@@ -537,6 +737,113 @@ export default function CustomerPickupTab({ currentUser }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {/* OTP Modal (Hiệu lực 5 phút) */}
+      {otpModalOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 text-center shadow-xl relative border border-slate-200">
+            <button
+              onClick={() => setOtpModalOrder(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mx-auto mb-2 border border-emerald-200">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+
+            <h3 className="text-base font-bold text-slate-900">Mã OTP Mở Khóa Tủ</h3>
+            <p className="text-xs text-slate-500 font-mono mt-0.5">
+              Đơn: <strong className="text-slate-900">{otpModalOrder.orderId}</strong>
+            </p>
+
+            {/* Khối hiển thị OTP */}
+            {(() => {
+              const modalStatus = getOtpStatus(otpModalOrder);
+              return (
+                <div className="my-4 space-y-3">
+                  {modalStatus.isGenerated && !modalStatus.isExpired ? (
+                    <>
+                      <div className="bg-slate-50 border-2 border-dashed border-blue-300 rounded-2xl p-4 shadow-inner">
+                        <div className="font-mono text-3xl font-black text-blue-700 tracking-[0.25em] pl-2">
+                          {otpModalOrder.otpCode}
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-1">Nhập 6 số này vào bàn phím Kiosk</p>
+                      </div>
+
+                      {/* Đếm ngược thời gian */}
+                      <div>
+                        <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                          <span className="flex items-center gap-1 text-slate-600">
+                            <Timer className={`w-3.5 h-3.5 ${modalStatus.remainingSeconds <= 60 ? 'text-rose-600' : 'text-emerald-600'}`} />
+                            Thời hạn hiệu lực:
+                          </span>
+                          <span className={`font-mono text-xs px-2 py-0.5 rounded font-bold ${
+                            modalStatus.remainingSeconds <= 60 ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'
+                          }`}>
+                            {formatSeconds(modalStatus.remainingSeconds)} / 05:00
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-1000 ${
+                              modalStatus.remainingSeconds <= 60 ? 'bg-rose-500' : 'bg-emerald-500'
+                            }`}
+                            style={{ width: `${(modalStatus.remainingSeconds / 300) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700">
+                      Mã OTP đã hết hiệu lực sau 5 phút. Vui lòng bấm &quot;Đổi mã ngay&quot; để sinh mã mới!
+                    </div>
+                  )}
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 text-left space-y-1">
+                    <p><strong>Trạm tủ:</strong> {otpModalOrder.lockerName}</p>
+                    <p><strong>Vị trí:</strong> Ngăn #{otpModalOrder.compartmentIndex} ({otpModalOrder.compartmentSize})</p>
+                    <p className="text-[11px] text-slate-500">Mã có hiệu lực 5 phút và chỉ dùng được 01 lần tại tủ.</p>
+                  </div>
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => handleGenerateOtp(otpModalOrder)}
+                      disabled={generatingOtpId === otpModalOrder.orderId}
+                      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 rounded-lg text-xs transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${generatingOtpId === otpModalOrder.orderId ? 'animate-spin text-blue-600' : ''}`} />
+                      <span>Đổi mã mới</span>
+                    </button>
+                    <button
+                      onClick={() => handleCopyOtp(otpModalOrder.otpCode)}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg text-xs transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      {copiedOtp ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedOtp ? 'Đã sao chép' : 'Sao chép'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <button
+              onClick={() => setOtpModalOrder(null)}
+              className="w-full mt-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg text-xs transition cursor-pointer"
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Toast Notification */}
+      {otpToast && (
+        <div className="fixed bottom-5 right-5 z-50 bg-slate-900/95 text-white text-xs px-4 py-3 rounded-xl shadow-xl border border-slate-700 flex items-center gap-2.5 backdrop-blur-xs animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{otpToast}</span>
         </div>
       )}
     </div>

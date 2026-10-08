@@ -41,6 +41,7 @@ export const shipperApi = {
 
 export const pickupApi = {
   verifyPickup: (data) => api.post('/pickup/verify', data),
+  requestOtp: (orderId) => api.post(`/pickup/request-otp?orderId=${orderId}`),
 };
 
 export default api;

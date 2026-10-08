@@ -45,6 +45,23 @@ export default function App() {
     return () => window.removeEventListener('smart_locker_cart_updated', handleCartUpdate);
   }, []);
 
+  // Đảm bảo mỗi vai trò chỉ được truy cập các tab thuộc thẩm quyền của mình
+  useEffect(() => {
+    if (currentUser?.role === 'ADMIN') {
+      if (activeTab !== 'admin') {
+        setActiveTab('admin');
+      }
+    } else if (currentUser?.role === 'SHIPPER') {
+      if (activeTab !== 'shipper') {
+        setActiveTab('shipper');
+      }
+    } else if (currentUser?.role === 'CUSTOMER') {
+      if (!['ecommerce', 'cart', 'customer'].includes(activeTab)) {
+        setActiveTab('ecommerce');
+      }
+    }
+  }, [currentUser, activeTab]);
+
   const handleLoginSuccess = (user) => {
     setCurrentUser(user);
     localStorage.setItem('smart_locker_user', JSON.stringify(user));
@@ -120,16 +137,18 @@ export default function App() {
         </main>
       </div>
 
-      {/* Slide-over Cart Drawer */}
-      <CartDrawer
-        isOpen={isCartDrawerOpen}
-        onClose={() => setIsCartDrawerOpen(false)}
-        cart={cart}
-        onNavigateToCheckout={() => {
-          setIsCartDrawerOpen(false);
-          setActiveTab('cart');
-        }}
-      />
+      {/* Slide-over Cart Drawer (Chỉ dành cho Khách hàng) */}
+      {currentUser?.role === 'CUSTOMER' && (
+        <CartDrawer
+          isOpen={isCartDrawerOpen}
+          onClose={() => setIsCartDrawerOpen(false)}
+          cart={cart}
+          onNavigateToCheckout={() => {
+            setIsCartDrawerOpen(false);
+            setActiveTab('cart');
+          }}
+        />
+      )}
     </div>
   );
 }

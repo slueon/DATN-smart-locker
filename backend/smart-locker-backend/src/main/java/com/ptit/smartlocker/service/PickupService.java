@@ -37,9 +37,9 @@ public class PickupService {
                     .orElseThrow(() -> new RuntimeException("Mã QR không hợp lệ hoặc đã được sử dụng!"));
         }
 
-        // Kiểm tra thời hạn hiệu lực (24h00 của ngày N+1)
+        // Kiểm tra thời hạn hiệu lực (5 phút đối với OTP hoặc thời hạn bảo quản đối với QR)
         if (LocalDateTime.now().isAfter(credential.getExpiredAt())) {
-            throw new RuntimeException("Mã nhận hàng đã quá hạn lưu trữ (Sau 24h00 ngày hôm sau). Vui lòng liên hệ quản trị viên!");
+            throw new RuntimeException("Mã OTP/QR nhận hàng đã hết hiệu lực (sau 5 phút). Vui lòng tạo mã OTP mới trên ứng dụng!");
         }
 
         Order order = credential.getOrder();
@@ -81,5 +81,20 @@ public class PickupService {
                 .relayPin(compartment != null ? compartment.getRelayPin() : null)
                 .customerName(order.getCustomerName())
                 .build();
+    }
+
+    /**
+     * Khách hàng ấn "Mã OTP" trên app: Sinh mã OTP mới (Hiệu lực 5 phút = 300 giây)
+     */
+    @Transactional
+    public String generateNewOtp(String orderId) {
+        PickupCredential credential = credentialRepository.findByOrder_OrderId(orderId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy thông tin nhận hàng của đơn: " + orderId));
+
+        String newOtp = String.format("%06d", (int) (Math.random() * 900_000) + 100_000);
+        credential.setOtpCode(newOtp);
+        credential.setExpiredAt(LocalDateTime.now().plusMinutes(5)); // Hết hạn sau đúng 5 phút
+        credentialRepository.save(credential);
+        return newOtp;
     }
 }

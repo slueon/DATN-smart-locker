@@ -27,4 +27,17 @@ public class PickupController {
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
     }
+
+    /**
+     * Khách hàng yêu cầu tạo mã OTP mới (Hiệu lực 5 phút)
+     */
+    @PostMapping("/request-otp")
+    public ResponseEntity<ApiResponse<String>> requestOtp(@RequestParam String orderId) {
+        try {
+            String otp = pickupService.generateNewOtp(orderId);
+            return ResponseEntity.ok(ApiResponse.ok("Tạo mã OTP thành công (hiệu lực 5 phút)!", otp));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
 }

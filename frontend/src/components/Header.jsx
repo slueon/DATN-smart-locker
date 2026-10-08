@@ -66,19 +66,21 @@ export default function Header({
 
       {/* Right Command Actions */}
       <div className="flex items-center gap-2.5 shrink-0">
-        {/* Slide-over Cart Button */}
-        <button
-          onClick={onToggleCartDrawer}
-          className="relative p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition border border-slate-200/80 cursor-pointer flex items-center gap-1.5"
-          title="Xem giỏ hàng"
-        >
-          <ShoppingCart className="w-4 h-4" />
-          {cartCount > 0 && (
-            <span className="bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
-              {cartCount}
-            </span>
-          )}
-        </button>
+        {/* Slide-over Cart Button (Chỉ dành cho khách hàng) */}
+        {currentUser?.role === 'CUSTOMER' && (
+          <button
+            onClick={onToggleCartDrawer}
+            className="relative p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition border border-slate-200/80 cursor-pointer flex items-center gap-1.5"
+            title="Xem giỏ hàng"
+          >
+            <ShoppingCart className="w-4 h-4" />
+            {cartCount > 0 && (
+              <span className="bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                {cartCount}
+              </span>
+            )}
+          </button>
+        )}
 
         {/* Notifications Bell */}
         {currentUser && (

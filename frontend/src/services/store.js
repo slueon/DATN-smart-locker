@@ -43,7 +43,8 @@ const DEFAULT_ORDERS = [
     paymentMethod: 'ONLINE_VIETQR',
     paymentStatus: 'PAID',
     qrToken: 'PKUP-789210-A1B2',
-    otpCode: '852963',
+    otpCode: null,
+    otpExpiresAt: null,
   },
   {
     orderId: 'ORD-654123',
@@ -64,7 +65,8 @@ const DEFAULT_ORDERS = [
     paymentMethod: 'ONLINE_VIETQR',
     paymentStatus: 'PAID',
     qrToken: 'PKUP-654123-C3D4',
-    otpCode: '147258',
+    otpCode: null,
+    otpExpiresAt: null,
   },
   {
     orderId: 'ORD-543219',
@@ -86,7 +88,8 @@ const DEFAULT_ORDERS = [
     paymentMethod: 'ONLINE_VIETQR',
     paymentStatus: 'PAID',
     qrToken: 'PKUP-543219-E5F6',
-    otpCode: '369852',
+    otpCode: null,
+    otpExpiresAt: null,
   },
   {
     orderId: 'ORD-432108',
@@ -107,7 +110,8 @@ const DEFAULT_ORDERS = [
     status: 'OVERDUE', // QUÁ HẠN LƯU KHO
     totalAmount: 150000,
     qrToken: 'PKUP-432108-G7H8',
-    otpCode: '951753',
+    otpCode: null,
+    otpExpiresAt: null,
   }
 ];
 
@@ -156,11 +160,21 @@ const DEFAULT_LOCKERS = [
 ];
 
 export const store = {
-  // Lấy toàn bộ đơn hàng
+  // Lấy toàn bộ đơn hàng (tự động làm sạch các mã PIN tĩnh cũ nếu chưa có hạn 5 phút)
   getOrders: () => {
     try {
       const data = localStorage.getItem(ORDERS_KEY);
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        const cleaned = parsed.map((o) => {
+          // Nếu đơn hàng có mã cũ mà chưa có trường otpExpiresAt, xóa mã tĩnh để khách ấn tạo OTP mới
+          if (o.otpCode && !o.otpExpiresAt) {
+            return { ...o, otpCode: null, otpExpiresAt: null };
+          }
+          return o;
+        });
+        return cleaned;
+      }
     } catch (e) {}
     localStorage.setItem(ORDERS_KEY, JSON.stringify(DEFAULT_ORDERS));
     return DEFAULT_ORDERS;
@@ -252,28 +266,34 @@ export const store = {
     } catch (e) {}
   },
 
-  // Sinh mã OTP ngẫu nhiên 6 số và gửi về mục thông báo của khách
-  requestOtpForOrder: (orderId) => {
+  // Sinh mã OTP ngẫu nhiên 6 số và chỉ có hiệu lực trong 5 phút
+  requestOtpForOrder: (orderId, customOtp = null) => {
     const orders = store.getOrders();
     const order = orders.find((o) => o.orderId === orderId);
     if (!order) return null;
 
-    // Sinh mã 6 số
-    const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Sinh mã OTP 6 số
+    const newOtp = customOtp || Math.floor(100000 + Math.random() * 900000).toString();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString(); // Có hiệu lực 5 phút (300s)
 
-    // Cập nhật OTP trong đơn hàng
-    store.updateOrderStatus(orderId, order.status, { otpCode: newOtp });
+    // Cập nhật OTP và hạn sử dụng trong đơn hàng
+    store.updateOrderStatus(orderId, order.status, {
+      otpCode: newOtp,
+      otpCreatedAt: now.toISOString(),
+      otpExpiresAt: expiresAt,
+    });
 
     // Tạo thông báo mới gửi về tài khoản khách hàng
     store.addNotification({
       phone: order.customerPhone,
       orderId: order.orderId,
-      title: 'Mã OTP Nhận Hàng Tại Tủ',
-      message: `Mã OTP nhận đơn hàng ${order.orderId} tại ${order.lockerName} - Ngăn #${order.compartmentIndex} là: ${newOtp} (Hiệu lực trong 5 phút).`,
+      title: 'Mã OTP Nhận Hàng Tại Tủ (5 phút)',
+      message: `Mã OTP nhận đơn hàng ${order.orderId} tại ${order.lockerName} - Ngăn #${order.compartmentIndex} là: ${newOtp} (Chỉ có hiệu lực trong 5 phút).`,
       type: 'OTP_REQUEST',
     });
 
-    return newOtp;
+    return { otpCode: newOtp, otpExpiresAt: expiresAt };
   },
 
   // Lấy dữ liệu danh sách tủ và ngăn

@@ -157,7 +157,7 @@ export default function EcommerceTab({ currentUser, onNavigateToCart }) {
           </p>
           <div className="mt-4 flex items-center gap-2 text-xs font-medium text-slate-500">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>Bảo mật bằng mã PIN động & Cảm biến tải trọng IoT</span>
+            <span>Bảo mật bằng mã OTP & QR động 24/7</span>
           </div>
         </div>
 

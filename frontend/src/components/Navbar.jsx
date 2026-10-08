@@ -64,10 +64,6 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout 
     if (role === 'ADMIN') {
       return [
         { id: 'admin', label: 'Quản trị hệ thống', icon: Shield },
-        { id: 'simulator', label: 'Mô phỏng Kiosk IoT', icon: Cpu },
-        { id: 'ecommerce', label: 'Cửa hàng', icon: ShoppingBag },
-        { id: 'cart', label: 'Giỏ hàng', icon: ShoppingCart },
-        { id: 'shipper', label: 'Cổng Shipper', icon: Truck },
       ];
     }
 

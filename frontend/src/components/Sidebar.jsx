@@ -19,7 +19,7 @@ export default function Sidebar({
   const navigationGroups = [
     {
       group: 'DỊCH VỤ KHÁCH HÀNG',
-      roles: ['CUSTOMER', 'ADMIN'],
+      roles: ['CUSTOMER'],
       items: [
         { id: 'ecommerce', label: 'Cửa hàng mua sắm', icon: ShoppingBag, desc: 'Sàn trực tuyến' },
         { id: 'customer', label: 'Bưu kiện của tôi', icon: Package, desc: 'Tra cứu & Mở tủ' },
@@ -28,7 +28,7 @@ export default function Sidebar({
     },
     {
       group: 'VẬN HÀNH GIAO NHẬN',
-      roles: ['SHIPPER', 'ADMIN'],
+      roles: ['SHIPPER'],
       items: [
         { id: 'shipper', label: 'Cổng Shipper & Nạp tủ', icon: Truck, desc: 'Mã QR 60s & Cảm biến' },
       ]
@@ -98,7 +98,7 @@ export default function Sidebar({
         <div className="p-3 space-y-5 overflow-y-auto max-h-[calc(100vh-200px)]">
           {navigationGroups.map((group, gIdx) => {
             const hasAccess = group.roles.includes(currentUser?.role);
-            if (!hasAccess && currentUser?.role !== 'ADMIN') return null;
+            if (!hasAccess) return null;
 
             return (
               <div key={gIdx} className="space-y-1">
