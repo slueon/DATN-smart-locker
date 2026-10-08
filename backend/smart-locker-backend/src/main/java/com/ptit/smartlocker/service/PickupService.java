@@ -43,8 +43,17 @@ public class PickupService {
         }
 
         Order order = credential.getOrder();
-        if ("OVERDUE".equalsIgnoreCase(order.getStatus())) {
-            throw new RuntimeException("Đơn hàng này đã quá hạn lưu kho, hệ thống đã khóa mã lấy đồ!");
+        if (!"DEPOSITED".equalsIgnoreCase(order.getStatus())) {
+            if ("PENDING".equalsIgnoreCase(order.getStatus())) {
+                throw new RuntimeException("Kiện hàng chưa được nhân viên giao nạp vào tủ! Vui lòng chờ thông báo.");
+            }
+            if ("COMPLETED".equalsIgnoreCase(order.getStatus())) {
+                throw new RuntimeException("Đơn hàng này đã được lấy thành công trước đó!");
+            }
+            if ("OVERDUE".equalsIgnoreCase(order.getStatus())) {
+                throw new RuntimeException("Đơn hàng này đã quá hạn lưu kho, hệ thống đã khóa mã lấy đồ!");
+            }
+            throw new RuntimeException("Đơn hàng không ở trạng thái sẵn sàng để lấy đồ (Trạng thái: " + order.getStatus() + ")!");
         }
 
         // Đánh dấu mã đã sử dụng

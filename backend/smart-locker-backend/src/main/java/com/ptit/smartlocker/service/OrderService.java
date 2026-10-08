@@ -38,12 +38,18 @@ public class OrderService {
         String requiredSize = "S";
 
         List<OrderItem> items = new ArrayList<>();
+        String payMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : "ONLINE_VIETQR";
+        String payStatus = request.getPaymentStatus() != null ? request.getPaymentStatus() :
+                ("COD".equalsIgnoreCase(payMethod) ? "UNPAID" : "PAID");
+
         Order order = Order.builder()
                 .orderId(orderId)
                 .customerName(request.getCustomerName())
                 .customerPhone(request.getCustomerPhone())
                 .deliveryType(request.getDeliveryType())
                 .expectedDate(request.getDeliveryDate())
+                .paymentMethod(payMethod)
+                .paymentStatus(payStatus)
                 .status("PENDING")
                 .totalAmount(BigDecimal.ZERO)
                 .build();
@@ -141,6 +147,35 @@ public class OrderService {
                 .build();
         pickupCredentialRepository.save(credential);
 
+        return mapToOrderResponse(order, qrToken, otpCode);
+    }
+
+    @Transactional(readOnly = true)
+    public OrderDTO.OrderResponse getOrderById(String orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
+        return mapToOrderResponse(order, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDTO.OrderResponse> getOrdersByCustomerPhone(String phone) {
+        List<Order> orders = orderRepository.findByCustomerPhone(phone);
+        return orders.stream()
+                .map(o -> mapToOrderResponse(o, null, null))
+                .toList();
+    }
+
+    public OrderDTO.OrderResponse mapToOrderResponse(Order order, String preloadedQr, String preloadedOtp) {
+        String qrToken = preloadedQr;
+        String otpCode = preloadedOtp;
+        if (qrToken == null || otpCode == null) {
+            var credOpt = pickupCredentialRepository.findByOrder_OrderId(order.getOrderId());
+            if (credOpt.isPresent()) {
+                qrToken = credOpt.get().getQrToken();
+                otpCode = credOpt.get().getOtpCode();
+            }
+        }
+
         return OrderDTO.OrderResponse.builder()
                 .orderId(order.getOrderId())
                 .customerName(order.getCustomerName())
@@ -150,20 +185,15 @@ public class OrderService {
                 .lockerName(order.getLocker() != null ? order.getLocker().getName() : null)
                 .compartmentIndex(order.getCompartment() != null ? order.getCompartment().getCompIndex() : null)
                 .expectedDate(order.getExpectedDate())
+                .depositedAt(order.getDepositedAt())
+                .expiryDeadline(order.getExpiryDeadline())
                 .status(order.getStatus())
                 .totalAmount(order.getTotalAmount())
+                .paymentMethod(order.getPaymentMethod())
+                .paymentStatus(order.getPaymentStatus())
                 .qrToken(qrToken)
                 .otpCode(otpCode)
                 .createdAt(order.getCreatedAt())
                 .build();
-    }
-
-    public Order getOrderById(String orderId) {
-        return orderRepository.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
-    }
-
-    public List<Order> getOrdersByCustomerPhone(String phone) {
-        return orderRepository.findByCustomerPhone(phone);
     }
 }

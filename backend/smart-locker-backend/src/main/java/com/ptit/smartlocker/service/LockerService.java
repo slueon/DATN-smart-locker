@@ -67,7 +67,8 @@ public class LockerService {
                 var nextSchedule = slotScheduleRepository
                         .findByLocker_LockerIdAndScheduleDate(lockerId, nextDate);
                 
-                int freeSlots = nextSchedule.map(LockerSlotSchedule::getAvailableSlots)
+                int freeSlots = nextSchedule
+                        .map(s -> s.getAvailableSlots() != null ? s.getAvailableSlots() : locker.getTotalCompartments())
                         .orElse(locker.getTotalCompartments());
 
                 if (freeSlots > 0) {

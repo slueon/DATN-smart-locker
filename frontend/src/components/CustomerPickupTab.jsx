@@ -1,23 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import LockerMap from './LockerMap';
 import { store } from '../services/store';
 import {
   Package, Clock, CheckCircle2, AlertTriangle, QrCode,
-  Search, MapPin, Sparkles, Bell, X, AlertCircle, Timer,
-  RefreshCw, ShieldCheck
+  Search, MapPin, X, AlertCircle, Timer,
+  RefreshCw, ShieldCheck, Key, ChevronRight, Check,
+  Calendar, Layers, ArrowUpRight
 } from 'lucide-react';
 
 export default function CustomerPickupTab({ currentUser }) {
   const [orders, setOrders] = useState([]);
-  const [filterStatus, setFilterStatus] = useState('ALL'); // ALL, PENDING, DEPOSITED, COMPLETED, OVERDUE
+  const [filterStatus, setFilterStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
 
-  // Modal QR nhận hàng động (Rolling QR Code 60s)
+  // Modal QR Rolling 60s
   const [qrModalOrder, setQrModalOrder] = useState(null);
   const [qrToken, setQrToken] = useState('');
   const [qrTimeLeft, setQrTimeLeft] = useState(60);
 
-  // Tải danh sách đơn hàng từ store
   useEffect(() => {
     loadOrders();
     const handleUpdate = () => loadOrders();
@@ -27,15 +29,17 @@ export default function CustomerPickupTab({ currentUser }) {
 
   const loadOrders = () => {
     const all = store.getOrders();
-    // Lọc theo số điện thoại của người dùng nếu có
-    if (currentUser?.phone) {
-      setOrders(all.filter((o) => !o.customerPhone || o.customerPhone === currentUser.phone));
-    } else {
-      setOrders(all);
+    const userOrders = currentUser?.phone
+      ? all.filter((o) => !o.customerPhone || o.customerPhone === currentUser.phone)
+      : all;
+    setOrders(userOrders);
+
+    // Mặc định chọn đơn đầu tiên nếu chưa chọn
+    if (userOrders.length > 0 && !selectedOrderId) {
+      setSelectedOrderId(userOrders[0].orderId);
     }
   };
 
-  // Sinh mã QR động mới
   const generateDynamicQr = (order) => {
     if (!order) return;
     const token = `PKUP-${order.orderId}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -43,13 +47,11 @@ export default function CustomerPickupTab({ currentUser }) {
     setQrTimeLeft(60);
   };
 
-  // Mở modal QR
   const handleOpenQrModal = (order) => {
     setQrModalOrder(order);
     generateDynamicQr(order);
   };
 
-  // Đồng hồ đếm ngược 60 giây tự động reset mã QR mới
   useEffect(() => {
     if (!qrModalOrder) return;
     const interval = setInterval(() => {
@@ -64,43 +66,43 @@ export default function CustomerPickupTab({ currentUser }) {
     return () => clearInterval(interval);
   }, [qrModalOrder]);
 
-  // Tính toán thời gian đếm ngược đến 24h00 ngày hôm sau
   const calculateRemainingTime = (expiryDeadline) => {
-    if (!expiryDeadline) return { label: 'Không xác định', color: 'slate', isOverdue: false };
+    if (!expiryDeadline) return { label: 'Chờ nạp tủ', color: 'slate', percent: 0, isOverdue: false };
     const deadline = new Date(expiryDeadline).getTime();
     const now = new Date().getTime();
     const diffMs = deadline - now;
 
     if (diffMs <= 0) {
-      return { label: 'ĐÃ QUÁ HẠN LƯU KHO', color: 'rose', isOverdue: true };
+      return { label: 'Đã quá hạn lưu kho', color: 'rose', percent: 100, isOverdue: true };
     }
 
     const hours = Math.floor(diffMs / (1000 * 60 * 60));
     const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    // Giả sử tổng thời gian là 36 tiếng (từ lúc gửi đến 24h mai)
+    const percent = Math.min(100, Math.max(0, Math.round(((36 * 3600 * 1000 - diffMs) / (36 * 3600 * 1000)) * 100)));
 
-    let color = 'emerald'; // > 12h
-    if (hours < 2) {
-      color = 'rose'; // < 2h (khẩn cấp)
-    } else if (hours < 6) {
-      color = 'amber'; // < 6h (cảnh báo)
+    let color = 'emerald';
+    if (hours < 3) {
+      color = 'rose';
+    } else if (hours < 8) {
+      color = 'amber';
     }
 
     return {
-      label: `Còn lại ${hours} giờ ${minutes} phút (Đến 24h00 mai)`,
+      label: `Còn ${hours}h ${minutes}m (Đến 24h00 mai)`,
       color,
+      percent,
       isOverdue: false,
     };
   };
 
-  // Yêu cầu mã OTP gửi về tài khoản web (hiển thị ở Chuông Thông Báo)
   const handleRequestOtp = (order) => {
     const newOtp = store.requestOtpForOrder(order.orderId);
     if (newOtp) {
-      alert(`Đã gửi mã OTP (${newOtp}) về Hộp Thư Thông Báo trên thanh Navbar của bạn! Vui lòng kiểm tra biểu tượng chiếc chuông 🔔.`);
+      alert(`Đã gửi mã OTP (${newOtp}) về Hộp Thư Thông Báo trên thanh menu của bạn!`);
     }
   };
 
-  // Lọc đơn hàng
   const filteredOrders = orders.filter((o) => {
     if (filterStatus !== 'ALL' && o.status !== filterStatus) return false;
     if (searchQuery) {
@@ -113,30 +115,33 @@ export default function CustomerPickupTab({ currentUser }) {
     return true;
   });
 
+  const selectedOrder = orders.find((o) => o.orderId === selectedOrderId) || filteredOrders[0] || null;
+
   const getStatusBadge = (status) => {
     switch (status) {
       case 'DEPOSITED':
         return (
-          <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-black px-2.5 py-1 rounded-full flex items-center gap-1 shadow-sm">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-600" /> HÀNG ĐÃ VÀO TỦ (SẴN SÀNG LẤY)
+          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
+            Đã về tủ (Sẵn sàng lấy)
           </span>
         );
       case 'PENDING':
         return (
-          <span className="bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5 text-amber-600" /> Đang chuẩn bị / Chờ Shipper nạp
+          <span className="bg-amber-50 text-amber-700 border border-amber-200 text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
+            <Clock className="w-3 h-3 text-amber-500" /> Chờ shipper nạp
           </span>
         );
       case 'COMPLETED':
         return (
-          <span className="bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5 text-slate-500" /> Đã nhận hàng thành công
+          <span className="bg-slate-100 text-slate-700 border border-slate-200 text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-slate-500" /> Đã nhận thành công
           </span>
         );
       case 'OVERDUE':
         return (
-          <span className="bg-rose-100 text-rose-800 border border-rose-300 text-xs font-black px-2.5 py-1 rounded-full flex items-center gap-1">
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" /> QUÁ HẠN LƯU KHO
+          <span className="bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3 text-rose-600" /> Quá hạn lưu kho
           </span>
         );
       default:
@@ -144,47 +149,71 @@ export default function CustomerPickupTab({ currentUser }) {
     }
   };
 
+  // Mock trạm cho Leaflet mini-map
+  const lockersForMap = [
+    {
+      lockerId: selectedOrder?.lockerId || 'LOCKER_HN_01',
+      name: selectedOrder?.lockerName || 'Tủ KTX A1',
+      address: selectedOrder?.lockerAddress || 'KTX A1, Học viện CNBCVT',
+      latitude: selectedOrder?.lockerId === 'LOCKER_HN_02' ? 20.980910 : 20.980645,
+      longitude: selectedOrder?.lockerId === 'LOCKER_HN_02' ? 105.787450 : 105.787920,
+    }
+  ];
+
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 notranslate">
-      {/* Tiêu đề trang */}
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-extrabold text-slate-800 flex items-center justify-center gap-2">
-          <Package className="w-8 h-8 text-indigo-600" /> Quản Lý Đơn Hàng Của Tôi
-        </h1>
-        <p className="mt-2 text-slate-600 text-sm">
-          Theo dõi trạng thái kiện hàng, nhận thông báo mã OTP và nhận hàng tại Tủ thông minh dễ dàng.
-        </p>
+    <div className="space-y-5 notranslate select-none">
+      {/* Top Stats Banner */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs">
+          <span className="text-[11px] font-semibold text-slate-500 uppercase">Tổng bưu kiện</span>
+          <div className="text-2xl font-bold text-slate-900 mt-1 font-mono">{orders.length}</div>
+        </div>
+        <div className="bg-white p-4 rounded-xl border border-emerald-200 shadow-xs">
+          <span className="text-[11px] font-semibold text-emerald-700 uppercase">Sẵn sàng mở tủ</span>
+          <div className="text-2xl font-bold text-emerald-600 mt-1 font-mono">
+            {orders.filter((o) => o.status === 'DEPOSITED').length}
+          </div>
+        </div>
+        <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-xs">
+          <span className="text-[11px] font-semibold text-amber-700 uppercase">Chờ shipper nạp</span>
+          <div className="text-2xl font-bold text-amber-600 mt-1 font-mono">
+            {orders.filter((o) => o.status === 'PENDING').length}
+          </div>
+        </div>
+        <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs">
+          <span className="text-[11px] font-semibold text-slate-500 uppercase">Đã hoàn thành</span>
+          <div className="text-2xl font-bold text-slate-700 mt-1 font-mono">
+            {orders.filter((o) => o.status === 'COMPLETED').length}
+          </div>
+        </div>
       </div>
 
-      {/* Thanh công cụ: Tìm kiếm & Lọc trạng thái */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm mb-6 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between gap-4">
-        {/* Tìm kiếm */}
-        <div className="relative flex-1">
+      {/* Search & Filter Toolbar */}
+      <div className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="relative flex-1 w-full sm:w-auto">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
             placeholder="Tìm theo mã đơn (ORD-...), tên sản phẩm, trạm tủ..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 text-xs rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition"
+            className="w-full pl-10 pr-3.5 py-1.5 bg-slate-50 border border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
           />
         </div>
 
-        {/* Bộ lọc trạng thái */}
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
           {[
-            { id: 'ALL', label: 'Tất Cả' },
-            { id: 'DEPOSITED', label: 'Hàng Đã Về Tủ' },
-            { id: 'PENDING', label: 'Chờ Giao' },
-            { id: 'COMPLETED', label: 'Đã Nhận' },
-            { id: 'OVERDUE', label: 'Quá Hạn' },
+            { id: 'ALL', label: 'Tất cả' },
+            { id: 'DEPOSITED', label: 'Hàng đã về tủ' },
+            { id: 'PENDING', label: 'Chờ giao' },
+            { id: 'COMPLETED', label: 'Đã nhận' },
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setFilterStatus(tab.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
                 filterStatus === tab.id
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-slate-900 text-white shadow-xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
@@ -194,198 +223,315 @@ export default function CustomerPickupTab({ currentUser }) {
         </div>
       </div>
 
-      {/* DANH SÁCH CÁC ĐƠN HÀNG */}
-      {filteredOrders.length === 0 ? (
-        <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center shadow-sm">
-          <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-slate-700">Không tìm thấy đơn hàng nào</h3>
-          <p className="text-xs text-slate-500 mt-1">
-            Chưa có đơn hàng nào khớp với bộ lọc hoặc tài khoản của bạn chưa đặt đơn mới.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {filteredOrders.map((ord) => {
-            const timeInfo = calculateRemainingTime(ord.expiryDeadline);
-            const isDeposited = ord.status === 'DEPOSITED';
+      {/* MASTER-DETAIL WORKSPACE (Two-Pane Architecture) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* PANE 1: MASTER LIST (5 Columns) */}
+        <div className="lg:col-span-5 space-y-2.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+              Danh sách đơn ({filteredOrders.length})
+            </span>
+            <span className="text-[11px] text-slate-400">Chọn đơn để thao tác</span>
+          </div>
 
-            return (
-              <div
-                key={ord.orderId}
-                className={`bg-white rounded-3xl border transition-all duration-200 overflow-hidden shadow-sm hover:shadow-md ${
-                  isDeposited
-                    ? 'border-indigo-200 ring-2 ring-indigo-500/20'
-                    : 'border-slate-200'
-                }`}
-              >
-                <div className="p-5 sm:p-6 space-y-4">
-                  {/* Header thẻ đơn */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-sm font-black text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
+          <div className="space-y-2 max-h-[750px] overflow-y-auto pr-1">
+            {filteredOrders.length === 0 ? (
+              <div className="bg-white p-8 rounded-xl border border-slate-200 text-center">
+                <Package className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs text-slate-500">Không có đơn hàng nào khớp bộ lọc</p>
+              </div>
+            ) : (
+              filteredOrders.map((ord) => {
+                const isSelected = selectedOrder?.orderId === ord.orderId;
+                const isDeposited = ord.status === 'DEPOSITED';
+
+                return (
+                  <div
+                    key={ord.orderId}
+                    onClick={() => setSelectedOrderId(ord.orderId)}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer bg-white ${
+                      isSelected
+                        ? 'border-blue-600 ring-2 ring-blue-500/10 shadow-xs'
+                        : 'border-slate-200/90 hover:border-slate-300 hover:bg-slate-50/50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.2 rounded">
                         {ord.orderId}
                       </span>
-                      <span className="text-xs text-slate-400">
-                        Ngày đặt: {ord.orderDate || ord.expectedDate}
+                      {getStatusBadge(ord.status)}
+                    </div>
+
+                    <h4 className="font-semibold text-slate-900 text-xs truncate">
+                      {ord.productName || 'Bưu kiện Smart Locker'}
+                    </h4>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100">
+                      <span className="flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-slate-400" /> {ord.lockerName || 'Tủ KTX A1'}
                       </span>
-                    </div>
-                    <div>{getStatusBadge(ord.status)}</div>
-                  </div>
-
-                  {/* Nội dung chi tiết đơn */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                    {/* Cột thông tin sản phẩm (7 cột) */}
-                    <div className="md:col-span-7 space-y-2">
-                      <h4 className="font-bold text-slate-800 text-sm">
-                        {ord.productName || 'Kiện hàng Smart Locker'}
-                      </h4>
-                      <div className="text-xs text-slate-600 space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>
-                            <strong>{ord.lockerName || 'Tủ KTX A1'}</strong> - Ngăn #{ord.compartmentIndex || 2} (Size {ord.compartmentSize || 'M'})
+                      <div className="flex items-center gap-1.5">
+                        {ord.paymentStatus === 'PAID' ? (
+                          <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded font-semibold">
+                            Đã TT
                           </span>
-                        </div>
-                        <p className="text-slate-400 text-[11px] pl-5">
-                          {ord.lockerAddress || 'Học viện CNBCVT, Hà Đông, Hà Nội'}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Cột giá & trạng thái thanh toán (5 cột) */}
-                    <div className="md:col-span-5 flex flex-col justify-between items-start md:items-end">
-                      <div className="text-left md:text-right">
-                        <span className="text-[11px] text-slate-400 block">Tổng thanh toán</span>
-                        <span className="text-base font-extrabold text-slate-800">
-                          {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(ord.totalAmount || 450000)}
+                        ) : (
+                          <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.2 rounded font-semibold">
+                            COD
+                          </span>
+                        )}
+                        <span className="font-mono font-semibold text-slate-800">
+                          {new Intl.NumberFormat('vi-VN').format(ord.totalAmount || 0)} đ
                         </span>
                       </div>
                     </div>
                   </div>
+                );
+              })
+            )}
+          </div>
+        </div>
 
-                  {/* KHU VỰC ĐẶC BIỆT: KHI HÀNG ĐÃ VÀO TỦ (DEPOSITED) */}
-                  {isDeposited && (
-                    <div className="mt-4 pt-4 border-t border-indigo-100 bg-gradient-to-r from-indigo-50/70 to-emerald-50/70 -mx-6 -mb-6 p-5 rounded-b-3xl space-y-4">
-                      {/* Đồng hồ đếm ngược 24h00 ngày hôm sau */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Clock className={`w-4 h-4 text-${timeInfo.color}-600 shrink-0`} />
-                          <span className={`text-xs font-bold text-${timeInfo.color}-700`}>
-                            Hạn lưu kho: {timeInfo.label}
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-slate-500">
-                          Chính sách lưu kho hết 24h00 ngày hôm sau
-                        </span>
-                      </div>
+        {/* PANE 2: DETAIL INSPECTOR & CONTROL STATION (7 Columns) */}
+        <div className="lg:col-span-7">
+          {selectedOrder ? (
+            <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-5">
+              {/* Header of Active Order */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md">
+                      {selectedOrder.orderId}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      Ngày tạo: <span className="font-mono text-slate-700">{selectedOrder.orderDate || selectedOrder.expectedDate}</span>
+                    </span>
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 mt-1">
+                    {selectedOrder.productName || 'Kiện hàng Smart Locker'}
+                  </h3>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    {selectedOrder.paymentStatus === 'PAID' ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Đã thanh toán Online ({selectedOrder.paymentMethod?.replace('ONLINE_', '') || 'VietQR'})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        Thanh toán COD khi nhận hàng
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-                      {/* Hai nút hành động: Nhận bằng QR và Nhận bằng OTP */}
-                      <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                        {/* Nút 1: Nhận hàng bằng mã QR động 60s */}
-                        <button
-                          onClick={() => handleOpenQrModal(ord)}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-4 rounded-xl shadow-md shadow-indigo-600/30 flex items-center gap-1.5 transition"
-                        >
-                          <QrCode className="w-4 h-4" />
-                          <span>🎁 Nhận Hàng (Mã QR Động)</span>
-                        </button>
-
-                        {/* Nút 2: Yêu cầu mã OTP về Web */}
-                        <button
-                          onClick={() => handleRequestOtp(ord)}
-                          className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs py-2 px-4 rounded-xl shadow-sm flex items-center gap-1.5 transition"
-                          title="Sinh mã OTP và gửi về Chuông Thông Báo trên Web"
-                        >
-                          <Bell className="w-4 h-4" />
-                          <span>🔑 Yêu Cầu Mã OTP Về Web</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* KHI ĐƠN ĐÃ QUÁ HẠN (OVERDUE) */}
-                  {ord.status === 'OVERDUE' && (
-                    <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-2.5 text-xs text-rose-700">
-                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                      <div>
-                        <strong>Mã nhận hàng đã bị tạm khóa do vượt quá 24h00 ngày hôm sau!</strong>
-                        <p className="text-[11px] text-rose-600 mt-0.5">
-                          Kiện hàng đang được điều phối cho Shipper hoặc Quản trị viên thu hồi. Vui lòng liên hệ Hotline hoặc Ban quản lý tủ để được hỗ trợ lấy lại kiện hàng.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                <div>
+                  {getStatusBadge(selectedOrder.status)}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
 
-      {/* ================= MODAL PHÓNG TO MÃ QR NHẬN HÀNG ĐỘNG (RESET SAU 60S) ================= */}
+              {/* Countdown Banner if DEPOSITED */}
+              {selectedOrder.status === 'DEPOSITED' && (
+                <div className="p-4 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-blue-600" />
+                      Thời hạn lưu kho:
+                    </span>
+                    <span className="font-bold text-blue-700 font-mono">
+                      {calculateRemainingTime(selectedOrder.expiryDeadline).label}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                    <div
+                      className="bg-blue-600 h-full rounded-full transition-all"
+                      style={{ width: `${calculateRemainingTime(selectedOrder.expiryDeadline).percent}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Quy chuẩn lưu kho áp dụng đến 24h00 của ngày tiếp theo. Sau thời điểm này mã nhận sẽ bị khóa.
+                  </p>
+                </div>
+              )}
+
+              {/* Action Buttons if Ready to Pickup */}
+              {selectedOrder.status === 'DEPOSITED' && (
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                    Phương Thức Mở Tủ Tại Trạm Kiosk
+                  </span>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Method 1: QR 60s */}
+                    <button
+                      onClick={() => handleOpenQrModal(selectedOrder)}
+                      className="p-3.5 rounded-xl border border-blue-200 bg-white hover:bg-blue-50/40 text-left transition cursor-pointer shadow-xs group"
+                    >
+                      <div className="flex items-center gap-2 text-blue-600 font-semibold text-xs mb-1">
+                        <QrCode className="w-4 h-4" />
+                        <span>Mã QR Động 60 Giây</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Quét trực tiếp trước camera GM65 của tủ để mở khóa tức thì.
+                      </p>
+                    </button>
+
+                    {/* Method 2: PIN 6 Digits */}
+                    <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-800 mb-1">
+                        <span className="flex items-center gap-1.5">
+                          <Key className="w-3.5 h-3.5 text-amber-600" /> Mã PIN 6 Số:
+                        </span>
+                        <span className="font-mono text-sm font-bold text-blue-700 bg-slate-100 px-2 py-0.5 rounded">
+                          {selectedOrder.otpCode || '123456'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Nhập trực tiếp mã PIN trên màn hình cảm ứng Kiosk nếu không quét mã.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Locker Location & GIS Mini-Map */}
+              <div className="space-y-2.5">
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                  Địa Điểm Nhận Hàng & Bản Đồ Tủ
+                </span>
+
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between text-xs">
+                  <div>
+                    <h5 className="font-semibold text-slate-900 flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                      {selectedOrder.lockerName || 'Trạm Tủ KTX A1'}
+                    </h5>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{selectedOrder.lockerAddress}</p>
+                  </div>
+
+                  <span className="bg-blue-50 text-blue-700 font-bold px-2.5 py-1 rounded-lg border border-blue-200 text-xs">
+                    Ngăn #{selectedOrder.compartmentIndex || 2} (Size {selectedOrder.compartmentSize || 'M'})
+                  </span>
+                </div>
+
+                {/* Embedded Mini-map */}
+                <div className="h-44 rounded-xl overflow-hidden border border-slate-200 shadow-xs">
+                  <LockerMap
+                    lockers={lockersForMap}
+                    selectedLockerId={selectedOrder.lockerId}
+                    onSelectLocker={() => {}}
+                  />
+                </div>
+              </div>
+
+              {/* Delivery Timeline / Tracking Steps */}
+              <div className="pt-2">
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-3">
+                  Tiến Trình Đơn Hàng
+                </span>
+
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
+                    <span className="font-bold block">1. Đã đặt hàng</span>
+                    <span className="text-[10px] text-emerald-600">Đã khóa slot tủ</span>
+                  </div>
+                  <div className={`p-2.5 rounded-lg border ${
+                    selectedOrder.status === 'DEPOSITED' || selectedOrder.status === 'COMPLETED'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-500'
+                  }`}>
+                    <span className="font-bold block">2. Shipper nạp tủ</span>
+                    <span className="text-[10px]">Cảm biến kép kích hoạt</span>
+                  </div>
+                  <div className={`p-2.5 rounded-lg border ${
+                    selectedOrder.status === 'COMPLETED'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-500'
+                  }`}>
+                    <span className="font-bold block">3. Khách lấy đồ</span>
+                    <span className="text-[10px]">Hoàn tất đơn</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200/90 p-12 text-center">
+              <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+              <h4 className="font-bold text-slate-800 text-sm">Chưa chọn đơn hàng nào</h4>
+              <p className="text-xs text-slate-500 mt-1">Hãy nhấp vào một đơn hàng bên danh sách để xem chi tiết.</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* QR Modal (Rolling 60s) */}
       {qrModalOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl relative border border-slate-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 text-center shadow-xl relative border border-slate-200">
             <button
               onClick={() => setQrModalOrder(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
-              <QrCode className="w-6 h-6" />
+            <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-2 border border-blue-200">
+              <QrCode className="w-5 h-5" />
             </div>
 
-            <h3 className="text-lg font-black text-slate-800">Mã QR Nhận Hàng Động</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Đơn hàng: <strong className="text-indigo-600">{qrModalOrder.orderId}</strong>
+            <h3 className="text-base font-bold text-slate-900">Mã QR Nhận Hàng</h3>
+            <p className="text-xs text-slate-500 font-mono mt-0.5">
+              Đơn: <strong className="text-slate-900">{qrModalOrder.orderId}</strong>
             </p>
 
-            {/* Mã QR phóng to */}
-            <div className="bg-white p-4 rounded-2xl border-2 border-dashed border-indigo-200 inline-block my-3 shadow-sm relative">
+            <div className="bg-white p-3 rounded-xl border border-slate-200 inline-block my-3 shadow-xs">
               <QRCodeSVG value={qrToken} size={180} />
             </div>
 
-            {/* Bộ đếm ngược 60 giây và thanh tiến trình tự động đổi mã */}
             <div className="mb-4">
-              <div className="flex items-center justify-between text-xs font-bold text-indigo-600 mb-1.5">
-                <span className="flex items-center gap-1">
-                  <Timer className="w-3.5 h-3.5" /> Tự động đổi mã sau:
+              <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                <span className="flex items-center gap-1 text-slate-600">
+                  <Timer className={`w-3.5 h-3.5 ${qrTimeLeft <= 10 ? 'text-rose-600' : 'text-blue-600'}`} />
+                  Tự động làm mới sau:
                 </span>
-                <span className="font-mono text-sm bg-indigo-50 px-2 py-0.5 rounded">
-                  {qrTimeLeft} giây
+                <span className={`font-mono text-xs px-2 py-0.5 rounded font-bold ${
+                  qrTimeLeft <= 10 ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'
+                }`}>
+                  {qrTimeLeft}s
                 </span>
               </div>
-              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
                 <div
-                  className="bg-indigo-600 h-full transition-all duration-1000"
+                  className={`h-full transition-all duration-1000 ${
+                    qrTimeLeft <= 10 ? 'bg-rose-500' : 'bg-blue-600'
+                  }`}
                   style={{ width: `${(qrTimeLeft / 60) * 100}%` }}
                 />
               </div>
             </div>
 
-            <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 text-left space-y-1 mb-4">
-              <p><strong>Điểm tủ:</strong> {qrModalOrder.lockerName}</p>
-              <p><strong>Ngăn tủ:</strong> Ngăn #{qrModalOrder.compartmentIndex}</p>
-              <div className="flex items-center gap-1.5 text-[11px] text-indigo-600 font-semibold pt-1">
-                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                <span>Mã QR bảo mật chống chụp trộm (reset mỗi 60s)</span>
-              </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 text-left space-y-1 mb-4">
+              <p><strong>Trạm tủ:</strong> {qrModalOrder.lockerName}</p>
+              <p><strong>Ngăn:</strong> Ngăn #{qrModalOrder.compartmentIndex}</p>
+              {qrModalOrder.otpCode && (
+                <p className="pt-1 border-t border-slate-200 flex items-center justify-between">
+                  <span className="text-slate-500">Hoặc nhập PIN:</span>
+                  <span className="font-mono font-bold text-blue-700 tracking-wider text-sm">{qrModalOrder.otpCode}</span>
+                </p>
+              )}
             </div>
 
             <div className="flex gap-2">
               <button
                 onClick={() => generateDynamicQr(qrModalOrder)}
-                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-1.5"
-                title="Làm mới mã ngay lập tức"
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 rounded-lg text-xs transition flex items-center justify-center gap-1 cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>Làm Mới Mã</span>
+                <span>Đổi mã ngay</span>
               </button>
               <button
                 onClick={() => setQrModalOrder(null)}
-                className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs transition"
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg text-xs transition cursor-pointer"
               >
                 Đóng
               </button>

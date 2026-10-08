@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -21,7 +22,6 @@ public class ShipperService {
     private final CompartmentRepository compartmentRepository;
     private final PickupCredentialRepository credentialRepository;
     private final DeviceEventRepository deviceEventRepository;
-    private final CommandLogRepository commandLogRepository;
 
     /**
      * 1. Sinh mã QR định danh động cho Shipper (Hiệu lực chính xác 60 giây)
@@ -87,7 +87,13 @@ public class ShipperService {
 
         Compartment compartment = order.getCompartment();
         if (compartment == null) {
-            throw new RuntimeException("Đơn hàng chưa được gán ngăn tủ!");
+            // Tự động tìm ngăn tủ còn EMPTY tại trạm để nạp hàng nếu lúc đặt chưa gán
+            List<Compartment> empties = compartmentRepository.findByLocker_LockerIdAndStatus(request.getLockerId(), "EMPTY");
+            if (empties.isEmpty()) {
+                throw new RuntimeException("Tủ " + request.getLockerId() + " hiện tại không còn ngăn trống để nạp hàng!");
+            }
+            compartment = empties.get(0);
+            order.setCompartment(compartment);
         }
 
         // Kiểm tra điều kiện Cảm biến kép:

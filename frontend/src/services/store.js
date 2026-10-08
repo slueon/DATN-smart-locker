@@ -1,3 +1,5 @@
+import { resolveProductImage, PRODUCT_IMAGE_FALLBACKS } from '../utils/productImages';
+
 // Centralized Interactive Store for Smart Locker Demo
 // Đồng bộ dữ liệu giữa các vai trò (Khách hàng, Shipper, Quản trị viên)
 
@@ -11,7 +13,7 @@ const DEFAULT_CART = [
     productId: 1,
     name: 'Tai nghe Bluetooth True Wireless Pro',
     price: 450000,
-    imageUrl: 'https://placehold.co/300x200?text=Earbuds',
+    imageUrl: PRODUCT_IMAGE_FALLBACKS.earbuds,
     requiredSize: 'S',
     weightKg: 0.2,
     quantity: 1,
@@ -38,6 +40,8 @@ const DEFAULT_ORDERS = [
     expiryDeadline: '2026-10-05T23:59:59', // Hết 24h00 ngày hôm sau
     status: 'DEPOSITED', // ĐÃ VÀO TỦ (SẴN SÀNG LẤY)
     totalAmount: 450000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
     qrToken: 'PKUP-789210-A1B2',
     otpCode: '852963',
   },
@@ -57,6 +61,8 @@ const DEFAULT_ORDERS = [
     expectedDate: '2026-10-04',
     status: 'PENDING', // ĐANG CHỜ SHIPPER GIAO
     totalAmount: 280000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
     qrToken: 'PKUP-654123-C3D4',
     otpCode: '147258',
   },
@@ -77,6 +83,8 @@ const DEFAULT_ORDERS = [
     depositedAt: '2026-10-01T09:00:00',
     status: 'COMPLETED', // ĐÃ NHẬN THÀNH CÔNG
     totalAmount: 520000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
     qrToken: 'PKUP-543219-E5F6',
     otpCode: '369852',
   },
@@ -356,24 +364,34 @@ export const store = {
   getCart: () => {
     try {
       const data = localStorage.getItem(CART_KEY);
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        return parsed.map((item) => ({
+          ...item,
+          imageUrl: resolveProductImage(item),
+        }));
+      }
     } catch (e) {}
     localStorage.setItem(CART_KEY, JSON.stringify(DEFAULT_CART));
     return DEFAULT_CART;
   },
 
   addToCart: (product) => {
+    const cleanProduct = {
+      ...product,
+      imageUrl: resolveProductImage(product),
+    };
     const cart = store.getCart();
-    const existing = cart.find((item) => item.productId === product.productId);
+    const existing = cart.find((item) => item.productId === cleanProduct.productId);
     let updated;
     if (existing) {
       updated = cart.map((item) =>
-        item.productId === product.productId
+        item.productId === cleanProduct.productId
           ? { ...item, quantity: item.quantity + 1 }
           : item
       );
     } else {
-      updated = [...cart, { ...product, quantity: 1 }];
+      updated = [...cart, { ...cleanProduct, quantity: 1 }];
     }
     localStorage.setItem(CART_KEY, JSON.stringify(updated));
     window.dispatchEvent(new Event('smart_locker_cart_updated'));

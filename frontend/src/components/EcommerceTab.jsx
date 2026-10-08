@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { productApi } from '../services/api';
 import { store } from '../services/store';
+import { resolveProductImage, resolveProductCategory, PRODUCT_IMAGE_FALLBACKS } from '../utils/productImages';
 import {
   Box, ShoppingBag, ShoppingCart, ArrowRight, Check,
-  Search, Tag, Sparkles
+  Search, ShieldCheck
 } from 'lucide-react';
 
 const INITIAL_PRODUCTS = [
@@ -11,61 +12,61 @@ const INITIAL_PRODUCTS = [
     productId: 1,
     name: 'Tai nghe Bluetooth True Wireless Pro',
     price: 450000,
-    imageUrl: 'https://placehold.co/300x200?text=Earbuds',
-    description: 'Âm thanh chất lượng cao, pin 24h, chống nước IPX5, hộp sạc nhỏ gọn.',
+    imageUrl: PRODUCT_IMAGE_FALLBACKS.earbuds,
+    description: 'Âm thanh chất lượng cao, pin 24 giờ, khử ồn chủ động ANC, hộp sạc nhỏ gọn.',
     requiredSize: 'S',
     weightKg: 0.2,
-    category: 'Âm Thanh'
+    category: 'Âm thanh'
   },
   {
     productId: 2,
     name: 'Áo Hoodie PTIT Sinh Viên 2026',
     price: 280000,
-    imageUrl: 'https://placehold.co/300x200?text=Hoodie',
-    description: 'Chất nỉ bông ấm áp, form rộng thời trang sinh viên Học viện CNBCVT.',
+    imageUrl: PRODUCT_IMAGE_FALLBACKS.hoodie,
+    description: 'Chất nỉ bông ấm áp, form rộng unisex phong cách sinh viên Học viện CNBCVT.',
     requiredSize: 'M',
     weightKg: 0.6,
-    category: 'Thời Trang'
+    category: 'Thời trang'
   },
   {
     productId: 3,
-    name: 'Balo Laptop Công Nghệ Chống Nước',
+    name: 'Balo Laptop Chống Nước Cao Cấp',
     price: 520000,
-    imageUrl: 'https://placehold.co/300x200?text=Backpack',
-    description: 'Ngăn chống sốc 15.6 inch, tích hợp cổng sạc USB và khóa kéo chống trộm.',
+    imageUrl: PRODUCT_IMAGE_FALLBACKS.backpack,
+    description: 'Ngăn chống sốc 15.6 inch, cổng sạc USB tích hợp, khóa số chống trộm an toàn.',
     requiredSize: 'L',
     weightKg: 1.1,
-    category: 'Phụ Kiện'
+    category: 'Phụ kiện'
   },
   {
     productId: 4,
-    name: 'Sách Lập Trình IoT với ESP32',
+    name: 'Sách Lập Trình IoT với ESP32 & MQTT',
     price: 150000,
-    imageUrl: 'https://placehold.co/300x200?text=Book',
-    description: 'Tài liệu hướng dẫn thực hành vi điều khiển, cảm biến và giao thức MQTT.',
+    imageUrl: PRODUCT_IMAGE_FALLBACKS.book,
+    description: 'Giáo trình thực hành vi điều khiển ESP32, kết nối cảm biến và giao thức IoT.',
     requiredSize: 'S',
     weightKg: 0.4,
-    category: 'Sách & Giáo Trình'
+    category: 'Sách & Học tập'
   },
   {
     productId: 5,
-    name: 'Bàn Phím Cơ Không Dây RGB PTIT',
+    name: 'Bàn Phím Cơ Không Dây RGB PTIT Edition',
     price: 680000,
-    imageUrl: 'https://placehold.co/300x200?text=Keyboard',
-    description: 'Switch quang học siêu bền, kết nối Bluetooth 5.2, đèn LED đa hiệu ứng.',
+    imageUrl: PRODUCT_IMAGE_FALLBACKS.keyboard,
+    description: 'Switch quang học siêu bền, kết nối 3 chế độ Bluetooth 5.2/2.4Ghz/Type-C.',
     requiredSize: 'M',
     weightKg: 0.8,
-    category: 'Phụ Kiện'
+    category: 'Phụ kiện'
   },
   {
     productId: 6,
     name: 'Chuột Gaming Công Thái Học Không Dây',
     price: 320000,
-    imageUrl: 'https://placehold.co/300x200?text=Mouse',
-    description: 'Độ nhạy 16000 DPI, thiết kế ôm tay chống mỏi, pin sạc Type-C dùng 1 tháng.',
+    imageUrl: PRODUCT_IMAGE_FALLBACKS.mouse,
+    description: 'Cảm biến quang 16.000 DPI, ôm sát lòng bàn tay, pin sạc dùng 30 ngày.',
     requiredSize: 'S',
     weightKg: 0.15,
-    category: 'Phụ Kiện'
+    category: 'Phụ kiện'
   }
 ];
 
@@ -76,7 +77,6 @@ export default function EcommerceTab({ currentUser, onNavigateToCart }) {
   const [cartCount, setCartCount] = useState(() => store.getCartCount());
   const [toastMsg, setToastMsg] = useState(null);
 
-  // Tải danh mục sản phẩm từ backend (nếu có)
   useEffect(() => {
     fetchProducts();
     const handleCartUpdate = () => setCartCount(store.getCartCount());
@@ -88,23 +88,35 @@ export default function EcommerceTab({ currentUser, onNavigateToCart }) {
     try {
       const res = await productApi.getAll();
       if (res.data?.data && res.data.data.length > 0) {
-        setProducts(res.data.data);
+        // Tự động chuyển đổi và chuẩn hóa ảnh nếu backend trả về link placehold.co cũ
+        const enriched = res.data.data.map((item) => ({
+          ...item,
+          imageUrl: resolveProductImage(item),
+          category: resolveProductCategory(item),
+        }));
+        setProducts(enriched);
       }
     } catch (err) {
-      console.warn('Backend chưa sẵn sàng, dùng danh mục sản phẩm mẫu.');
+      console.warn('Backend chưa phản hồi, dùng danh mục sản phẩm mẫu chuẩn CDN.');
     }
   };
 
   const handleAddToCart = (product) => {
-    store.addToCart(product);
-    setToastMsg(`Đã thêm "${product.name}" vào giỏ hàng!`);
+    const itemToAdd = {
+      ...product,
+      imageUrl: resolveProductImage(product),
+      category: resolveProductCategory(product),
+    };
+    store.addToCart(itemToAdd);
+    setToastMsg(`Đã thêm "${product.name}" vào giỏ hàng`);
     setTimeout(() => {
       setToastMsg(null);
-    }, 3500);
+    }, 3000);
   };
 
   const filteredProducts = products.filter((p) => {
-    if (selectedCategory !== 'ALL' && p.category && p.category !== selectedCategory) {
+    const category = resolveProductCategory(p);
+    if (selectedCategory !== 'ALL' && category !== selectedCategory) {
       return false;
     }
     if (searchQuery) {
@@ -116,91 +128,114 @@ export default function EcommerceTab({ currentUser, onNavigateToCart }) {
     return true;
   });
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 py-8 notranslate">
-      {/* Banner Tiêu Đề */}
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight sm:text-4xl">
-          Sàn Mua Sắm Công Nghệ & Sinh Viên PTIT
-        </h1>
-        <p className="mt-2 text-slate-600 max-w-2xl mx-auto text-sm">
-          Lựa chọn các mặt hàng yêu thích, thêm vào giỏ và đặt nhận hàng chủ động tại Tủ giao nhận thông minh.
-        </p>
+  const getSizeBadge = (size) => {
+    switch (size) {
+      case 'S':
+        return <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">Ngăn S</span>;
+      case 'M':
+        return <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Ngăn M</span>;
+      case 'L':
+        return <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200">Ngăn L</span>;
+      default:
+        return null;
+    }
+  };
 
-        {/* Nút Chuyển Nhanh Sang Trang Giỏ Hàng & Thanh Toán */}
-        <div className="mt-4 flex justify-center">
-          <button
-            onClick={onNavigateToCart}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-5 rounded-2xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition"
-          >
-            <ShoppingCart className="w-4 h-4" />
-            <span>Xem Giỏ Hàng & Thanh Toán ({cartCount} món)</span>
-            <ArrowRight className="w-4 h-4 ml-1" />
-          </button>
+  return (
+    <div className="space-y-6 notranslate">
+      {/* High-Trust Banner (Toss style) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-8 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        <div className="max-w-2xl">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 mb-3">
+            <span>Dịch Vụ Giao Hàng Vào Tủ Thông Minh</span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
+            Mua sắm & Nhận hàng tự động 24/7
+          </h1>
+          <p className="mt-2 text-slate-600 text-xs sm:text-sm leading-relaxed">
+            Chọn món hàng bạn cần, thanh toán và nhận mã OTP 60 giây để mở ngăn tủ tại Ký túc xá PTIT bất kỳ lúc nào mà không cần chờ đợi shipper.
+          </p>
+          <div className="mt-4 flex items-center gap-2 text-xs font-medium text-slate-500">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>Bảo mật bằng mã PIN động & Cảm biến tải trọng IoT</span>
+          </div>
         </div>
+
+        <button
+          onClick={onNavigateToCart}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm py-3 px-5 rounded-xl shadow-xs flex items-center gap-2 transition cursor-pointer whitespace-nowrap"
+        >
+          <ShoppingCart className="w-4 h-4" />
+          <span>Giỏ hàng ({cartCount})</span>
+          <ArrowRight className="w-4 h-4 ml-0.5" />
+        </button>
       </div>
 
-      {/* Thanh Tìm Kiếm & Lọc Danh Mục */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+      {/* Search & Filter Bar */}
+      <div className="bg-white rounded-xl border border-slate-200/90 p-3 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="relative flex-1 w-full sm:w-auto">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Tìm kiếm sản phẩm theo tên hoặc mô tả..."
+            placeholder="Tìm kiếm sản phẩm theo tên..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 text-xs rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition"
+            className="w-full pl-10 pr-3.5 py-2 bg-slate-50 border border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
           />
         </div>
 
         <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
-          {['ALL', 'Âm Thanh', 'Thời Trang', 'Phụ Kiện', 'Sách & Giáo Trình'].map((cat) => (
+          {['ALL', 'Âm thanh', 'Thời trang', 'Phụ kiện', 'Sách & Học tập'].map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
                 selectedCategory === cat
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
               }`}
             >
-              {cat === 'ALL' ? 'Tất Cả' : cat}
+              {cat === 'ALL' ? 'Tất cả' : cat}
             </button>
           ))}
         </div>
       </div>
 
-      {/* LƯỚI SẢN PHẨM RỘNG RÃI (GRID 3-4 CỘT) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      {/* Product Grid (Shadcn Card style) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
         {filteredProducts.map((p) => (
           <div
-            key={p.productId}
-            className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col justify-between group"
+            key={p.productId || p.id}
+            className="bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-md transition flex flex-col justify-between"
           >
             <div className="p-4">
-              {/* Hình ảnh */}
-              <div className="h-44 bg-slate-100 rounded-2xl mb-3 flex items-center justify-center overflow-hidden relative">
+              <div className="h-44 bg-slate-100 rounded-xl mb-3 flex items-center justify-center overflow-hidden relative">
                 <img
-                  src={p.imageUrl || 'https://placehold.co/300x200?text=Product'}
+                  src={resolveProductImage(p)}
                   alt={p.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  loading="lazy"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = resolveProductImage({ ...p, imageUrl: '' });
+                  }}
+                  className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
                 />
-                <span className="absolute top-2 right-2 bg-slate-900/80 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  {p.category || 'Công nghệ'}
+                <span className="absolute top-2.5 right-2.5 bg-white/90 backdrop-blur-sm text-slate-700 text-[11px] font-medium px-2 py-0.5 rounded-md border border-slate-200/60 shadow-xs">
+                  {resolveProductCategory(p)}
+                </span>
+                <span className="absolute bottom-2.5 left-2.5">
+                  {getSizeBadge(p.requiredSize)}
                 </span>
               </div>
 
-              {/* Thông tin kích thước & khối lượng */}
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[11px] font-black uppercase px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  Size ngăn: {p.requiredSize}
+              <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
+                <span className="flex items-center gap-1">
+                  <Box className="w-3.5 h-3.5 text-slate-400" /> Trọng lượng:
                 </span>
-                <span className="text-[11px] text-slate-400 font-medium">
-                  {p.weightKg} kg
-                </span>
+                <span className="text-slate-700 font-medium font-mono">{p.weightKg} kg</span>
               </div>
 
-              <h3 className="font-bold text-slate-800 text-sm line-clamp-1 group-hover:text-indigo-600 transition">
+              <h3 className="font-semibold text-slate-900 text-sm line-clamp-1">
                 {p.name}
               </h3>
               <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">
@@ -208,36 +243,38 @@ export default function EcommerceTab({ currentUser, onNavigateToCart }) {
               </p>
             </div>
 
-            {/* Chân thẻ sản phẩm: Giá & Nút thêm vào giỏ */}
-            <div className="px-4 pb-4 pt-2 flex items-center justify-between border-t border-slate-100">
-              <span className="text-indigo-600 font-black text-base">
-                {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(p.price)}
-              </span>
+            <div className="px-4 pb-4 pt-3 flex items-center justify-between border-t border-slate-100 bg-slate-50/60">
+              <div>
+                <span className="text-[10px] text-slate-400 block font-medium">Giá sản phẩm</span>
+                <span className="text-blue-600 font-bold text-base font-mono">
+                  {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(p.price)}
+                </span>
+              </div>
               <button
                 onClick={() => handleAddToCart(p)}
-                className="bg-slate-900 hover:bg-indigo-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-sm active:scale-95"
+                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer"
               >
                 <ShoppingCart className="w-3.5 h-3.5" />
-                <span>+ Thêm Vào Giỏ</span>
+                <span>Thêm</span>
               </button>
             </div>
           </div>
         ))}
       </div>
 
-      {/* TOAST THÔNG BÁO THÊM GIỎ HÀNG THÀNH CÔNG */}
+      {/* Clean Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-3 animate-bounce">
-          <div className="w-7 h-7 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center shrink-0">
-            <Check className="w-4 h-4 stroke-[3]" />
+        <div className="fixed bottom-6 right-6 z-50 bg-white text-slate-900 px-4 py-3 rounded-xl shadow-lg border border-slate-200 flex items-center gap-3 animate-in slide-in-from-bottom-3 duration-150">
+          <div className="w-6 h-6 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center shrink-0">
+            <Check className="w-3.5 h-3.5" />
           </div>
           <div>
-            <p className="text-xs font-bold">{toastMsg}</p>
+            <p className="text-xs font-semibold">{toastMsg}</p>
             <button
               onClick={onNavigateToCart}
-              className="text-[11px] text-indigo-300 hover:text-white underline font-semibold mt-0.5"
+              className="text-[11px] text-blue-600 hover:underline font-medium mt-0.5 flex items-center gap-1 cursor-pointer"
             >
-              Đi đến Giỏ Hàng & Thanh Toán ➔
+              Mở giỏ hàng <ArrowRight className="w-3 h-3" />
             </button>
           </div>
         </div>

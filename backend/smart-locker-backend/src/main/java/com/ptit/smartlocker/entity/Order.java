@@ -56,6 +56,14 @@ public class Order {
     @Column(name = "total_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount;
 
+    @Column(name = "payment_method", length = 30)
+    @Builder.Default
+    private String paymentMethod = "ONLINE_VIETQR"; // ONLINE_VIETQR, ONLINE_MOMO, ONLINE_VNPAY, COD
+
+    @Column(name = "payment_status", length = 20)
+    @Builder.Default
+    private String paymentStatus = "PAID"; // PAID, UNPAID
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

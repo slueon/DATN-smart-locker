@@ -75,6 +75,8 @@ CREATE TABLE orders (
     expiry_deadline DATETIME DEFAULT NULL, -- Hạn chót: 24h00 của ngày hôm sau
     status VARCHAR(30) NOT NULL DEFAULT 'PENDING', -- PENDING, DEPOSITED, COMPLETED, OVERDUE
     total_amount DECIMAL(12,2) NOT NULL,
+    payment_method VARCHAR(30) DEFAULT 'ONLINE_VIETQR', -- ONLINE_VIETQR, ONLINE_MOMO, ONLINE_VNPAY, COD
+    payment_status VARCHAR(20) DEFAULT 'PAID', -- PAID, UNPAID
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (locker_id) REFERENCES lockers(locker_id) ON DELETE SET NULL,
     FOREIGN KEY (compartment_id) REFERENCES compartments(compartment_id) ON DELETE SET NULL
@@ -137,6 +139,17 @@ CREATE TABLE device_events (
     FOREIGN KEY (locker_id) REFERENCES lockers(locker_id)
 ) ENGINE=InnoDB;
 
+-- 11. BẢNG TÀI KHOẢN NGƯỜI DÙNG & VAI TRÒ (USERS)
+CREATE TABLE users (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(100) NOT NULL,
+    full_name VARCHAR(100) NOT NULL,
+    phone VARCHAR(20) NOT NULL UNIQUE,
+    role VARCHAR(20) NOT NULL, -- 'ADMIN', 'SHIPPER', 'CUSTOMER'
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
 -- =========================================================================
 -- CHÈN DỮ LIỆU MẪU (SEED DATA CHO TỦ A VÀ E-COMMERCE)
 -- =========================================================================
@@ -160,10 +173,10 @@ INSERT INTO compartments (locker_id, comp_index, size, status, relay_pin) VALUES
 
 -- 4. Thêm sản phẩm mẫu trên sàn E-Commerce
 INSERT INTO products (name, price, image_url, description, required_size, weight_kg) VALUES
-('Tai nghe Bluetooth True Wireless Pro', 450000.00, 'https://placehold.co/400x400?text=Earbuds', 'Âm thanh chất lượng cao, pin 24h', 'S', 0.2),
-('Áo Hoodie PTIT Sinh Viên 2026', 280000.00, 'https://placehold.co/400x400?text=Hoodie', 'Chất nỉ bông ấm áp, form rộng', 'M', 0.6),
-('Balo Laptop Công Nghệ Chống Nước', 520000.00, 'https://placehold.co/400x400?text=Backpack', 'Ngăn chống sốc 15.6 inch, cổng sạc USB', 'L', 1.1),
-('Sách Lập Trình IoT với ESP32', 150000.00, 'https://placehold.co/400x400?text=Book', 'Tài liệu hướng dẫn thực hành vi điều khiển', 'S', 0.4);
+('Tai nghe Bluetooth True Wireless Pro', 450000.00, 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600&auto=format&fit=crop&q=80', 'Âm thanh chất lượng cao, pin 24h, khử ồn chủ động ANC', 'S', 0.2),
+('Áo Hoodie PTIT Sinh Viên 2026', 280000.00, 'https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=600&auto=format&fit=crop&q=80', 'Chất nỉ bông ấm áp, form rộng unisex PTIT', 'M', 0.6),
+('Balo Laptop Công Nghệ Chống Nước', 520000.00, 'https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=600&auto=format&fit=crop&q=80', 'Ngăn chống sốc 15.6 inch, cổng sạc USB tích hợp', 'L', 1.1),
+('Sách Lập Trình IoT với ESP32', 150000.00, 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=600&auto=format&fit=crop&q=80', 'Tài liệu hướng dẫn thực hành vi điều khiển & IoT', 'S', 0.4);
 
 -- 5. Khởi tạo lịch biểu sức chứa cho 3 ngày tới của Tủ A
 INSERT INTO locker_slot_schedules (locker_id, schedule_date, total_slots, available_slots) VALUES
@@ -172,3 +185,9 @@ INSERT INTO locker_slot_schedules (locker_id, schedule_date, total_slots, availa
 ('LOCKER_HN_01', DATE_ADD(CURRENT_DATE(), INTERVAL 2 DAY), 3, 3),
 ('LOCKER_HN_02', CURRENT_DATE(), 3, 3),
 ('LOCKER_HN_02', DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY), 3, 3);
+
+-- 6. Khởi tạo 3 tài khoản người dùng mẫu đại diện cho 3 vai trò
+INSERT INTO users (username, password, full_name, phone, role) VALUES
+('admin', 'admin123', 'Quản Trị Viên Hệ Thống', '0900000001', 'ADMIN'),
+('shipper', 'shipper123', 'Nguyễn Văn Shipper PTIT', '0900000002', 'SHIPPER'),
+('khachhang', '123456', 'Đoàn Viết Hoàng', '0988123456', 'CUSTOMER');

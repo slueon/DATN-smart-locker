@@ -31,6 +31,8 @@ public class OrderDTO {
         private String deliveryType; // "LOCKER" hoặc "STANDARD"
         private String lockerId;     // Bắt buộc nếu deliveryType = "LOCKER"
         private LocalDate deliveryDate; // Ngày mong muốn giao vào tủ
+        private String paymentMethod; // "ONLINE_VIETQR", "ONLINE_MOMO", "ONLINE_VNPAY", "COD"
+        private String paymentStatus; // "PAID", "UNPAID"
         private List<CartItemRequest> items;
     }
 
@@ -51,6 +53,8 @@ public class OrderDTO {
         private LocalDateTime expiryDeadline;
         private String status;
         private BigDecimal totalAmount;
+        private String paymentMethod;
+        private String paymentStatus;
         private String qrToken;
         private String otpCode;
         private LocalDateTime createdAt;

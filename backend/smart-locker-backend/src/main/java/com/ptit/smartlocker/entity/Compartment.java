@@ -21,7 +21,12 @@ public class Compartment {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "locker_id", nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Locker locker;
+
+    public String getLockerId() {
+        return locker != null ? locker.getLockerId() : null;
+    }
 
     @Column(name = "comp_index", nullable = false)
     private Integer compIndex;

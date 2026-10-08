@@ -28,3 +28,8 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 .DS_Store
+
+# External tools & agent rules
+awesome-cursorrules-main/
+.agents/
+
