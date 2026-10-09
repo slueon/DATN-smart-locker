@@ -15,6 +15,7 @@ public class PickupDTO {
         private String lockerId;
         private String authMethod; // "OTP" hoặc "QR"
         private String code;       // 6-digit OTP hoặc chuỗi QR
+        private String orderId;    // Tùy chọn: Mã đơn hàng (nếu kiosk gửi kèm để đối chiếu)
     }
 
     @Data

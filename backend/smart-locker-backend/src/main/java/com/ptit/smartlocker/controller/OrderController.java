@@ -30,12 +30,14 @@ public class OrderController {
     }
 
     /**
-     * Tra cứu chi tiết đơn hàng
+     * Tra cứu chi tiết đơn hàng (Hỗ trợ xác thực số điện thoại để chống IDOR)
      */
     @GetMapping("/{orderId}")
-    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> getOrderById(@PathVariable String orderId) {
+    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> getOrderById(
+            @PathVariable String orderId,
+            @RequestParam(required = false) String phone) {
         try {
-            OrderDTO.OrderResponse order = orderService.getOrderById(orderId);
+            OrderDTO.OrderResponse order = orderService.getOrderById(orderId, phone);
             return ResponseEntity.ok(ApiResponse.ok(order));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));

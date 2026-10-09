@@ -1,4 +1,4 @@
-import { resolveProductImage, PRODUCT_IMAGE_FALLBACKS } from '../utils/productImages';
+import { resolveProductImage, PRODUCT_IMAGE_FALLBACKS } from '../utils/productImages.js';
 
 // Centralized Interactive Store for Smart Locker Demo
 // Đồng bộ dữ liệu giữa các vai trò (Khách hàng, Shipper, Quản trị viên)
@@ -160,24 +160,143 @@ const DEFAULT_LOCKERS = [
 ];
 
 export const store = {
-  // Lấy toàn bộ đơn hàng (tự động làm sạch các mã PIN tĩnh cũ nếu chưa có hạn 5 phút)
+  // Lấy toàn bộ đơn hàng (tự động làm sạch mã cũ và tự động phát hiện đơn quá hạn)
   getOrders: () => {
     try {
       const data = localStorage.getItem(ORDERS_KEY);
       if (data) {
         const parsed = JSON.parse(data);
+        const now = Date.now();
+        let hasOverdueChange = false;
+
         const cleaned = parsed.map((o) => {
+          let updated = o;
           // Nếu đơn hàng có mã cũ mà chưa có trường otpExpiresAt, xóa mã tĩnh để khách ấn tạo OTP mới
           if (o.otpCode && !o.otpExpiresAt) {
-            return { ...o, otpCode: null, otpExpiresAt: null };
+            updated = { ...updated, otpCode: null, otpExpiresAt: null };
           }
-          return o;
+          // Tự động nhận diện đơn quá hạn lưu kho (24h00 hôm sau) mà không cần Admin can thiệp
+          if (o.status === 'DEPOSITED' && o.expiryDeadline && new Date(o.expiryDeadline).getTime() < now) {
+            updated = { ...updated, status: 'OVERDUE' };
+            hasOverdueChange = true;
+          }
+          return updated;
         });
+
+        if (hasOverdueChange) {
+          localStorage.setItem(ORDERS_KEY, JSON.stringify(cleaned));
+          cleaned.forEach((ord) => {
+            if (ord.status === 'OVERDUE' && ord.lockerId && ord.compartmentIndex) {
+              store.updateCompartmentStatus(ord.lockerId, ord.compartmentIndex, 'OVERDUE', ord.orderId);
+            }
+          });
+        }
         return cleaned;
       }
     } catch (e) {}
     localStorage.setItem(ORDERS_KEY, JSON.stringify(DEFAULT_ORDERS));
     return DEFAULT_ORDERS;
+  },
+
+  // Tự động quét và phát hiện đơn quá hạn ngầm (Event-Driven Push Notification đến Shipper & Khách)
+  checkAndScanOverdueOrders: () => {
+    try {
+      const list = store.getOrders();
+      const now = Date.now();
+      let sweptCount = 0;
+      const newlyOverdueOrders = [];
+
+      list.forEach((o) => {
+        if (o.status === 'DEPOSITED' && o.expiryDeadline) {
+          if (new Date(o.expiryDeadline).getTime() < now) {
+            o.status = 'OVERDUE';
+            sweptCount++;
+            newlyOverdueOrders.push(o);
+          }
+        }
+      });
+
+      if (sweptCount > 0) {
+        localStorage.setItem(ORDERS_KEY, JSON.stringify(list));
+
+        // Cập nhật trạng thái ngăn tủ và bắn Push Notifications chủ động
+        newlyOverdueOrders.forEach((ord) => {
+          if (ord.lockerId && ord.compartmentIndex) {
+            store.updateCompartmentStatus(ord.lockerId, ord.compartmentIndex, 'OVERDUE', ord.orderId);
+          }
+
+          // 1. Gửi thông báo đến tài khoản Khách hàng
+          store.addNotification({
+            phone: ord.customerPhone,
+            orderId: ord.orderId,
+            title: '⚠️ Bưu kiện quá hạn lưu kho',
+            message: `Bưu kiện ${ord.orderId} tại ${ord.lockerName} đã quá hạn lưu kho 24h00. Mã mở tủ đã tạm khóa. Shipper sẽ tiến hành thu hồi về kho bãi.`,
+            type: 'OVERDUE_CUSTOMER',
+          });
+
+          // 2. Gửi lệnh điều phối Push Notification đến toàn bộ Shipper
+          store.addNotification({
+            targetRole: 'SHIPPER',
+            role: 'SHIPPER',
+            phone: '0900000002',
+            orderId: ord.orderId,
+            title: '🚨 Lệnh Thu Hồi Bưu Kiện Quá Hạn!',
+            message: `Phát hiện bưu kiện ${ord.orderId} tại ${ord.lockerName} - Ngăn #${ord.compartmentIndex} đã quá hạn lưu kho. Vui lòng tới trạm thu hồi để giải phóng ngăn tủ!`,
+            type: 'OVERDUE_ALERT',
+          });
+        });
+
+        window.dispatchEvent(new Event('smart_locker_store_updated'));
+        window.dispatchEvent(
+          new CustomEvent('smart_locker_overdue_detected', {
+            detail: { count: sweptCount, orders: newlyOverdueOrders },
+          })
+        );
+      }
+
+      return { sweptCount, newlyOverdueOrders };
+    } catch (e) {
+      console.error('Lỗi quét đơn quá hạn ngầm:', e);
+      return { sweptCount: 0, newlyOverdueOrders: [] };
+    }
+  },
+
+  // Thu hồi tất cả các bưu kiện quá hạn về kho bãi trong 1 thao tác
+  returnAllOverdueOrders: () => {
+    const list = store.getOrders();
+    const overdueList = list.filter((o) => o.status === 'OVERDUE');
+    if (overdueList.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    const updated = list.map((ord) => {
+      if (ord.status === 'OVERDUE') {
+        if (ord.lockerId && ord.compartmentIndex) {
+          store.updateCompartmentStatus(ord.lockerId, ord.compartmentIndex, 'EMPTY', null);
+        }
+        return {
+          ...ord,
+          status: 'COMPLETED',
+          returnedAt: now,
+          note: 'Đã thu hồi hàng loạt về kho do quá hạn lưu kho',
+        };
+      }
+      return ord;
+    });
+
+    localStorage.setItem(ORDERS_KEY, JSON.stringify(updated));
+
+    // Thêm thông báo xác nhận thu hồi hoàn tất
+    store.addNotification({
+      targetRole: 'SHIPPER',
+      role: 'SHIPPER',
+      phone: '0900000002',
+      title: '✅ Đã hoàn tất thu hồi bưu kiện quá hạn',
+      message: `Shipper đã thu hồi thành công ${overdueList.length} bưu kiện quá hạn về kho bãi và giải phóng các ngăn tủ trống.`,
+      type: 'RECALL_SUCCESS',
+    });
+
+    window.dispatchEvent(new Event('smart_locker_store_updated'));
+    return overdueList.length;
   },
 
   // Lưu đơn hàng mới (từ trang Checkout)
@@ -220,13 +339,19 @@ export const store = {
     window.dispatchEvent(new Event('smart_locker_store_updated'));
   },
 
-  // Lấy danh sách thông báo theo SĐT khách
-  getNotifications: (phone) => {
+  // Lấy danh sách thông báo theo SĐT khách hoặc Role
+  getNotifications: (phone, role = null) => {
     try {
       const data = localStorage.getItem(NOTIFS_KEY);
       const list = data ? JSON.parse(data) : DEFAULT_NOTIFICATIONS;
-      if (!phone) return list;
-      return list.filter((n) => !n.phone || n.phone === phone);
+      if (!phone && !role) return list;
+      return list.filter((n) => {
+        if (role === 'SHIPPER' && (n.targetRole === 'SHIPPER' || n.role === 'SHIPPER')) return true;
+        if (role === 'ADMIN' && (n.targetRole === 'ADMIN' || n.role === 'ADMIN')) return true;
+        if (phone && n.phone === phone) return true;
+        if (!n.phone && !n.targetRole) return true;
+        return false;
+      });
     } catch (e) {
       return DEFAULT_NOTIFICATIONS;
     }
@@ -380,28 +505,61 @@ export const store = {
     };
   },
 
-  // ===== QUẢN LÝ GIỎ HÀNG (CART HELPERS) =====
-  getCart: () => {
+  // ===== QUẢN LÝ GIỎ HÀNG CÔ LẬP THEO TỪNG TÀI KHOẢN (USER-ISOLATED CART HELPERS) =====
+  getUserCartKey: (userParam) => {
+    if (userParam) {
+      if (typeof userParam === 'string') return `smart_locker_cart_${userParam}`;
+      if (userParam.username) return `smart_locker_cart_${userParam.username}`;
+      if (userParam.phone) return `smart_locker_cart_${userParam.phone}`;
+      if (userParam.id) return `smart_locker_cart_user_${userParam.id}`;
+    }
     try {
-      const data = localStorage.getItem(CART_KEY);
-      if (data) {
-        const parsed = JSON.parse(data);
-        return parsed.map((item) => ({
-          ...item,
-          imageUrl: resolveProductImage(item),
-        }));
+      const raw = localStorage.getItem('smart_locker_user');
+      if (raw) {
+        const u = JSON.parse(raw);
+        if (u) {
+          if (u.username) return `smart_locker_cart_${u.username}`;
+          if (u.phone) return `smart_locker_cart_${u.phone}`;
+          if (u.id) return `smart_locker_cart_user_${u.id}`;
+        }
       }
     } catch (e) {}
-    localStorage.setItem(CART_KEY, JSON.stringify(DEFAULT_CART));
-    return DEFAULT_CART;
+    return 'smart_locker_cart_guest';
   },
 
-  addToCart: (product) => {
+  getCart: (userParam) => {
+    const key = store.getUserCartKey(userParam);
+    try {
+      const data = localStorage.getItem(key);
+      if (data !== null) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => ({
+            ...item,
+            imageUrl: resolveProductImage(item),
+          }));
+        }
+      }
+    } catch (e) {}
+
+    // Chỉ tài khoản demo mặc định 'khachhang' mới nạp DEFAULT_CART nếu chưa có
+    // Mọi tài khoản khác (User B, tài khoản đăng ký mới) khởi tạo giỏ hàng rỗng []
+    const isDemoCustomer = key === 'smart_locker_cart_khachhang' || key === 'smart_locker_cart_0988123456';
+    const initialCart = isDemoCustomer ? DEFAULT_CART : [];
+    localStorage.setItem(key, JSON.stringify(initialCart));
+    return initialCart.map((item) => ({
+      ...item,
+      imageUrl: resolveProductImage(item),
+    }));
+  },
+
+  addToCart: (product, userParam) => {
+    const key = store.getUserCartKey(userParam);
     const cleanProduct = {
       ...product,
       imageUrl: resolveProductImage(product),
     };
-    const cart = store.getCart();
+    const cart = store.getCart(userParam);
     const existing = cart.find((item) => item.productId === cleanProduct.productId);
     let updated;
     if (existing) {
@@ -413,13 +571,14 @@ export const store = {
     } else {
       updated = [...cart, { ...cleanProduct, quantity: 1 }];
     }
-    localStorage.setItem(CART_KEY, JSON.stringify(updated));
+    localStorage.setItem(key, JSON.stringify(updated));
     window.dispatchEvent(new Event('smart_locker_cart_updated'));
     return updated;
   },
 
-  updateCartQuantity: (productId, delta) => {
-    const cart = store.getCart();
+  updateCartQuantity: (productId, delta, userParam) => {
+    const key = store.getUserCartKey(userParam);
+    const cart = store.getCart(userParam);
     const updated = cart
       .map((item) => {
         if (item.productId === productId) {
@@ -429,27 +588,29 @@ export const store = {
         return item;
       })
       .filter(Boolean);
-    localStorage.setItem(CART_KEY, JSON.stringify(updated));
+    localStorage.setItem(key, JSON.stringify(updated));
     window.dispatchEvent(new Event('smart_locker_cart_updated'));
     return updated;
   },
 
-  removeFromCart: (productId) => {
-    const cart = store.getCart();
+  removeFromCart: (productId, userParam) => {
+    const key = store.getUserCartKey(userParam);
+    const cart = store.getCart(userParam);
     const updated = cart.filter((item) => item.productId !== productId);
-    localStorage.setItem(CART_KEY, JSON.stringify(updated));
+    localStorage.setItem(key, JSON.stringify(updated));
     window.dispatchEvent(new Event('smart_locker_cart_updated'));
     return updated;
   },
 
-  clearCart: () => {
-    localStorage.setItem(CART_KEY, JSON.stringify([]));
+  clearCart: (userParam) => {
+    const key = store.getUserCartKey(userParam);
+    localStorage.setItem(key, JSON.stringify([]));
     window.dispatchEvent(new Event('smart_locker_cart_updated'));
     return [];
   },
 
-  getCartCount: () => {
-    const cart = store.getCart();
+  getCartCount: (userParam) => {
+    const cart = store.getCart(userParam);
     return cart.reduce((sum, item) => sum + item.quantity, 0);
   }
 };

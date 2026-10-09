@@ -1,11 +1,14 @@
 package com.ptit.smartlocker.controller;
 
 import com.ptit.smartlocker.dto.ApiResponse;
+import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.dto.ShipperDTO;
 import com.ptit.smartlocker.service.ShipperService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/shipper")
@@ -47,6 +50,29 @@ public class ShipperController {
         try {
             ShipperDTO.DepositResponse response = shipperService.depositPackage(request);
             return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    /**
+     * Shipper truy vấn danh sách bưu kiện quá hạn cần thu hồi
+     */
+    @GetMapping("/overdue-orders")
+    public ResponseEntity<ApiResponse<List<OrderDTO.OrderResponse>>> getOverdueOrders(
+            @RequestParam(required = false) String lockerId) {
+        List<OrderDTO.OrderResponse> response = shipperService.getOverdueOrders(lockerId);
+        return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách đơn hàng quá hạn thành công", response));
+    }
+
+    /**
+     * Shipper xác nhận thu hồi bưu kiện quá hạn về kho bãi và giải phóng ngăn tủ
+     */
+    @PostMapping("/recall-overdue")
+    public ResponseEntity<ApiResponse<Void>> recallOverdue(@RequestParam String orderId) {
+        try {
+            shipperService.recallOverduePackage(orderId);
+            return ResponseEntity.ok(ApiResponse.ok("Thu hồi bưu kiện " + orderId + " về kho bãi thành công!", null));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }

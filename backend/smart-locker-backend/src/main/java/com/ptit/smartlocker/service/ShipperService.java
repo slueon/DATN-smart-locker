@@ -1,5 +1,6 @@
 package com.ptit.smartlocker.service;
 
+import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.dto.ShipperDTO;
 import com.ptit.smartlocker.entity.*;
 import com.ptit.smartlocker.repository.*;
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -146,5 +148,69 @@ public class ShipperService {
                 .relayPin(compartment.getRelayPin())
                 .lockerId(order.getLocker().getLockerId())
                 .build();
+    }
+
+    /**
+     * 4. Lấy danh sách bưu kiện quá hạn lưu kho để Shipper chủ động thu hồi
+     */
+    @Transactional(readOnly = true)
+    public List<OrderDTO.OrderResponse> getOverdueOrders(String lockerId) {
+        List<Order> list;
+        if (lockerId != null && !lockerId.isBlank() && !"ALL".equalsIgnoreCase(lockerId)) {
+            list = orderRepository.findByLocker_LockerIdAndStatus(lockerId, "OVERDUE");
+        } else {
+            list = orderRepository.findByStatus("OVERDUE");
+        }
+
+        return list.stream()
+                .map(o -> OrderDTO.OrderResponse.builder()
+                        .orderId(o.getOrderId())
+                        .customerName(o.getCustomerName())
+                        .customerPhone(o.getCustomerPhone())
+                        .deliveryType(o.getDeliveryType())
+                        .lockerId(o.getLocker() != null ? o.getLocker().getLockerId() : null)
+                        .lockerName(o.getLocker() != null ? o.getLocker().getName() : null)
+                        .compartmentIndex(o.getCompartment() != null ? o.getCompartment().getCompIndex() : null)
+                        .expectedDate(o.getExpectedDate())
+                        .depositedAt(o.getDepositedAt())
+                        .expiryDeadline(o.getExpiryDeadline())
+                        .status(o.getStatus())
+                        .totalAmount(o.getTotalAmount())
+                        .paymentMethod(o.getPaymentMethod())
+                        .paymentStatus(o.getPaymentStatus())
+                        .createdAt(o.getCreatedAt())
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 5. Shipper thu hồi bưu kiện quá hạn về kho bãi và giải phóng ngăn tủ
+     */
+    @Transactional
+    public void recallOverduePackage(String orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
+
+        if (!"OVERDUE".equalsIgnoreCase(order.getStatus())) {
+            throw new RuntimeException("Đơn hàng này không ở trạng thái quá hạn lưu kho!");
+        }
+
+        order.setStatus("COMPLETED");
+        orderRepository.save(order);
+
+        if (order.getCompartment() != null) {
+            Compartment compartment = order.getCompartment();
+            compartment.setStatus("EMPTY");
+            compartmentRepository.save(compartment);
+        }
+
+        // Ghi nhật ký sự kiện thu hồi
+        DeviceEvent event = DeviceEvent.builder()
+                .locker(order.getLocker())
+                .compartmentId(order.getCompartment() != null ? order.getCompartment().getCompartmentId() : null)
+                .eventType("RECALL_OVERDUE_SUCCESS")
+                .eventPayload("Shipper recalled overdue order " + orderId + " back to warehouse")
+                .build();
+        deviceEventRepository.save(event);
     }
 }

@@ -30,11 +30,14 @@ public class PickupController {
 
     /**
      * Khách hàng yêu cầu tạo mã OTP mới (Hiệu lực 5 phút)
+     * Hỗ trợ kiểm tra số điện thoại khách hàng (Chống IDOR)
      */
     @PostMapping("/request-otp")
-    public ResponseEntity<ApiResponse<String>> requestOtp(@RequestParam String orderId) {
+    public ResponseEntity<ApiResponse<String>> requestOtp(
+            @RequestParam String orderId,
+            @RequestParam(required = false) String customerPhone) {
         try {
-            String otp = pickupService.generateNewOtp(orderId);
+            String otp = pickupService.generateNewOtp(orderId, customerPhone);
             return ResponseEntity.ok(ApiResponse.ok("Tạo mã OTP thành công (hiệu lực 5 phút)!", otp));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));

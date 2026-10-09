@@ -6,6 +6,7 @@ import com.ptit.smartlocker.repository.UserRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +19,7 @@ import java.util.stream.Collectors;
 public class AuthService {
 
     private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     /**
      * Tự động khởi tạo 3 tài khoản mặc định đại diện cho 3 vai trò nếu CSDL chưa có
@@ -30,7 +32,7 @@ public class AuthService {
             // 1. Quản trị viên
             userRepository.save(User.builder()
                     .username("admin")
-                    .password("admin123")
+                    .password(passwordEncoder.encode("admin123"))
                     .fullName("Quản Trị Viên Hệ Thống")
                     .phone("0900000001")
                     .role("ADMIN")
@@ -39,7 +41,7 @@ public class AuthService {
             // 2. Nhân viên giao hàng (Shipper)
             userRepository.save(User.builder()
                     .username("shipper")
-                    .password("shipper123")
+                    .password(passwordEncoder.encode("shipper123"))
                     .fullName("Nguyễn Văn Shipper PTIT")
                     .phone("0900000002")
                     .role("SHIPPER")
@@ -48,27 +50,46 @@ public class AuthService {
             // 3. Khách hàng
             userRepository.save(User.builder()
                     .username("khachhang")
-                    .password("123456")
+                    .password(passwordEncoder.encode("123456"))
                     .fullName("Đoàn Viết Hoàng")
                     .phone("0988123456")
                     .role("CUSTOMER")
                     .build());
 
-            log.info("Khởi tạo 3 tài khoản mẫu thành công: admin/admin123, shipper/shipper123, khachhang/123456");
+            log.info("Khởi tạo 3 tài khoản mẫu thành công với mật khẩu BCrypt: admin/admin123, shipper/shipper123, khachhang/123456");
         }
     }
 
     /**
      * Đăng nhập dùng chung cho cả 3 vai trò (CUSTOMER, SHIPPER, ADMIN)
-     * Cho phép đăng nhập bằng tên đăng nhập (username) hoặc số điện thoại (phone)
+     * Cho phép đăng nhập bằng tên đăng nhập (username) hoặc số điện thoại (phone).
+     * Hỗ trợ BCrypt và cơ chế tự động băm lại mật khẩu cũ (transparent migration).
      */
+    @Transactional
     public AuthDTO.UserResponse login(AuthDTO.LoginRequest request) {
         String loginKey = request.getUsername().trim();
         User user = userRepository.findByUsername(loginKey)
                 .or(() -> userRepository.findByPhone(loginKey))
                 .orElseThrow(() -> new RuntimeException("Tài khoản hoặc số điện thoại không tồn tại!"));
 
-        if (!user.getPassword().equals(request.getPassword())) {
+        String rawPassword = request.getPassword();
+        String storedPassword = user.getPassword();
+
+        boolean matches = false;
+        // Kiểm tra nếu mật khẩu trong DB đã được băm chuẩn BCrypt ($2a$, $2b$, $2y$)
+        if (storedPassword != null && (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$") || storedPassword.startsWith("$2y$"))) {
+            matches = passwordEncoder.matches(rawPassword, storedPassword);
+        } else {
+            // Hỗ trợ kiểm tra mật khẩu plaintext cũ, tự động băm lại và lưu vào DB
+            if (rawPassword != null && rawPassword.equals(storedPassword)) {
+                matches = true;
+                user.setPassword(passwordEncoder.encode(rawPassword));
+                userRepository.save(user);
+                log.info("Tự động nâng cấp mật khẩu sang BCrypt cho tài khoản: {}", user.getUsername());
+            }
+        }
+
+        if (!matches) {
             throw new RuntimeException("Mật khẩu không chính xác!");
         }
 
@@ -90,7 +111,7 @@ public class AuthService {
 
         User user = User.builder()
                 .username(request.getUsername().trim())
-                .password(request.getPassword())
+                .password(passwordEncoder.encode(request.getPassword()))
                 .fullName(request.getFullName().trim())
                 .phone(request.getPhone().trim())
                 .role("CUSTOMER") // Bắt buộc là CUSTOMER
@@ -120,7 +141,7 @@ public class AuthService {
 
         User user = User.builder()
                 .username(request.getUsername().trim())
-                .password(request.getPassword())
+                .password(passwordEncoder.encode(request.getPassword()))
                 .fullName(request.getFullName().trim())
                 .phone(request.getPhone().trim())
                 .role(request.getRole().toUpperCase())

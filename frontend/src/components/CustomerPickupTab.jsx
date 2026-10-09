@@ -143,16 +143,53 @@ export default function CustomerPickupTab({ currentUser }) {
 
   const handleGenerateOtp = async (order) => {
     if (!order) return;
+
+    // Kiểm tra trạng thái đơn hàng theo đúng nghiệp vụ
+    if (order.status === 'PENDING') {
+      setOtpToast('Kiện hàng chưa được nhân viên nạp vào tủ! Vui lòng chờ sau khi nạp hàng để nhận mã OTP.');
+      setTimeout(() => setOtpToast(null), 4000);
+      return;
+    }
+    if (order.status === 'COMPLETED') {
+      setOtpToast('Đơn hàng này đã được nhận thành công trước đó!');
+      setTimeout(() => setOtpToast(null), 4000);
+      return;
+    }
+    if (order.status === 'OVERDUE') {
+      setOtpToast('Đơn hàng đã quá hạn lưu kho tại tủ. Vui lòng liên hệ quản trị viên để được hỗ trợ!');
+      setTimeout(() => setOtpToast(null), 4000);
+      return;
+    }
+
     setGeneratingOtpId(order.orderId);
     try {
       let apiOtp = null;
       try {
-        const res = await pickupApi.requestOtp(order.orderId);
+        const res = await pickupApi.requestOtp(order.orderId, order.customerPhone);
         if (res.data && res.data.data) {
           apiOtp = res.data.data;
         }
       } catch (e) {
-        // Fallback to local store
+        const errMsg = e.response?.data?.message || e.message || '';
+
+        // Chặn nếu là lỗi bảo mật / nghiệp vụ từ backend cho đơn hàng tồn tại
+        const isSecurityOrBusinessBlock =
+          errMsg.includes('tạm khóa') ||
+          errMsg.includes('quá 5 lần') ||
+          errMsg.includes('quá hạn') ||
+          errMsg.includes('Số điện thoại không khớp') ||
+          errMsg.includes('chưa được nhân viên nạp') ||
+          errMsg.includes('đã được nhận thành công');
+
+        if (isSecurityOrBusinessBlock) {
+          setOtpToast(errMsg);
+          setTimeout(() => setOtpToast(null), 4000);
+          return;
+        }
+
+        // Nếu backend không tìm thấy đơn (đơn hàng demo / offline lưu ở local store) hoặc backend offline:
+        // Tiếp tục fallback sang local store để tạo OTP
+        console.warn('Backend không tìm thấy đơn hoặc đang offline, tạo mã OTP trên local store:', errMsg);
       }
 
       const result = store.requestOtpForOrder(order.orderId, apiOtp);

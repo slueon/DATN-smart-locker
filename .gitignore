@@ -22,6 +22,9 @@ build/
 *.log
 ~$*
 *.tmp
+.env
+*.env
+!.env.example
 
 # Operating System files
 Thumbs.db

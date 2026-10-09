@@ -18,12 +18,12 @@ export default function Header({
   const [notifications, setNotifications] = useState([]);
 
   useEffect(() => {
-    if (currentUser?.phone) {
-      setNotifications(store.getNotifications(currentUser.phone));
+    if (currentUser) {
+      setNotifications(store.getNotifications(currentUser.phone, currentUser.role));
     }
     const handleNotifUpdate = () => {
-      if (currentUser?.phone) {
-        setNotifications(store.getNotifications(currentUser.phone));
+      if (currentUser) {
+        setNotifications(store.getNotifications(currentUser.phone, currentUser.role));
       }
     };
     window.addEventListener('smart_locker_notifs_updated', handleNotifUpdate);
@@ -45,7 +45,9 @@ export default function Header({
       case 'customer':
         return { category: 'Dịch vụ khách hàng', title: 'Bưu kiện & Tra cứu mở tủ' };
       case 'shipper':
-        return { category: 'Vận hành giao nhận', title: 'Cổng Shipper & Xác thực cảm biến' };
+        return { category: 'Vận hành giao nhận', title: 'Cổng Shipper & Nạp tủ' };
+      case 'shipper-recall':
+        return { category: 'Vận hành giao nhận', title: 'Thu hồi bưu kiện quá hạn (IoT 4 bước)' };
       case 'admin':
         return { category: 'Quản trị hệ thống', title: 'Bảng điều khiển KPI & Vận hành' };
       default:
@@ -107,7 +109,9 @@ export default function Header({
                       <Bell className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="text-xs font-bold text-slate-900 block">Thông Báo Nhận Hàng</span>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        {currentUser?.role === 'SHIPPER' ? 'Thông Báo Điều Phối Shipper' : 'Thông Báo Nhận Hàng'}
+                      </span>
                       <span className="text-[10px] text-slate-400">{notifications.length} thông báo trong hệ thống</span>
                     </div>
                   </div>
@@ -140,7 +144,11 @@ export default function Header({
                       <div
                         key={n.id}
                         className={`p-3 rounded-xl border text-xs transition-all ${
-                          n.type === 'OTP_REQUEST'
+                          n.type === 'OVERDUE_ALERT'
+                            ? 'bg-rose-50/80 border-rose-300 text-rose-950 font-medium shadow-xs'
+                            : n.type === 'RECALL_SUCCESS'
+                            ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+                            : n.type === 'OTP_REQUEST'
                             ? 'bg-amber-50/60 border-amber-200/80 text-amber-900'
                             : 'bg-slate-50 border-slate-200/60 text-slate-700 hover:bg-slate-100/60'
                         }`}

@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShoppingBag, ShoppingCart, Package, Truck, Shield,
-  ChevronLeft, ChevronRight, LogOut
+  ChevronLeft, ChevronRight, LogOut, PackageX
 } from 'lucide-react';
 import { store } from '../services/store';
 
@@ -16,6 +16,22 @@ export default function Sidebar({
   setSelectedStation,
   cartCount
 }) {
+  const [overdueCount, setOverdueCount] = useState(() => {
+    return store.getOrders().filter((o) => o.status === 'OVERDUE').length;
+  });
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setOverdueCount(store.getOrders().filter((o) => o.status === 'OVERDUE').length);
+    };
+    window.addEventListener('smart_locker_store_updated', handleUpdate);
+    window.addEventListener('smart_locker_overdue_detected', handleUpdate);
+    return () => {
+      window.removeEventListener('smart_locker_store_updated', handleUpdate);
+      window.removeEventListener('smart_locker_overdue_detected', handleUpdate);
+    };
+  }, []);
+
   const navigationGroups = [
     {
       group: 'DỊCH VỤ KHÁCH HÀNG',
@@ -31,6 +47,14 @@ export default function Sidebar({
       roles: ['SHIPPER'],
       items: [
         { id: 'shipper', label: 'Cổng Shipper & Nạp tủ', icon: Truck, desc: 'Mã QR 60s & Cảm biến' },
+        {
+          id: 'shipper-recall',
+          label: 'Thu hồi hàng quá hạn',
+          icon: PackageX,
+          desc: 'Quy trình 4 bước IoT',
+          badge: overdueCount > 0 ? overdueCount : null,
+          badgeColor: 'rose'
+        },
       ]
     },
     {
@@ -134,7 +158,11 @@ export default function Sidebar({
                             </div>
                             {item.badge && (
                               <span className={`ml-1 text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
-                                isActive ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
+                                isActive
+                                  ? 'bg-white text-blue-700'
+                                  : item.badgeColor === 'rose'
+                                  ? 'bg-rose-500 text-white animate-pulse'
+                                  : 'bg-blue-600 text-white'
                               }`}>
                                 {item.badge}
                               </span>

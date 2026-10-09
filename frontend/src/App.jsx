@@ -7,6 +7,7 @@ import EcommerceTab from './components/EcommerceTab';
 import CartCheckoutTab from './components/CartCheckoutTab';
 import CustomerPickupTab from './components/CustomerPickupTab';
 import ShipperTab from './components/ShipperTab';
+import ShipperRecallTab from './components/ShipperRecallTab';
 import AdminTab from './components/AdminTab';
 import { store } from './services/store';
 
@@ -52,7 +53,7 @@ export default function App() {
         setActiveTab('admin');
       }
     } else if (currentUser?.role === 'SHIPPER') {
-      if (activeTab !== 'shipper') {
+      if (!['shipper', 'shipper-recall'].includes(activeTab)) {
         setActiveTab('shipper');
       }
     } else if (currentUser?.role === 'CUSTOMER') {
@@ -66,12 +67,16 @@ export default function App() {
     setCurrentUser(user);
     localStorage.setItem('smart_locker_user', JSON.stringify(user));
     setActiveTab(getDefaultTab(user.role));
+    setCart(store.getCart(user));
+    window.dispatchEvent(new Event('smart_locker_cart_updated'));
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('smart_locker_user');
     setActiveTab('ecommerce');
+    setCart(store.getCart());
+    window.dispatchEvent(new Event('smart_locker_cart_updated'));
   };
 
   if (!currentUser) {
@@ -128,7 +133,17 @@ export default function App() {
           )}
 
           {activeTab === 'shipper' && (
-            <ShipperTab currentUser={currentUser} />
+            <ShipperTab
+              currentUser={currentUser}
+              onNavigateToRecall={() => setActiveTab('shipper-recall')}
+            />
+          )}
+
+          {activeTab === 'shipper-recall' && (
+            <ShipperRecallTab
+              currentUser={currentUser}
+              onNavigateToDeposit={() => setActiveTab('shipper')}
+            />
           )}
 
           {activeTab === 'admin' && (

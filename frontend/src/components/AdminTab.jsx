@@ -133,21 +133,11 @@ export default function AdminTab() {
     setCronRunning(true);
     setCronMsg('');
     setTimeout(() => {
-      const now = new Date().getTime();
-      let sweptCount = 0;
-      const allOrders = store.getOrders();
-      allOrders.forEach((o) => {
-        if (o.status === 'DEPOSITED' && o.expiryDeadline) {
-          if (new Date(o.expiryDeadline).getTime() < now) {
-            store.updateOrderStatus(o.orderId, 'OVERDUE');
-            sweptCount++;
-          }
-        }
-      });
+      const result = store.checkAndScanOverdueOrders();
       setCronRunning(false);
-      setCronMsg(`Cron Job hoàn tất lúc ${new Date().toLocaleTimeString('vi-VN')}! Đã quét và chuyển ${sweptCount} đơn quá hạn sang trạng thái OVERDUE.`);
+      setCronMsg(`Đã quét thủ công lúc ${new Date().toLocaleTimeString('vi-VN')}! Phát hiện ${result.sweptCount} đơn quá hạn mới (Hệ thống cũng đang tự động chạy ngầm mỗi 30s và bắn Push Alert tới Shipper).`);
       refreshAllData();
-    }, 1000);
+    }, 700);
   };
 
   const getCompartmentBadge = (status) => {

@@ -13,6 +13,7 @@ import java.util.Optional;
 public interface OrderRepository extends JpaRepository<Order, String> {
     List<Order> findByCustomerPhone(String customerPhone);
     List<Order> findByLocker_LockerIdAndStatus(String lockerId, String status);
+    List<Order> findByStatus(String status);
 
     /**
      * Tìm các đơn hàng đã gửi vào tủ nhưng quá hạn 24h00 của ngày N+1

@@ -4,11 +4,13 @@ import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.entity.*;
 import com.ptit.smartlocker.repository.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +18,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class OrderService {
 
     private final OrderRepository orderRepository;
@@ -90,45 +93,35 @@ public class OrderService {
                     .orElseThrow(() -> new RuntimeException("Tủ không tồn tại: " + request.getLockerId()));
             order.setLocker(locker);
 
-            // 1. Áp dụng PESSIMISTIC LOCKING để tránh đặt trùng slot (Race Condition)
-            LockerSlotSchedule schedule = slotScheduleRepository
-                    .findWithLockByLockerIdAndDate(request.getLockerId(), request.getDeliveryDate())
-                    .orElseGet(() -> {
-                        LockerSlotSchedule newSchedule = LockerSlotSchedule.builder()
-                                .locker(locker)
-                                .scheduleDate(request.getDeliveryDate())
-                                .totalSlots(locker.getTotalCompartments())
-                                .availableSlots(locker.getTotalCompartments())
-                                .version(0L)
-                                .build();
-                        return slotScheduleRepository.save(newSchedule);
-                    });
+            // 1. Áp dụng PESSIMISTIC LOCKING để khóa và lấy lịch biểu an toàn (Atomic Lock)
+            LockerSlotSchedule schedule = getOrCreateScheduleWithLock(locker, request.getDeliveryDate());
 
             if (schedule.getAvailableSlots() <= 0) {
                 throw new RuntimeException("Tủ " + locker.getName() + " đã hết chỗ vào ngày " 
                         + request.getDeliveryDate() + ". Vui lòng chọn ngày khác hoặc Giao tận nhà!");
             }
 
-            // Trừ 1 slot khả dụng
+            // 2. Tìm và khóa bi quan (SELECT ... FOR UPDATE) các ngăn tủ EMPTY của trạm
+            List<Compartment> lockedEmptyComps = compartmentRepository
+                    .findWithLockByLockerIdAndStatus(request.getLockerId(), "EMPTY");
+
+            // Chọn ngăn tủ thích hợp nhất (ưu tiên đúng size -> nâng cấp size)
+            Compartment assignedComp = selectSuitableCompartment(lockedEmptyComps, requiredSize);
+
+            // 3. Toàn vẹn giao dịch: Nếu không còn ngăn tủ phù hợp kích cỡ, hủy giao dịch và rollback ngay lập tức!
+            if (assignedComp == null) {
+                throw new RuntimeException("Tủ " + locker.getName() + " hiện không còn ngăn tủ trống phù hợp với kích thước kiện hàng (Size " 
+                        + requiredSize + "). Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
+            }
+
+            // Trừ 1 slot khả dụng trên lịch biểu
             schedule.setAvailableSlots(schedule.getAvailableSlots() - 1);
             slotScheduleRepository.save(schedule);
 
-            // 2. Tìm ngăn tủ phù hợp theo kích cỡ (S/M/L) và đang còn EMPTY
-            List<Compartment> availableComps = compartmentRepository
-                    .findByLocker_LockerIdAndStatus(request.getLockerId(), "EMPTY");
-
-            if (!availableComps.isEmpty()) {
-                // Ưu tiên ngăn cùng size, nếu không lấy ngăn đầu tiên còn trống
-                final String targetSize = requiredSize;
-                Compartment assignedComp = availableComps.stream()
-                        .filter(c -> c.getSize().equalsIgnoreCase(targetSize))
-                        .findFirst()
-                        .orElse(availableComps.get(0));
-
-                assignedComp.setStatus("RESERVED");
-                compartmentRepository.save(assignedComp);
-                order.setCompartment(assignedComp);
-            }
+            // Đánh dấu ngăn tủ đã được giữ chỗ (RESERVED)
+            assignedComp.setStatus("RESERVED");
+            compartmentRepository.save(assignedComp);
+            order.setCompartment(assignedComp);
         }
 
         orderRepository.save(order);
@@ -151,10 +144,21 @@ public class OrderService {
     }
 
     @Transactional(readOnly = true)
-    public OrderDTO.OrderResponse getOrderById(String orderId) {
+    public OrderDTO.OrderResponse getOrderById(String orderId, String phone) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
+
+        // Ràng buộc chống IDOR: Nếu có cung cấp số điện thoại, bắt buộc phải khớp với đơn
+        if (phone != null && !phone.isBlank() && !order.getCustomerPhone().equalsIgnoreCase(phone.trim())) {
+            throw new RuntimeException("Bạn không có quyền truy cập thông tin đơn hàng này!");
+        }
+
         return mapToOrderResponse(order, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public OrderDTO.OrderResponse getOrderById(String orderId) {
+        return getOrderById(orderId, null);
     }
 
     @Transactional(readOnly = true)
@@ -195,5 +199,56 @@ public class OrderService {
                 .otpCode(otpCode)
                 .createdAt(order.getCreatedAt())
                 .build();
+    }
+
+    /**
+     * Khởi tạo an toàn và khóa bi quan bản ghi Lịch biểu (Pessimistic Lock).
+     * Sử dụng INSERT IGNORE để ngăn ngừa hoàn toàn Race Condition / DataIntegrityViolationException.
+     */
+    private LockerSlotSchedule getOrCreateScheduleWithLock(Locker locker, LocalDate deliveryDate) {
+        slotScheduleRepository.initScheduleIfNotExists(
+                locker.getLockerId(),
+                deliveryDate,
+                locker.getTotalCompartments()
+        );
+
+        return slotScheduleRepository
+                .findWithLockByLockerIdAndDate(locker.getLockerId(), deliveryDate)
+                .orElseThrow(() -> new RuntimeException("Không thể khóa lịch biểu cho tủ: " + locker.getLockerId()));
+    }
+
+    /**
+     * Thuật toán lựa chọn ngăn tủ phù hợp theo kích cỡ (Size Matching Strategy):
+     * - Ưu tiên 1: Chọn đúng kích thước yêu cầu (Exact Match: S -> S, M -> M, L -> L)
+     * - Ưu tiên 2: Nâng cấp ngăn lớn hơn nếu hết ngăn chuẩn (Size Upgrade: S -> M -> L, M -> L)
+     * - Trả về null nếu không có ngăn nào đủ sức chứa
+     */
+    private Compartment selectSuitableCompartment(List<Compartment> emptyComps, String requiredSize) {
+        if (emptyComps == null || emptyComps.isEmpty()) {
+            return null;
+        }
+
+        // 1. Khớp chính xác kích thước
+        for (Compartment comp : emptyComps) {
+            if (comp.getSize() != null && comp.getSize().equalsIgnoreCase(requiredSize)) {
+                return comp;
+            }
+        }
+
+        // 2. Nâng cấp lên ngăn lớn hơn nếu ngăn hiện tại nhỏ hơn
+        if ("S".equalsIgnoreCase(requiredSize)) {
+            for (Compartment comp : emptyComps) {
+                if ("M".equalsIgnoreCase(comp.getSize())) return comp;
+            }
+            for (Compartment comp : emptyComps) {
+                if ("L".equalsIgnoreCase(comp.getSize())) return comp;
+            }
+        } else if ("M".equalsIgnoreCase(requiredSize)) {
+            for (Compartment comp : emptyComps) {
+                if ("L".equalsIgnoreCase(comp.getSize())) return comp;
+            }
+        }
+
+        return null;
     }
 }
