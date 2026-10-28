@@ -1,16 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import CircularTimer from './CircularTimer';
+import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
 import { shipperApi } from '../services/api';
 import {
   Truck, QrCode, Timer, ShieldCheck, CheckCircle2, AlertTriangle,
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
   DoorOpen, Weight, Layers, ArrowRight, User, PackageX,
-  Barcode, ScanLine, Scan, Camera
+  Barcode, ScanLine, Scan, Camera, Sparkles, ChevronRight,
+  Shield, Volume2, Cpu, Clock, PlusCircle
 } from 'lucide-react';
 
 export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [orders, setOrders] = useState([]);
+  const [allLockers, setAllLockers] = useState([]);
+  const [sampleToast, setSampleToast] = useState(null);
   const [selectedLockerFilter, setSelectedLockerFilter] = useState('ALL');
   const [selectedOrderId, setSelectedOrderId] = useState(null);
 
@@ -48,18 +53,17 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   };
 
   useEffect(() => {
-    // 1. Tự động kiểm tra đơn hàng khi mở tab
     store.checkAndScanOverdueOrders();
     loadOrders();
+    setAllLockers(store.getLockers());
 
-    const handleUpdate = () => loadOrders();
-
-    // 2. Lắng nghe cập nhật đơn hàng
-    const handleOverdueDetected = () => {
+    const handleUpdate = () => {
       loadOrders();
+      setAllLockers(store.getLockers());
     };
+    const handleOverdueDetected = () => loadOrders();
 
-    // 3. Tác vụ Daemon ngầm định kỳ 30 giây tự động đồng bộ dữ liệu
+    // Tác vụ Daemon ngầm định kỳ 30 giây tự động đồng bộ dữ liệu
     const scanTimer = setInterval(() => {
       const scanResult = store.checkAndScanOverdueOrders();
       if (scanResult.sweptCount > 0) {
@@ -84,6 +88,14 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     if (pending.length > 0 && !selectedOrderId) {
       setSelectedOrderId(pending[0].orderId);
     }
+  };
+
+  const handleCreateSampleOrder = () => {
+    const newOrd = store.generateSamplePendingOrder(selectedLockerFilter !== 'ALL' ? selectedLockerFilter : null);
+    loadOrders();
+    setSelectedOrderId(newOrd.orderId);
+    setSampleToast(`Đã thêm đơn hàng ${newOrd.orderId} (${newOrd.productName}) chờ nạp!`);
+    setTimeout(() => setSampleToast(null), 3500);
   };
 
   useEffect(() => {
@@ -199,96 +211,133 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
 
   return (
     <div className="space-y-5 notranslate select-none">
-      {/* 4 KPI Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase">Tổng đơn ca này</span>
-          <div className="text-2xl font-bold text-slate-900 mt-1 font-mono">{orders.length}</div>
+      {/* 4 KPI Metric Cards (Apple Liquid Glass Bento Grid) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+            <span className="uppercase tracking-wider">Tổng đơn ca này</span>
+            <div className="w-8 h-8 rounded-2xl bg-blue-500/15 text-blue-600 flex items-center justify-center font-bold">
+              <Truck className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-3xl font-extrabold text-slate-900 mt-1 font-mono">{orders.length}</div>
         </div>
 
-        <div className="p-4 rounded-xl border border-amber-300 bg-amber-50/60 shadow-xs">
-          <span className="text-[11px] font-semibold text-amber-700 uppercase">Chờ nạp vào ngăn</span>
-          <div className="text-2xl font-bold text-amber-600 mt-1 font-mono">{pendingOrders.length}</div>
+        <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
+          <div className="flex items-center justify-between text-xs text-amber-700 font-semibold">
+            <span className="uppercase tracking-wider">Chờ nạp vào ngăn</span>
+            <div className="w-8 h-8 rounded-2xl bg-amber-500/15 text-amber-600 flex items-center justify-center font-bold">
+              <Clock className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-3xl font-extrabold text-amber-600 mt-1 font-mono">{pendingOrders.length}</div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-emerald-200 shadow-xs">
-          <span className="text-[11px] font-semibold text-emerald-700 uppercase">Đã nạp thành công</span>
-          <div className="text-2xl font-bold text-emerald-600 mt-1 font-mono">{depositedOrders.length}</div>
+        <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
+          <div className="flex items-center justify-between text-xs text-emerald-700 font-semibold">
+            <span className="uppercase tracking-wider">Đã nạp thành công</span>
+            <div className="w-8 h-8 rounded-2xl bg-emerald-500/15 text-emerald-600 flex items-center justify-center font-bold">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-3xl font-extrabold text-emerald-600 mt-1 font-mono">{depositedOrders.length}</div>
         </div>
 
         <div
           onClick={() => onNavigateToRecall && onNavigateToRecall()}
-          className="p-4 rounded-xl border border-rose-200 bg-white hover:border-rose-400 hover:bg-rose-50/50 shadow-xs cursor-pointer transition"
+          className="liquid-glass-card p-5 rounded-3xl border border-white/80 hover:bg-white/60 shadow-lg cursor-pointer transition hover:-translate-y-0.5 space-y-1"
           title="Chuyển sang tab Thu hồi hàng quá hạn"
         >
-          <span className="text-[11px] font-semibold text-rose-700 uppercase">Quá hạn cần thu hồi</span>
-          <div className="text-2xl font-bold text-rose-600 mt-1 font-mono flex items-center justify-between">
+          <div className="flex items-center justify-between text-xs text-rose-700 font-semibold">
+            <span className="uppercase tracking-wider">Cần thu hồi (24h)</span>
+            <div className="w-8 h-8 rounded-2xl bg-rose-500/15 text-rose-600 flex items-center justify-center font-bold animate-pulse">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-3xl font-extrabold text-rose-600 mt-1 font-mono flex items-center gap-1.5">
             <span>{overdueOrders.length}</span>
-            {overdueOrders.length > 0 && (
-              <span className="text-[10px] font-sans font-bold bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full uppercase animate-pulse">
-                Khẩn cấp
-              </span>
-            )}
+            <span className="text-xs font-bold text-rose-600 bg-rose-50/80 px-2 py-0.5 rounded-full border border-rose-200">
+              Zero-Touch →
+            </span>
           </div>
         </div>
       </div>
 
       {/* Action Strip: Kiosk Identification 60s */}
-      <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="space-y-0.5">
-          <div className="flex items-center gap-1.5 text-amber-800 text-xs font-bold uppercase">
-            <ShieldCheck className="w-4 h-4" /> Xác thực danh tính tại màn hình Kiosk
+      <div className="liquid-glass-card border border-amber-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm bg-gradient-to-r from-amber-50/80 via-orange-50/40 to-amber-50/80">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-amber-900 text-xs font-bold uppercase tracking-wide">
+            <ShieldCheck className="w-4 h-4 text-amber-700" /> Xác thực danh tính Shipper tại Kiosk
           </div>
-          <p className="text-xs text-slate-600">
-            Tạo mã QR động 60 giây và hướng vào Module camera GM65 của trạm tủ để bắt đầu quyền nạp hàng.
+          <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
+            Quét mã QR tại trạm tủ để cấp quyền nạp kiện hàng.
           </p>
         </div>
 
         <button
           onClick={handleGenerateToken}
-          className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2 rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+          className="ios-btn bg-gradient-to-r from-amber-500 via-amber-400 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold px-5 py-2.5 rounded-2xl text-xs shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer whitespace-nowrap transition border border-white/40"
         >
           <QrCode className="w-4 h-4" />
-          <span>Tạo mã QR xác minh 60s</span>
+          <span>Sinh Mã QR Shipper 60s</span>
         </button>
       </div>
 
-      {/* SPLIT-PANE WORKSPACE: Left = Queue, Right = Deposit Station */}
+      {/* Main Workspace (Deposit Flow & Queue) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* LEFT COLUMN: DISPATCH QUEUE (5 Columns) */}
-        <div className="lg:col-span-5 space-y-2.5">
-          <div className="flex items-center justify-between px-1">
+        {/* PANE 1: PENDING ORDERS LIST (5 cols) */}
+        <div className="lg:col-span-5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between px-1 gap-2">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Hàng cần giao ({filteredPending.length})
+              Hàng Chờ Nạp ({filteredPending.length})
             </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCreateSampleOrder}
+                className="ios-btn text-[11px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95 transition"
+                title="Tạo thêm 1 đơn hàng chờ nạp mẫu cho Shipper"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>+ Thêm đơn</span>
+              </button>
 
-            {/* Locker Filter */}
-            <div className="flex gap-1">
-              {[
-                { id: 'ALL', label: 'Tất cả' },
-                { id: 'LOCKER_HN_01', label: 'KTX A1' },
-                { id: 'LOCKER_HN_02', label: 'Thư viện' },
-              ].map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setSelectedLockerFilter(f.id)}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer ${
-                    selectedLockerFilter === f.id
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
+              <select
+                value={selectedLockerFilter}
+                onChange={(e) => setSelectedLockerFilter(e.target.value)}
+                className="text-xs bg-white/90 backdrop-blur-md border border-slate-200/90 rounded-xl px-2.5 py-1 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs cursor-pointer max-w-[150px] truncate"
+              >
+                <option value="ALL">📍 Tất cả trạm</option>
+                {allLockers.map((lk) => (
+                  <option key={lk.lockerId} value={lk.lockerId}>
+                    {lk.name.replace('Tủ Giao Nhận ', '')}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
-          <div className="space-y-2 max-h-[720px] overflow-y-auto pr-1">
+          {sampleToast && (
+            <div className="p-2.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-xl flex items-center justify-between animate-in fade-in duration-200 shadow-2xs">
+              <div className="flex items-center gap-1.5 font-medium truncate">
+                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                <span className="truncate">{sampleToast}</span>
+              </div>
+              <button
+                onClick={() => setSampleToast(null)}
+                className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer ml-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1">
             {filteredPending.length === 0 ? (
-              <div className="bg-white p-8 rounded-xl border border-slate-200 text-center">
-                <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-                <p className="text-xs font-semibold text-slate-800">Toàn bộ bưu kiện đã được nạp an toàn!</p>
+              <div className="liquid-glass-card p-10 rounded-3xl border border-white/80 text-center shadow-sm">
+                <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                <h4 className="font-bold text-slate-800 text-sm">Đã nạp hết hàng!</h4>
+                <p className="text-xs text-slate-500 mt-1">Không còn kiện hàng nào chờ nạp tại trạm này.</p>
               </div>
             ) : (
               filteredPending.map((ord) => {
@@ -299,34 +348,35 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                     key={ord.orderId}
                     onClick={() => {
                       setSelectedOrderId(ord.orderId);
-                      setDepositStep(1);
-                      setIsDepositing(false);
-                      setScannedBarcode(null);
-                      setIsScanSuccess(false);
-                      setScanError(null);
+                      if (!isDepositing) {
+                        setScannedBarcode(null);
+                        setIsScanSuccess(false);
+                      }
                     }}
-                    className={`p-3.5 rounded-xl border transition-all cursor-pointer bg-white ${
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer ${
                       isSelected
-                        ? 'border-amber-500 ring-2 ring-amber-500/10 shadow-xs'
-                        : 'border-slate-200/90 hover:border-slate-300'
+                        ? 'liquid-glass-card border-amber-500/90 ring-2 ring-amber-500/30 shadow-xl shadow-amber-500/15 -translate-y-0.5'
+                        : 'liquid-glass-subtle border-white/70 hover:border-white/95 hover:bg-white/60 shadow-sm'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.2 rounded">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50/80 border border-amber-200 px-2.5 py-0.5 rounded-lg">
                         {ord.orderId}
                       </span>
-                      <span className="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-semibold px-2 py-0.2 rounded">
+                      <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full border border-amber-200">
                         Chờ nạp
                       </span>
                     </div>
 
-                    <h4 className="font-semibold text-slate-900 text-xs truncate">
-                      {ord.productName || 'Kiện hàng Smart Locker'}
+                    <h4 className="font-bold text-slate-900 text-xs truncate">
+                      {ord.productName}
                     </h4>
 
-                    <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100">
-                      <span>{ord.lockerName}</span>
-                      <span className="font-semibold text-blue-700 bg-blue-50 px-2 py-0.2 rounded">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2.5 pt-2.5 border-t border-slate-100/70">
+                      <span className="flex items-center gap-1 font-medium">
+                        <MapPin className="w-3.5 h-3.5 text-blue-500" /> {ord.lockerName}
+                      </span>
+                      <span className="font-bold text-slate-700 bg-white/70 px-2 py-0.5 rounded-md text-[10px] border border-white/80">
                         Ngăn #{ord.compartmentIndex} ({ord.compartmentSize})
                       </span>
                     </div>
@@ -337,354 +387,267 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: ACTIVE DEPOSIT STATION & SENSOR WORKBENCH (7 Columns) */}
+        {/* PANE 2: 4-STEP DEPOSIT PROCESS WORKSPACE (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
           {activeOrder ? (
-            <div className="bg-white rounded-2xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-5">
-              {/* Active Parcel Info */}
-              <div className="pb-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="liquid-glass-card rounded-3xl border border-white/90 p-5 sm:p-7 shadow-md space-y-5">
+              {/* Stepper Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                    <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-md">
                       {activeOrder.orderId}
                     </span>
-                    <span className="text-xs text-slate-400">
-                      Điểm đến: <strong className="text-slate-800">{activeOrder.lockerName}</strong>
+                    <span className="text-xs text-slate-500">
+                      Người nhận: <strong className="text-slate-800">{activeOrder.customerName}</strong> ({activeOrder.customerPhone})
                     </span>
                   </div>
-                  <h3 className="text-base font-bold text-slate-900 mt-1">
-                    {activeOrder.productName || 'Kiện hàng Smart Locker'}
+                  <h3 className="text-base font-bold text-slate-900 mt-1.5">
+                    {activeOrder.productName}
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Người nhận: <strong className="text-slate-800">{activeOrder.customerName}</strong> ({activeOrder.customerPhone})
-                  </p>
                 </div>
 
                 <div className="text-right">
-                  <span className="bg-blue-50 text-blue-700 font-bold px-3 py-1 rounded-lg border border-blue-200 text-xs block">
+                  <span className="text-[10px] text-slate-400 block font-semibold">Vị trí ngăn chỉ định</span>
+                  <span className="text-blue-600 font-extrabold text-sm">
                     Ngăn #{activeOrder.compartmentIndex} (Size {activeOrder.compartmentSize})
                   </span>
                 </div>
               </div>
 
-              {/* DUAL-SENSOR DEPOSIT STEPPER WIZARD WITH GM65 BARCODE SCAN */}
-              <div className="p-4 sm:p-5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                    <Barcode className="w-4 h-4 text-blue-600" />
-                    Quy Trình Nạp Hàng 4 Bước Cảm Biến Kép
-                  </span>
-                  <span className="text-[11px] font-mono font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
-                    Bước {depositStep} / 4
-                  </span>
-                </div>
+              {/* 4-Step Visual Progress Bar */}
+              <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                {[
+                  { step: 1, label: '1. Quét mã kiện' },
+                  { step: 2, label: '2. Mở cửa tủ' },
+                  { step: 3, label: '3. Bỏ kiện hàng' },
+                  { step: 4, label: '4. Kiểm tra cảm biến' },
+                ].map((s) => (
+                  <div
+                    key={s.step}
+                    className={`p-2.5 rounded-xl border text-[11px] font-bold transition-all ${
+                      depositStep === s.step
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/20'
+                        : depositStep > s.step
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-50 text-slate-400 border-slate-200'
+                    }`}
+                  >
+                    {s.label}
+                  </div>
+                ))}
+              </div>
 
-                {/* 4 Steps Stepper Indicator */}
-                <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                  {[
-                    { step: 1, label: '1. Quét mã kiện (GM65)' },
-                    { step: 2, label: '2. Mở Solenoid' },
-                    { step: 3, label: '3. Đặt & Đóng tủ' },
-                    { step: 4, label: '4. Cảm biến kép' },
-                  ].map((s) => {
-                    const isDone = depositStep > s.step;
-                    const isCurrent = depositStep === s.step;
-
-                    return (
-                      <div
-                        key={s.step}
-                        className={`p-2 rounded-xl border transition-all ${
-                          isDone
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-semibold'
-                            : isCurrent
-                            ? 'bg-blue-600 border-blue-600 text-white font-bold shadow-xs'
-                            : 'bg-white border-slate-200 text-slate-400'
-                        }`}
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          {isDone ? (
-                            <Check className="w-3.5 h-3.5" />
-                          ) : (
-                            <span className="font-mono text-[11px]">{s.step}</span>
-                          )}
-                          <span className="text-[11px] hidden sm:inline">{s.label.split('. ')[1]}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* STEP 1: SCAN PARCEL BARCODE VIA GM65 */}
-                {depositStep === 1 && (
-                  <div className="space-y-4 pt-1">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-200">
-                        <Barcode className="w-5 h-5" />
-                      </div>
-                      <div className="text-xs flex-1">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-bold text-slate-900 text-sm">
-                            Bước 1: Quét mã vạch kiện hàng (Module GM65 Tracking Scan)
-                          </h4>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                            GM65 SCANNER ONLINE
-                          </span>
-                        </div>
-                        <p className="text-slate-500 mt-1 leading-relaxed">
-                          Đưa mã Barcode hoặc QR Code in trên tem bưu kiện vào tầm quét của Module GM65 để hệ thống đối soát mã vận đơn và phân bổ ngăn tủ chính xác.
-                        </p>
-                      </div>
+              {/* STEP 1: SCAN BARCODE (GM65 LASER SIMULATION) */}
+              {depositStep === 1 && (
+                <div className="p-5 rounded-2xl bg-slate-900 text-white border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Camera className="w-5 h-5 text-blue-400" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                        Camera Quét Mã Đang Hoạt Động
+                      </span>
                     </div>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  </div>
 
-                    {/* Scanner Viewfinder Box */}
-                    <div className="bg-slate-950 rounded-2xl p-4 sm:p-5 text-white relative overflow-hidden border border-slate-800 shadow-inner">
-                      <div className="py-4 text-center space-y-3">
-                        <div className="relative inline-block px-12 py-5 border-2 border-dashed border-blue-400/50 rounded-xl bg-blue-950/20">
-                          <Barcode className="w-16 h-10 text-blue-400 mx-auto opacity-80" />
-                          {/* Animated Red Laser Scan Line */}
-                          <div className="absolute inset-x-0 top-1/2 h-0.5 bg-rose-500 shadow-[0_0_10px_#f43f5e] animate-pulse" />
-                          <div className="text-[10px] font-mono text-slate-400 mt-1 uppercase tracking-wider">
-                            Vùng nhận diện mã GM65
-                          </div>
-                        </div>
+                  {/* Laser Scanning Frame Viewport */}
+                  <div className="relative h-44 rounded-xl border-2 border-dashed border-slate-700 bg-slate-950 flex flex-col items-center justify-center overflow-hidden">
+                    {/* Laser Red Beam Line */}
+                    <div className="absolute inset-x-4 h-0.5 bg-gradient-to-r from-transparent via-red-500 to-transparent shadow-[0_0_12px_#ef4444] animate-laser-sweep" />
 
-                        {isScanSuccess && scannedBarcode ? (
-                          <div className="bg-emerald-500/20 border border-emerald-500/40 rounded-xl p-3 max-w-md mx-auto text-center animate-in zoom-in-95">
-                            <div className="text-xs font-bold text-emerald-300 flex items-center justify-center gap-1.5">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                              ĐÃ XÁC THỰC MÃ KIỆN: <span className="font-mono text-white text-sm">{scannedBarcode}</span>
-                            </div>
-                            <p className="text-[11px] text-emerald-200/90 mt-1">
-                              Trùng khớp hoàn toàn với {activeOrder.lockerName} — Chỉ định: <strong>Ngăn #{activeOrder.compartmentIndex} (Size {activeOrder.compartmentSize})</strong>
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <p className="text-xs text-slate-300">
-                              Bưu kiện cần nạp: <span className="font-mono font-bold text-amber-400">{activeOrder.orderId}</span> ({activeOrder.customerName})
-                            </p>
-                            {scanError && (
-                              <div className="text-rose-400 text-xs font-semibold flex items-center justify-center gap-1 mt-1">
-                                <AlertCircle className="w-3.5 h-3.5" />
-                                <span>{scanError}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                    <Barcode className="w-20 h-20 text-slate-600 opacity-60 mb-2" />
+                    <span className="text-xs font-mono text-slate-300 z-10 font-bold">
+                      {isScanningActive ? 'Đang nhận diện mã vạch...' : activeOrder.orderId}
+                    </span>
+                    <span className="text-[10px] text-slate-500 mt-1 z-10">
+                      Hướng mã vạch vào vùng quét
+                    </span>
+                  </div>
 
-                      {/* Barcode Manual Input & Trigger */}
-                      <div className="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row items-center gap-2">
-                        <input
-                          type="text"
-                          value={manualBarcodeInput}
-                          onChange={(e) => setManualBarcodeInput(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleScanBarcode()}
-                          placeholder={`Nhập/Paste mã vận đơn (VD: ${activeOrder.orderId})`}
-                          className="w-full sm:flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
-                        />
-                        <button
-                          onClick={() => handleScanBarcode(activeOrder.orderId)}
-                          disabled={isScanningActive}
-                          className="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0 shadow-xs"
-                        >
-                          <ScanLine className={`w-3.5 h-3.5 ${isScanningActive ? 'animate-spin' : ''}`} />
-                          <span>{isScanningActive ? 'Đang quét...' : `Quét mã (${activeOrder.orderId})`}</span>
-                        </button>
-                      </div>
+                  {scanError && (
+                    <div className="p-3 bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs rounded-xl flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                      <span>{scanError}</span>
                     </div>
+                  )}
 
-                    {/* Step 1 Action Button */}
-                    {isScanSuccess ? (
+                  {isScanSuccess && (
+                    <div className="p-3 bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>Nhận diện thành công: <strong>{scannedBarcode}</strong></span>
+                      </div>
+                      <span className="font-bold text-emerald-400">Khớp trạm tủ ✓</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleScanBarcode(activeOrder.orderId)}
+                      className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-blue-500/20"
+                    >
+                      <ScanLine className="w-4 h-4" />
+                      <span>Quét Mã Kiện ({activeOrder.orderId})</span>
+                    </button>
+                    {isScanSuccess && (
                       <button
+                        type="button"
                         onClick={() => handleProceedDepositStep(2, activeOrder)}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition shadow-xs cursor-pointer flex items-center justify-center gap-2"
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-5 rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5"
                       >
-                        <span>Mã bưu kiện hợp lệ ➔ Chuyển sang Bước 2: Kích hoạt mở chốt Solenoid (Ngăn #{activeOrder.compartmentIndex})</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleScanBarcode(activeOrder.orderId)}
-                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition shadow-xs cursor-pointer flex items-center justify-center gap-2"
-                      >
-                        <ScanLine className="w-4 h-4 text-blue-400" />
-                        <span>Kích hoạt Module GM65 quét mã bưu kiện</span>
+                        <span>Tiếp Tục</span>
+                        <ChevronRight className="w-4 h-4" />
                       </button>
                     )}
                   </div>
-                )}
+                </div>
+              )}
 
-                {/* STEP 2: OPEN SOLENOID LOCK */}
-                {depositStep === 2 && (
-                  <div className="space-y-3 pt-1">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-200">
-                        <DoorOpen className="w-5 h-5" />
-                      </div>
-                      <div className="text-xs">
-                        <h4 className="font-bold text-slate-900 text-sm">Bước 2: Kích hoạt mở khóa chốt điện Solenoid</h4>
-                        <p className="text-slate-600 mt-1 leading-relaxed">
-                          Mã bưu kiện <strong>{activeOrder.orderId}</strong> đã xác thực hợp lệ. Hệ thống gửi lệnh kích Relay 12V để bật mở chốt khóa của <strong>Ngăn #{activeOrder.compartmentIndex}</strong> tại trạm <strong>{activeOrder.lockerName}</strong>.
-                        </p>
-                        <div className="mt-2.5 p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-[11px]">
-                          💡 Cửa ngăn tủ sẽ tự động bung nhẹ. Vui lòng đứng trước ngăn #{activeOrder.compartmentIndex}.
-                        </div>
-                      </div>
+              {/* STEP 2: OPEN SOLENOID LOCK */}
+              {depositStep === 2 && (
+                <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-4">
+                  <div className="flex items-center gap-2.5 text-amber-900 font-bold text-xs uppercase">
+                    <DoorOpen className="w-5 h-5 text-amber-600" />
+                    <span>Bước 2: Mở cửa ngăn #{activeOrder.compartmentIndex}</span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Mã kiện hợp lệ. Nhấn nút để mở chốt cửa ngăn #{activeOrder.compartmentIndex}.
+                  </p>
+
+                  <button
+                    onClick={() => handleProceedDepositStep(3, activeOrder)}
+                    className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <DoorOpen className="w-4 h-4" />
+                    <span>Mở Cửa Ngăn #{activeOrder.compartmentIndex}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* STEP 3: PUT ITEM & CLOSE DOOR */}
+              {depositStep === 3 && (
+                <div className="p-5 rounded-2xl bg-blue-50/70 border border-blue-200 space-y-4">
+                  <div className="flex items-center gap-2.5 text-blue-900 font-bold text-xs uppercase">
+                    <Box className="w-5 h-5 text-blue-600" />
+                    <span>Bước 3: Bỏ kiện hàng vào ngăn và đóng kín cửa</span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Đặt <strong className="text-slate-800">{activeOrder.productName}</strong> vào ngăn #{activeOrder.compartmentIndex} và đóng chặt cửa.
+                  </p>
+
+                  <button
+                    onClick={() => handleProceedDepositStep(4, activeOrder)}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Xác Nhận Đã Đóng Cửa</span>
+                  </button>
+                </div>
+              )}
+
+              {/* STEP 4: DUAL-SENSOR VALIDATION & FINALIZE */}
+              {depositStep === 4 && (
+                <div className="p-5 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-4">
+                  <div className="flex items-center gap-2.5 text-emerald-900 font-bold text-xs uppercase">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    <span>Bước 4: Xác thực cảm biến ngăn tủ</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
+                      <span className="text-[10px] text-slate-500 uppercase block font-semibold">Cảm biến cửa</span>
+                      <span className="font-bold text-emerald-600 flex items-center gap-1 mt-1">
+                        <Check className="w-3.5 h-3.5" /> Đã đóng kín cửa
+                      </span>
                     </div>
 
-                    <button
-                      onClick={() => handleProceedDepositStep(3, activeOrder)}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition shadow-xs cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <DoorOpen className="w-4 h-4" />
-                      <span>Xác nhận cửa đã mở ➔ Bước 3: Đặt bưu kiện vào ngăn</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* STEP 3: PUT IN PARCEL & CLOSE DOOR */}
-                {depositStep === 3 && (
-                  <div className="space-y-3 pt-1">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-200">
-                        <Box className="w-5 h-5" />
-                      </div>
-                      <div className="text-xs">
-                        <h4 className="font-bold text-slate-900 text-sm">Bước 3: Đặt bưu kiện vào ngăn & Đóng kín cửa tủ</h4>
-                        <p className="text-slate-600 mt-1 leading-relaxed">
-                          Đặt gói hàng <strong>{activeOrder.orderId}</strong> vào chính giữa khay cân Loadcell HX711. Dùng tay đẩy chặt cánh cửa tủ cho đến khi chốt nam châm MC-38 tiếp xúc khít.
-                        </p>
-                        <div className="mt-2.5 p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 text-[11px] space-y-1">
-                          <div className="font-semibold text-slate-900">Quy chuẩn an toàn:</div>
-                          <div>• Đảm bảo gói hàng không bị kẹp vào mép cánh tủ</div>
-                          <div>• Khay cảm biến lực cân tải trọng sẽ tự động đo lường ngay khi cửa đóng</div>
-                        </div>
-                      </div>
+                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
+                      <span className="text-[10px] text-slate-500 uppercase block font-semibold">Trọng lượng</span>
+                      <span className="font-bold text-emerald-600 flex items-center gap-1 mt-1">
+                        <Weight className="w-3.5 h-3.5" /> 0.85 kg (Đã có hàng)
+                      </span>
                     </div>
-
-                    <button
-                      onClick={() => handleProceedDepositStep(4, activeOrder)}
-                      className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs transition shadow-xs cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Đã đặt hàng & Đóng kín cửa ➔ Kích hoạt kiểm tra cảm biến kép</span>
-                    </button>
                   </div>
-                )}
 
-                {/* STEP 4: DUAL SENSOR VERIFICATION */}
-                {depositStep === 4 && (
-                  <div className="space-y-3 pt-1">
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-200">
-                        <Weight className="w-5 h-5" />
-                      </div>
-                      <div className="text-xs">
-                        <h4 className="font-bold text-slate-900 text-sm">Bước 4: Xác thực cảm biến kép thành công (Dual-Sensor Verification)</h4>
-                        <div className="mt-2.5 space-y-1.5 bg-white p-3 rounded-xl border border-slate-200 text-[11px] font-mono">
-                          <div className="flex justify-between text-emerald-700">
-                            <span>1. Cảm biến từ tính MC-38:</span>
-                            <span className="font-bold">ĐÃ ĐÓNG KÍN (CLOSED)</span>
-                          </div>
-                          <div className="flex justify-between text-emerald-700">
-                            <span>2. Cảm biến tải trọng Loadcell HX711:</span>
-                            <span className="font-bold">0.85 KG (HỢP LỆ &gt; 0.05 KG)</span>
-                          </div>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-2">
-                          Cảm biến kép xác nhận kiện hàng đã được lưu trữ an toàn trong ngăn tủ. Hệ thống sẵn sàng kích hoạt hạn lưu kho 24h00 và gửi mã OTP/QR nhận hàng đến khách hàng.
-                        </p>
-                      </div>
-                    </div>
+                  <button
+                    onClick={() => handleProceedDepositStep(5, activeOrder)}
+                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Hoàn Tất & Gửi Thông Báo Khách</span>
+                  </button>
+                </div>
+              )}
 
-                    <button
-                      onClick={() => handleProceedDepositStep(5, activeOrder)}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition shadow-xs cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Hoàn tất nạp hàng ➔ Kích hoạt hạn lưu 24h & Gửi thông báo đến khách hàng</span>
-                    </button>
-                  </div>
-                )}
+              {/* Real-Time Locker Visual Cabinet */}
+              <div className="pt-2">
+                <LockerCabinetVisualizer
+                  lockerName={activeOrder.lockerName}
+                  lockerId={activeOrder.lockerId}
+                  activeSlotId={activeOrder.compartmentIndex}
+                  doorState={depositStep === 2 || depositStep === 3 ? 'OPEN' : 'CLOSED'}
+                  sensorWeight={depositStep >= 3 ? 0.85 : 0.0}
+                  compact={true}
+                />
               </div>
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-slate-200/90 p-12 text-center">
-              <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <h4 className="font-bold text-slate-800 text-sm">Chưa chọn đơn hàng nào</h4>
-              <p className="text-xs text-slate-500 mt-1">Chọn một kiện hàng từ danh sách bên trái để tiến hành nạp.</p>
+            <div className="bg-white rounded-3xl border border-slate-200/90 p-12 text-center">
+              <Package className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+              <h4 className="font-bold text-slate-800 text-sm">Chưa chọn kiện hàng nào để nạp</h4>
+              <p className="text-xs text-slate-500 mt-1">Chọn đơn bên danh sách để kích hoạt quy trình nạp tủ 4 bước.</p>
             </div>
           )}
-
         </div>
       </div>
 
-      {/* Shipper QR Modal */}
-      {showQrModal && dynamicToken && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 text-center shadow-xl relative border border-slate-200">
+      {/* Modal QR Định Danh Shipper 60s với CircularTimer */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl relative border border-slate-200 animate-in zoom-in-95 duration-200">
             <button
               onClick={() => setShowQrModal(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer p-1.5 rounded-xl hover:bg-slate-100 transition"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center mx-auto mb-2 border border-amber-200">
-              <ShieldCheck className="w-5 h-5" />
+            <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-2 border border-amber-200 shadow-2xs">
+              <Truck className="w-6 h-6" />
             </div>
 
             <h3 className="text-base font-bold text-slate-900">Mã QR Định Danh Shipper</h3>
-            <p className="text-xs text-slate-500">Đưa mã trước camera GM65 của tủ để xác nhận danh tính</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Tài khoản: <strong className="text-slate-900">{currentUser?.fullName}</strong>
+            </p>
 
-            <div className="bg-white p-3 rounded-xl border border-slate-200 inline-block my-3 shadow-xs relative">
+            <div className="bg-white p-3.5 rounded-2xl border border-slate-200 inline-block my-3 shadow-md">
               <QRCodeSVG value={dynamicToken} size={180} />
-              {timeLeft <= 0 && (
-                <div className="absolute inset-0 bg-white/90 backdrop-blur-xs flex items-center justify-center rounded-xl">
-                  <span className="text-xs font-bold text-rose-600">MÃ ĐÃ HẾT HẠN</span>
-                </div>
-              )}
             </div>
 
-            <div className="mb-4">
-              <div className="flex items-center justify-between text-xs font-semibold mb-1">
-                <span className="flex items-center gap-1 text-slate-600">
-                  <Timer className={`w-3.5 h-3.5 ${timeLeft <= 10 ? 'text-rose-600' : 'text-amber-600'}`} />
-                  Hiệu lực còn lại:
-                </span>
-                <span className={`font-mono text-xs px-2 py-0.5 rounded font-bold ${
-                  timeLeft <= 10 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'
-                }`}>
-                  {timeLeft}s
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-1000 ${
-                    timeLeft <= 10 ? 'bg-rose-500' : 'bg-amber-500'
-                  }`}
-                  style={{ width: `${(timeLeft / 60) * 100}%` }}
-                />
-              </div>
+            {/* Circular Timer for Shipper 60s */}
+            <div className="flex flex-col items-center justify-center my-2">
+              <CircularTimer
+                secondsLeft={timeLeft}
+                totalSeconds={60}
+                size={70}
+                strokeWidth={5}
+                label="Hiệu Lực"
+              />
             </div>
 
-            {timeLeft <= 0 ? (
-              <button
-                onClick={handleGenerateToken}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5" /> Tạo mã QR mới
-              </button>
-            ) : (
-              <button
-                onClick={() => setShowQrModal(false)}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-xl text-xs transition cursor-pointer"
-              >
-                Đã quét xong & Đóng
-              </button>
-            )}
+            <p className="text-[11px] text-slate-500 mb-4 px-2">
+              Đưa mã QR này trước camera GM65 của tủ để mở khóa quyền nạp hàng.
+            </p>
+
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+            >
+              Đóng
+            </button>
           </div>
         </div>
       )}

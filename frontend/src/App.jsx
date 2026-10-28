@@ -2,21 +2,26 @@ import React, { useState, useEffect } from 'react';
 import LoginPage from './components/LoginPage';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import CartDrawer from './components/CartDrawer';
-import EcommerceTab from './components/EcommerceTab';
-import CartCheckoutTab from './components/CartCheckoutTab';
 import CustomerPickupTab from './components/CustomerPickupTab';
 import ShipperTab from './components/ShipperTab';
 import ShipperRecallTab from './components/ShipperRecallTab';
 import AdminTab from './components/AdminTab';
-import { store } from './services/store';
+import LockerNetworkMapTab from './components/LockerNetworkMapTab';
+import IoTDock from './components/IoTDock';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('smart_locker_user');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const u = JSON.parse(saved);
+        if (u) {
+          if (u.username === 'admin') u.fullName = 'Quản Trị Viên Hệ Thống';
+          else if (u.username === 'shipper') u.fullName = 'Nguyễn Văn Shipper PTIT';
+          else if (u.username === 'khachhang') u.fullName = 'Đoàn Viết Hoàng';
+          localStorage.setItem('smart_locker_user', JSON.stringify(u));
+        }
+        return u;
       } catch {
         return null;
       }
@@ -25,40 +30,31 @@ export default function App() {
   });
 
   const getDefaultTab = (role) => {
-    if (role === 'CUSTOMER') return 'ecommerce';
+    if (role === 'CUSTOMER') return 'customer';
     if (role === 'SHIPPER') return 'shipper';
     if (role === 'ADMIN') return 'admin';
-    return 'ecommerce';
+    return 'customer';
   };
 
   const [activeTab, setActiveTab] = useState(() =>
-    currentUser ? getDefaultTab(currentUser.role) : 'ecommerce'
+    currentUser ? getDefaultTab(currentUser.role) : 'customer'
   );
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [selectedStation, setSelectedStation] = useState('ALL');
-  const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
-  const [cart, setCart] = useState(() => store.getCart());
-
-  useEffect(() => {
-    const handleCartUpdate = () => setCart(store.getCart());
-    window.addEventListener('smart_locker_cart_updated', handleCartUpdate);
-    return () => window.removeEventListener('smart_locker_cart_updated', handleCartUpdate);
-  }, []);
 
   // Đảm bảo mỗi vai trò chỉ được truy cập các tab thuộc thẩm quyền của mình
   useEffect(() => {
     if (currentUser?.role === 'ADMIN') {
-      if (activeTab !== 'admin') {
+      if (!['admin', 'gis-map'].includes(activeTab)) {
         setActiveTab('admin');
       }
     } else if (currentUser?.role === 'SHIPPER') {
-      if (!['shipper', 'shipper-recall'].includes(activeTab)) {
+      if (!['shipper', 'shipper-recall', 'gis-map'].includes(activeTab)) {
         setActiveTab('shipper');
       }
     } else if (currentUser?.role === 'CUSTOMER') {
-      if (!['ecommerce', 'cart', 'customer'].includes(activeTab)) {
-        setActiveTab('ecommerce');
+      if (!['customer', 'gis-map'].includes(activeTab)) {
+        setActiveTab('customer');
       }
     }
   }, [currentUser, activeTab]);
@@ -67,16 +63,12 @@ export default function App() {
     setCurrentUser(user);
     localStorage.setItem('smart_locker_user', JSON.stringify(user));
     setActiveTab(getDefaultTab(user.role));
-    setCart(store.getCart(user));
-    window.dispatchEvent(new Event('smart_locker_cart_updated'));
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('smart_locker_user');
-    setActiveTab('ecommerce');
-    setCart(store.getCart());
-    window.dispatchEvent(new Event('smart_locker_cart_updated'));
+    setActiveTab('customer');
   };
 
   if (!currentUser) {
@@ -84,7 +76,15 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex notranslate font-sans antialiased overflow-x-hidden">
+    <div className="min-h-screen text-slate-900 flex notranslate font-sans antialiased overflow-x-hidden selection:bg-blue-600 selection:text-white relative">
+      {/* Apple Liquid Glass Dynamic Wallpaper Mesh Canvas */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute -top-24 -left-24 w-[650px] h-[650px] rounded-full bg-gradient-to-br from-blue-500/35 to-indigo-600/30 blur-[110px]" />
+        <div className="absolute top-1/4 -right-24 w-[600px] h-[600px] rounded-full bg-gradient-to-br from-purple-500/30 to-pink-500/25 blur-[120px]" />
+        <div className="absolute -bottom-32 left-1/4 w-[750px] h-[750px] rounded-full bg-gradient-to-br from-cyan-400/30 to-blue-600/30 blur-[130px]" />
+        <div className="absolute top-2/3 right-1/4 w-[500px] h-[500px] rounded-full bg-gradient-to-br from-emerald-400/25 to-teal-500/25 blur-[100px]" />
+      </div>
+
       {/* Enterprise App Sidebar */}
       <Sidebar
         activeTab={activeTab}
@@ -93,41 +93,19 @@ export default function App() {
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
         onLogout={handleLogout}
-        selectedStation={selectedStation}
-        setSelectedStation={setSelectedStation}
-        cartCount={store.getCartCount()}
       />
 
       {/* Main Workspace Frame */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen relative z-10">
         {/* Top Header & Command Bar */}
         <Header
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           currentUser={currentUser}
-          onToggleCartDrawer={() => setIsCartDrawerOpen(true)}
-          cartCount={store.getCartCount()}
-          selectedStation={selectedStation}
-          setSelectedStation={setSelectedStation}
         />
 
         {/* Dynamic Tab Content Area */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-12">
-          {activeTab === 'ecommerce' && (
-            <EcommerceTab
-              currentUser={currentUser}
-              onNavigateToCart={() => setActiveTab('cart')}
-            />
-          )}
-
-          {activeTab === 'cart' && (
-            <CartCheckoutTab
-              currentUser={currentUser}
-              onNavigateToOrders={() => setActiveTab('customer')}
-              onNavigateToStore={() => setActiveTab('ecommerce')}
-            />
-          )}
-
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-16">
           {activeTab === 'customer' && (
             <CustomerPickupTab currentUser={currentUser} />
           )}
@@ -149,21 +127,19 @@ export default function App() {
           {activeTab === 'admin' && (
             <AdminTab currentUser={currentUser} />
           )}
+
+          {activeTab === 'gis-map' && (
+            <LockerNetworkMapTab
+              currentUser={currentUser}
+              onNavigateToPickup={() => setActiveTab('customer')}
+              onNavigateToShipper={() => setActiveTab('shipper')}
+            />
+          )}
         </main>
       </div>
 
-      {/* Slide-over Cart Drawer (Chỉ dành cho Khách hàng) */}
-      {currentUser?.role === 'CUSTOMER' && (
-        <CartDrawer
-          isOpen={isCartDrawerOpen}
-          onClose={() => setIsCartDrawerOpen(false)}
-          cart={cart}
-          onNavigateToCheckout={() => {
-            setIsCartDrawerOpen(false);
-            setActiveTab('cart');
-          }}
-        />
-      )}
+      {/* Floating ESP32 Telemetry Terminal Dock (Dynamic Island style) */}
+      <IoTDock />
     </div>
   );
 }

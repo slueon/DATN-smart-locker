@@ -4,7 +4,6 @@ import com.ptit.smartlocker.dto.ApiResponse;
 import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.dto.ShipperDTO;
 import com.ptit.smartlocker.service.ShipperService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,10 +11,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/shipper")
-@RequiredArgsConstructor
 public class ShipperController {
 
     private final ShipperService shipperService;
+
+    public ShipperController(ShipperService shipperService) {
+        this.shipperService = shipperService;
+    }
 
     /**
      * Shipper bấm "Xác minh danh tính" trên Web Mobile -> Sinh mã QR động 60s

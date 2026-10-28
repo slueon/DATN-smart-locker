@@ -4,7 +4,8 @@ import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.dto.ShipperDTO;
 import com.ptit.smartlocker.entity.*;
 import com.ptit.smartlocker.repository.*;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,7 +17,6 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class ShipperService {
 
     private final ShipperIdentityTokenRepository tokenRepository;
@@ -24,6 +24,26 @@ public class ShipperService {
     private final CompartmentRepository compartmentRepository;
     private final PickupCredentialRepository credentialRepository;
     private final DeviceEventRepository deviceEventRepository;
+    private final LockerSlotScheduleRepository slotScheduleRepository;
+
+    @Autowired(required = false)
+    @Lazy
+    private MqttService mqttService;
+
+    public ShipperService(
+            ShipperIdentityTokenRepository tokenRepository,
+            OrderRepository orderRepository,
+            CompartmentRepository compartmentRepository,
+            PickupCredentialRepository credentialRepository,
+            DeviceEventRepository deviceEventRepository,
+            LockerSlotScheduleRepository slotScheduleRepository) {
+        this.tokenRepository = tokenRepository;
+        this.orderRepository = orderRepository;
+        this.compartmentRepository = compartmentRepository;
+        this.credentialRepository = credentialRepository;
+        this.deviceEventRepository = deviceEventRepository;
+        this.slotScheduleRepository = slotScheduleRepository;
+    }
 
     /**
      * 1. Sinh mã QR định danh động cho Shipper (Hiệu lực chính xác 60 giây)
@@ -61,7 +81,7 @@ public class ShipperService {
             throw new RuntimeException("Mã QR Shipper đã hết hạn (quá 60 giây). Vui lòng tạo lại mã mới trên Web!");
         }
 
-        if (token.getIsVerified()) {
+        if (Boolean.TRUE.equals(token.getIsVerified())) {
             throw new RuntimeException("Mã QR Shipper này đã được sử dụng!");
         }
 
@@ -76,6 +96,18 @@ public class ShipperService {
      */
     @Transactional
     public ShipperDTO.DepositResponse depositPackage(ShipperDTO.DepositPackageRequest request) {
+        // Kiểm tra danh tính Shipper (Quy trình bảo mật 2 bước tại Kiosk)
+        if (request.getDynamicToken() == null || request.getDynamicToken().isBlank()) {
+            throw new RuntimeException("Vui lòng quét mã QR xác thực danh tính Shipper trước khi gửi hàng!");
+        }
+
+        ShipperIdentityToken token = tokenRepository.findByDynamicToken(request.getDynamicToken().trim())
+                .orElseThrow(() -> new RuntimeException("Mã QR định danh Shipper không hợp lệ!"));
+
+        if (!Boolean.TRUE.equals(token.getIsVerified())) {
+            throw new RuntimeException("Mã QR Shipper chưa được quét xác thực tại trạm tủ!");
+        }
+
         Order order = orderRepository.findById(request.getOrderId())
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + request.getOrderId()));
 
@@ -140,6 +172,11 @@ public class ShipperService {
                 .build();
         deviceEventRepository.save(event);
 
+        // Bắn lệnh MQTT thông báo trạng thái nạp hàng thành công tới Kiosk và MQTTX
+        if (mqttService != null && order.getLocker() != null) {
+            mqttService.publishCommand(order.getLocker().getLockerId(), compartment.getCompIndex(), "OPEN_DOOR", "SHIPPER_DEPOSIT", order.getOrderId());
+        }
+
         return ShipperDTO.DepositResponse.builder()
                 .success(true)
                 .message("Gửi hàng vào ngăn tủ số " + compartment.getCompIndex() + " thành công!")
@@ -201,7 +238,22 @@ public class ShipperService {
         if (order.getCompartment() != null) {
             Compartment compartment = order.getCompartment();
             compartment.setStatus("EMPTY");
+            compartment.setCurrentWeight(0.0);
             compartmentRepository.save(compartment);
+        }
+
+        // Hoàn trả 1 slot khả dụng cho ngày hôm nay trên lịch biểu
+        if (order.getLocker() != null) {
+            LocalDate today = LocalDate.now();
+            slotScheduleRepository.findByLocker_LockerIdAndScheduleDate(order.getLocker().getLockerId(), today)
+                    .ifPresent(schedule -> {
+                        int total = order.getLocker().getTotalCompartments();
+                        int currentAvail = schedule.getAvailableSlots() != null ? schedule.getAvailableSlots() : 0;
+                        if (currentAvail < total) {
+                            schedule.setAvailableSlots(currentAvail + 1);
+                            slotScheduleRepository.save(schedule);
+                        }
+                    });
         }
 
         // Ghi nhật ký sự kiện thu hồi
@@ -212,5 +264,10 @@ public class ShipperService {
                 .eventPayload("Shipper recalled overdue order " + orderId + " back to warehouse")
                 .build();
         deviceEventRepository.save(event);
+
+        // Bắn lệnh MQTT thông báo trạng thái thu hồi hàng thành công tới Kiosk và MQTTX
+        if (mqttService != null && order.getLocker() != null && order.getCompartment() != null) {
+            mqttService.publishCommand(order.getLocker().getLockerId(), order.getCompartment().getCompIndex(), "OPEN_DOOR", "SHIPPER_RECALL", order.getOrderId());
+        }
     }
 }

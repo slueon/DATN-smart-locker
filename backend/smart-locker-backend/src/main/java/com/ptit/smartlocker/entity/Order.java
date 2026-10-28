@@ -1,27 +1,45 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 
 @Entity
 @Table(name = "orders")
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class Order {
 
     @Id
     @Column(name = "order_id", length = 50)
     private String orderId;
+
+    public Order() {}
+
+    public Order(String orderId, String customerName, String customerPhone, String deliveryType, Locker locker, Compartment compartment, LocalDate expectedDate, LocalDateTime depositedAt, LocalDateTime expiryDeadline, String status, BigDecimal totalAmount, String paymentMethod, String paymentStatus, LocalDateTime createdAt, String productName) {
+        this.orderId = orderId;
+        this.customerName = customerName;
+        this.customerPhone = customerPhone;
+        this.deliveryType = deliveryType;
+        this.locker = locker;
+        this.compartment = compartment;
+        this.expectedDate = expectedDate;
+        this.depositedAt = depositedAt;
+        this.expiryDeadline = expiryDeadline;
+        this.status = status != null ? status : "PENDING";
+        this.totalAmount = totalAmount;
+        this.paymentMethod = paymentMethod != null ? paymentMethod : "ONLINE_VIETQR";
+        this.paymentStatus = paymentStatus != null ? paymentStatus : "PAID";
+        this.createdAt = createdAt;
+        this.productName = productName != null ? productName : "Bưu kiện Smart Locker";
+    }
 
     @Column(name = "customer_name", nullable = false, length = 100)
     private String customerName;
@@ -68,7 +86,7 @@ public class Order {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Column(name = "product_name", length = 255)
     @Builder.Default
-    private List<OrderItem> orderItems = new ArrayList<>();
+    private String productName = "Bưu kiện Smart Locker";
 }

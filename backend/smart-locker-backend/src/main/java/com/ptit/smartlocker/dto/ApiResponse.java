@@ -1,18 +1,24 @@
 package com.ptit.smartlocker.dto;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Getter;
+import lombok.Setter;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
+@Getter
+@Setter
 @Builder
 public class ApiResponse<T> {
     private boolean success;
     private String message;
     private T data;
+
+    public ApiResponse() {}
+
+    public ApiResponse(boolean success, String message, T data) {
+        this.success = success;
+        this.message = message;
+        this.data = data;
+    }
 
     public static <T> ApiResponse<T> ok(T data) {
         return ApiResponse.<T>builder()

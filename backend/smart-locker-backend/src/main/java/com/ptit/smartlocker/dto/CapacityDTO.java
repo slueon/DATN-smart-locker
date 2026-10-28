@@ -1,18 +1,16 @@
 package com.ptit.smartlocker.dto;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDate;
 import java.util.List;
 
 public class CapacityDTO {
 
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
+    @Getter
+    @Setter
     @Builder
     public static class CapacityCheckResponse {
         private String lockerId;
@@ -24,5 +22,19 @@ public class CapacityDTO {
         // Graceful Degradation options:
         private boolean allowHomeDeliveryFallback;
         private List<LocalDate> alternativeAvailableDates;
+
+        public CapacityCheckResponse() {
+        }
+
+        public CapacityCheckResponse(String lockerId, String lockerName, LocalDate requestedDate, boolean isAvailable, int remainingSlots, int totalSlots, boolean allowHomeDeliveryFallback, List<LocalDate> alternativeAvailableDates) {
+            this.lockerId = lockerId;
+            this.lockerName = lockerName;
+            this.requestedDate = requestedDate;
+            this.isAvailable = isAvailable;
+            this.remainingSlots = remainingSlots;
+            this.totalSlots = totalSlots;
+            this.allowHomeDeliveryFallback = allowHomeDeliveryFallback;
+            this.alternativeAvailableDates = alternativeAvailableDates;
+        }
     }
 }

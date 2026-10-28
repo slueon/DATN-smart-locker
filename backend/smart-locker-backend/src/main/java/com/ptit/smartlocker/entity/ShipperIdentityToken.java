@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
@@ -10,8 +12,6 @@ import java.time.LocalDateTime;
 @Table(name = "shipper_identity_tokens")
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class ShipperIdentityToken {
 
@@ -19,6 +19,17 @@ public class ShipperIdentityToken {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "token_id")
     private Long tokenId;
+
+    public ShipperIdentityToken() {}
+
+    public ShipperIdentityToken(Long tokenId, String shipperId, String dynamicToken, LocalDateTime createdAt, LocalDateTime expiredAt, Boolean isVerified) {
+        this.tokenId = tokenId;
+        this.shipperId = shipperId;
+        this.dynamicToken = dynamicToken;
+        this.createdAt = createdAt;
+        this.expiredAt = expiredAt;
+        this.isVerified = isVerified != null ? isVerified : false;
+    }
 
     @Column(name = "shipper_id", nullable = false, length = 50)
     private String shipperId;

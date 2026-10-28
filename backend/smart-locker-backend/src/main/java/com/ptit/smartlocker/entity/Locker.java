@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -11,14 +13,27 @@ import java.time.LocalDateTime;
 @Table(name = "lockers")
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class Locker {
 
     @Id
     @Column(name = "locker_id", length = 50)
     private String lockerId;
+
+    public Locker() {}
+
+    public Locker(String lockerId, String name, String address, Double latitude, Double longitude, String connectionStatus, Integer totalCompartments, LocalDateTime lastHeartbeat, LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this.lockerId = lockerId;
+        this.name = name;
+        this.address = address;
+        this.latitude = latitude;
+        this.longitude = longitude;
+        this.connectionStatus = connectionStatus != null ? connectionStatus : "ONLINE";
+        this.totalCompartments = totalCompartments != null ? totalCompartments : 3;
+        this.lastHeartbeat = lastHeartbeat;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
 
     @Column(name = "name", nullable = false, length = 100)
     private String name;

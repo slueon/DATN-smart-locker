@@ -2,7 +2,6 @@ package com.ptit.smartlocker.service;
 
 import com.ptit.smartlocker.entity.Order;
 import com.ptit.smartlocker.repository.OrderRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -12,11 +11,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class OverdueSchedulerService {
 
     private final OrderRepository orderRepository;
+
+    public OverdueSchedulerService(OrderRepository orderRepository) {
+        this.orderRepository = orderRepository;
+    }
 
     /**
      * Tác vụ quét định kỳ (Mỗi 10 phút kiểm tra 1 lần)

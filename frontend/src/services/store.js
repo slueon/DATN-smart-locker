@@ -1,24 +1,9 @@
-import { resolveProductImage, PRODUCT_IMAGE_FALLBACKS } from '../utils/productImages.js';
-
 // Centralized Interactive Store for Smart Locker Demo
 // Đồng bộ dữ liệu giữa các vai trò (Khách hàng, Shipper, Quản trị viên)
 
 const ORDERS_KEY = 'smart_locker_orders_data';
 const NOTIFS_KEY = 'smart_locker_notifications_data';
 const LOCKERS_KEY = 'smart_locker_lockers_data';
-const CART_KEY = 'smart_locker_cart_data';
-
-const DEFAULT_CART = [
-  {
-    productId: 1,
-    name: 'Tai nghe Bluetooth True Wireless Pro',
-    price: 450000,
-    imageUrl: PRODUCT_IMAGE_FALLBACKS.earbuds,
-    requiredSize: 'S',
-    weightKg: 0.2,
-    quantity: 1,
-  }
-];
 
 // Dữ liệu đơn hàng khởi tạo ban đầu
 const DEFAULT_ORDERS = [
@@ -33,7 +18,7 @@ const DEFAULT_ORDERS = [
     lockerName: 'Tủ Giao Nhận KTX A1',
     lockerAddress: 'Sảnh tầng 1, KTX A1, Học viện CNBCVT, Hà Đông, Hà Nội',
     compartmentIndex: 2,
-    compartmentSize: 'M',
+    compartmentSize: 'L',
     orderDate: '2026-10-03',
     expectedDate: '2026-10-04',
     depositedAt: '2026-10-04T08:30:00',
@@ -54,8 +39,8 @@ const DEFAULT_ORDERS = [
     productPrice: 280000,
     deliveryType: 'LOCKER',
     lockerId: 'LOCKER_HN_01',
-    lockerName: 'Tủ Giao Nhận KTX A1',
-    lockerAddress: 'Sảnh tầng 1, KTX A1, Học viện CNBCVT, Hà Đông, Hà Nội',
+    lockerName: 'Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)',
+    lockerAddress: 'Sảnh Tầng 1, KTX A1, Học viện CNBCVT, Km10 Nguyễn Trãi, Q. Hà Đông',
     compartmentIndex: 1,
     compartmentSize: 'S',
     orderDate: '2026-10-04',
@@ -69,6 +54,160 @@ const DEFAULT_ORDERS = [
     otpExpiresAt: null,
   },
   {
+    orderId: 'ORD-882104',
+    customerName: 'Nguyễn Văn Tuấn',
+    customerPhone: '0912345678',
+    productName: 'Chuột Công Thái Học Không Dây Logitech MX Master',
+    productPrice: 650000,
+    deliveryType: 'LOCKER',
+    lockerId: 'LOCKER_HN_01',
+    lockerName: 'Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)',
+    lockerAddress: 'Sảnh Tầng 1, KTX A1, Học viện CNBCVT, Km10 Nguyễn Trãi, Q. Hà Đông',
+    compartmentIndex: 2,
+    compartmentSize: 'L',
+    orderDate: '2026-10-04',
+    expectedDate: '2026-10-04',
+    status: 'PENDING',
+    totalAmount: 650000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
+    qrToken: 'PKUP-882104-B4F1',
+    otpCode: null,
+    otpExpiresAt: null,
+  },
+  {
+    orderId: 'ORD-991345',
+    customerName: 'Trần Thị Mai',
+    customerPhone: '0977888999',
+    productName: 'Bàn Phím Cơ Không Dây RGB Low-Profile',
+    productPrice: 850000,
+    deliveryType: 'LOCKER',
+    lockerId: 'LOCKER_HN_02',
+    lockerName: 'Tủ Giao Nhận Đại Học Hà Nội (HANU)',
+    lockerAddress: 'Cổng Chính ĐH Hà Nội, Km9 Đường Nguyễn Trãi, P. Trung Văn, Q. Nam Từ Liêm',
+    compartmentIndex: 1,
+    compartmentSize: 'S',
+    orderDate: '2026-10-04',
+    expectedDate: '2026-10-04',
+    status: 'PENDING',
+    totalAmount: 850000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
+    qrToken: 'PKUP-991345-K8L2',
+    otpCode: null,
+    otpExpiresAt: null,
+  },
+  {
+    orderId: 'ORD-332156',
+    customerName: 'Lê Hoàng Nam',
+    customerPhone: '0934567890',
+    productName: 'Áo Khoác Gió Thể Thao PTIT 2 Lớp Chống Nước',
+    productPrice: 320000,
+    deliveryType: 'LOCKER',
+    lockerId: 'LOCKER_HN_02',
+    lockerName: 'Tủ Giao Nhận Đại Học Hà Nội (HANU)',
+    lockerAddress: 'Cổng Chính ĐH Hà Nội, Km9 Đường Nguyễn Trãi, P. Trung Văn, Q. Nam Từ Liêm',
+    compartmentIndex: 2,
+    compartmentSize: 'L',
+    orderDate: '2026-10-04',
+    expectedDate: '2026-10-04',
+    status: 'PENDING',
+    totalAmount: 320000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
+    qrToken: 'PKUP-332156-M7N3',
+    otpCode: null,
+    otpExpiresAt: null,
+  },
+  {
+    orderId: 'ORD-554432',
+    customerName: 'Phạm Thu Hương',
+    customerPhone: '0945678123',
+    productName: 'Bình Giữ Nhiệt Thông Minh LED Báo Nhiệt Độ 500ml',
+    productPrice: 195000,
+    deliveryType: 'LOCKER',
+    lockerId: 'LOCKER_HN_03',
+    lockerName: 'Tủ Giao Nhận Vinhomes Royal City (Ngã Tư Sở)',
+    lockerAddress: 'Sảnh R1, KĐT Vinhomes Royal City, 72A Nguyễn Trãi, P. Thượng Đình, Q. Thanh Xuân',
+    compartmentIndex: 1,
+    compartmentSize: 'S',
+    orderDate: '2026-10-04',
+    expectedDate: '2026-10-04',
+    status: 'PENDING',
+    totalAmount: 195000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
+    qrToken: 'PKUP-554432-P9Q4',
+    otpCode: null,
+    otpExpiresAt: null,
+  },
+  {
+    orderId: 'ORD-667788',
+    customerName: 'Vũ Đình Trọng',
+    customerPhone: '0968112233',
+    productName: 'Bộ Củ Sạc Nhanh GaN 65W 3 Cổng Cáp Type-C 100W',
+    productPrice: 390000,
+    deliveryType: 'LOCKER',
+    lockerId: 'LOCKER_HN_04',
+    lockerName: 'Tủ Giao Nhận Bến Xe Yên Nghĩa (Metro Hà Đông)',
+    lockerAddress: 'Sảnh Ga Yên Nghĩa (Tuyến Metro Cát Linh - Hà Đông), P. Yên Nghĩa, Q. Hà Đông',
+    compartmentIndex: 1,
+    compartmentSize: 'S',
+    orderDate: '2026-10-04',
+    expectedDate: '2026-10-04',
+    status: 'PENDING',
+    totalAmount: 390000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
+    qrToken: 'PKUP-667788-R2S5',
+    otpCode: null,
+    otpExpiresAt: null,
+  },
+  {
+    orderId: 'ORD-778899',
+    customerName: 'Đỗ Minh Quân',
+    customerPhone: '0982334455',
+    productName: 'Giày Thể Thao Sneaker Nam Chạy Bộ Siêu Nhẹ',
+    productPrice: 590000,
+    deliveryType: 'LOCKER',
+    lockerId: 'LOCKER_HN_05',
+    lockerName: 'Tủ Giao Nhận Trung Hòa - Nhân Chính (Cầu Giấy)',
+    lockerAddress: 'Tòa Nhà 17T1 Hoàng Đạo Thúy, KĐT Trung Hòa Nhân Chính, Q. Cầu Giấy',
+    compartmentIndex: 2,
+    compartmentSize: 'L',
+    orderDate: '2026-10-04',
+    expectedDate: '2026-10-04',
+    status: 'PENDING',
+    totalAmount: 590000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
+    qrToken: 'PKUP-778899-T6U7',
+    otpCode: null,
+    otpExpiresAt: null,
+  },
+  {
+    orderId: 'ORD-112244',
+    customerName: 'Hoàng Yến Nhi',
+    customerPhone: '0971223344',
+    productName: 'Balo Chống Gù & Chống Nước Oxford Cao Cấp',
+    productPrice: 480000,
+    deliveryType: 'LOCKER',
+    lockerId: 'LOCKER_HN_06',
+    lockerName: 'Tủ Giao Nhận GO! Thăng Long (Trần Duy Hưng)',
+    lockerAddress: 'Đại Siêu Thị GO! Thăng Long, 222 Trần Duy Hưng, P. Trung Hòa, Q. Cầu Giấy',
+    compartmentIndex: 1,
+    compartmentSize: 'S',
+    orderDate: '2026-10-04',
+    expectedDate: '2026-10-04',
+    status: 'PENDING',
+    totalAmount: 480000,
+    paymentMethod: 'ONLINE_VIETQR',
+    paymentStatus: 'PAID',
+    qrToken: 'PKUP-112244-V8W9',
+    otpCode: null,
+    otpExpiresAt: null,
+  },
+  {
     orderId: 'ORD-543219',
     customerName: 'Đoàn Viết Hoàng',
     customerPhone: '0988123456',
@@ -78,7 +217,7 @@ const DEFAULT_ORDERS = [
     lockerId: 'LOCKER_HN_02',
     lockerName: 'Tủ Giao Nhận Thư Viện',
     lockerAddress: 'Sảnh tầng 1, Nhà Thư Viện, Học viện CNBCVT, Hà Đông, Hà Nội',
-    compartmentIndex: 3,
+    compartmentIndex: 2,
     compartmentSize: 'L',
     orderDate: '2026-09-30',
     expectedDate: '2026-10-01',
@@ -101,7 +240,7 @@ const DEFAULT_ORDERS = [
     lockerId: 'LOCKER_HN_01',
     lockerName: 'Tủ Giao Nhận KTX A1',
     lockerAddress: 'Sảnh tầng 1, KTX A1, Học viện CNBCVT, Hà Đông, Hà Nội',
-    compartmentIndex: 3,
+    compartmentIndex: 1,
     compartmentSize: 'S',
     orderDate: '2026-10-01',
     expectedDate: '2026-10-02',
@@ -129,65 +268,204 @@ const DEFAULT_NOTIFICATIONS = [
   }
 ];
 
-// Dữ liệu ma trận các ngăn tủ
+// Dữ liệu ma trận các ngăn tủ: Tất cả 10 trạm tủ đều chỉ có 2 ngăn (Ngăn 1: Size S - Nhỏ, Ngăn 2: Size L - Lớn)
 const DEFAULT_LOCKERS = [
   {
     lockerId: 'LOCKER_HN_01',
-    name: 'Tủ Giao Nhận KTX A1',
-    address: 'Sảnh tầng 1, KTX A1, Học viện CNBCVT, Hà Đông, Hà Nội',
+    name: 'Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)',
+    address: 'Sảnh Tầng 1, KTX A1, Học viện CNBCVT, Km10 Nguyễn Trãi, Q. Hà Đông',
     status: 'ONLINE',
     ipAddress: '192.168.1.105',
+    latitude: 20.9808,
+    longitude: 105.7876,
+    lockerType: 'PHYSICAL',
     lastHeartbeat: new Date().toISOString(),
     compartments: [
-      { compIndex: 1, size: 'S', status: 'RESERVED', orderId: 'ORD-654123', doorOpen: false },
-      { compIndex: 2, size: 'M', status: 'OCCUPIED', orderId: 'ORD-789210', doorOpen: false },
-      { compIndex: 3, size: 'L', status: 'OVERDUE', orderId: 'ORD-432108', doorOpen: false },
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
     ]
   },
   {
     lockerId: 'LOCKER_HN_02',
-    name: 'Tủ Giao Nhận Thư Viện',
-    address: 'Sảnh tầng 1, Nhà Thư Viện, Học viện CNBCVT, Hà Đông, Hà Nội',
+    name: 'Tủ Giao Nhận Đại Học Hà Nội (HANU)',
+    address: 'Cổng Chính ĐH Hà Nội, Km9 Đường Nguyễn Trãi, P. Trung Văn, Q. Nam Từ Liêm',
     status: 'ONLINE',
     ipAddress: '192.168.1.106',
+    latitude: 20.9892,
+    longitude: 105.7958,
+    lockerType: 'SIMULATED',
     lastHeartbeat: new Date().toISOString(),
     compartments: [
       { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
-      { compIndex: 2, size: 'M', status: 'EMPTY', orderId: null, doorOpen: false },
-      { compIndex: 3, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_03',
+    name: 'Tủ Giao Nhận Vinhomes Royal City (Ngã Tư Sở)',
+    address: 'Sảnh R1, KĐT Vinhomes Royal City, 72A Nguyễn Trãi, P. Thượng Đình, Q. Thanh Xuân',
+    status: 'ONLINE',
+    ipAddress: '192.168.1.107',
+    latitude: 21.0032,
+    longitude: 105.8162,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date().toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_04',
+    name: 'Tủ Giao Nhận Bến Xe Yên Nghĩa (Metro Hà Đông)',
+    address: 'Sảnh Ga Yên Nghĩa (Tuyến Metro Cát Linh - Hà Đông), P. Yên Nghĩa, Q. Hà Đông',
+    status: 'ONLINE',
+    ipAddress: '192.168.1.108',
+    latitude: 20.9542,
+    longitude: 105.7538,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date().toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_05',
+    name: 'Tủ Giao Nhận Trung Hòa - Nhân Chính (Cầu Giấy)',
+    address: 'Tòa Nhà 17T1 Hoàng Đạo Thúy, KĐT Trung Hòa Nhân Chính, Q. Cầu Giấy',
+    status: 'ONLINE',
+    ipAddress: '192.168.1.109',
+    latitude: 21.0088,
+    longitude: 105.8035,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date().toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_06',
+    name: 'Tủ Giao Nhận GO! Thăng Long (Trần Duy Hưng)',
+    address: 'Đại Siêu Thị GO! Thăng Long, 222 Trần Duy Hưng, P. Trung Hòa, Q. Cầu Giấy',
+    status: 'ONLINE',
+    ipAddress: '192.168.1.110',
+    latitude: 21.0068,
+    longitude: 105.7918,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date().toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_07',
+    name: 'Tủ Giao Nhận Aeon Mall Hà Đông (Dương Nội)',
+    address: 'Cổng 1, TTTM Aeon Mall Hà Đông, Khu Đô Thị Dương Nội, Q. Hà Đông',
+    status: 'ONLINE',
+    connectionStatus: 'ONLINE',
+    ipAddress: '192.168.1.111',
+    latitude: 20.9882,
+    longitude: 105.7548,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date(Date.now() - 3600000).toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_08',
+    name: 'Tủ Giao Nhận KĐT Mỗ Lao (Mulberry Lane)',
+    address: 'Khu Chung Cư TSQ Mulberry Lane, KĐT Mỗ Lao, Q. Hà Đông',
+    status: 'ONLINE',
+    ipAddress: '192.168.1.112',
+    latitude: 20.9858,
+    longitude: 105.7822,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date().toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_09',
+    name: 'Tủ Giao Nhận ĐH Khoa Học Tự Nhiên (VNU)',
+    address: '334 Nguyễn Trãi, P. Thanh Xuân Trung, Q. Thanh Xuân, Hà Nội',
+    status: 'ONLINE',
+    ipAddress: '192.168.1.113',
+    latitude: 20.9968,
+    longitude: 105.8078,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date().toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
+    ]
+  },
+  {
+    lockerId: 'LOCKER_HN_10',
+    name: 'Tủ Giao Nhận Trung Tâm Hành Chính Hà Đông',
+    address: 'Phố Tô Hiệu, P. Hà Cầu, Q. Hà Đông (Gần Ga Metro La Khê)',
+    status: 'ONLINE',
+    ipAddress: '192.168.1.114',
+    latitude: 20.9678,
+    longitude: 105.7738,
+    lockerType: 'SIMULATED',
+    lastHeartbeat: new Date().toISOString(),
+    compartments: [
+      { compIndex: 1, size: 'S', status: 'EMPTY', orderId: null, doorOpen: false },
+      { compIndex: 2, size: 'L', status: 'EMPTY', orderId: null, doorOpen: false },
     ]
   }
 ];
 
 export const store = {
-  // Lấy toàn bộ đơn hàng (tự động làm sạch mã cũ và tự động phát hiện đơn quá hạn)
+  // Lấy toàn bộ đơn hàng (tự động làm sạch mã cũ, tự động phát hiện đơn quá hạn và đồng bộ đơn PENDING)
   getOrders: () => {
     try {
       const data = localStorage.getItem(ORDERS_KEY);
       if (data) {
-        const parsed = JSON.parse(data);
+        let parsed = JSON.parse(data);
         const now = Date.now();
-        let hasOverdueChange = false;
+        let hasChanges = false;
+
+        // Tự động kiểm tra và đồng bộ các đơn PENDING từ DEFAULT_ORDERS nếu chưa có trong localStorage
+        DEFAULT_ORDERS.forEach((defOrd) => {
+          if (defOrd.status === 'PENDING' && !parsed.some((p) => p.orderId === defOrd.orderId)) {
+            parsed.push(defOrd);
+            hasChanges = true;
+          }
+        });
 
         const cleaned = parsed.map((o) => {
           let updated = o;
           // Nếu đơn hàng có mã cũ mà chưa có trường otpExpiresAt, xóa mã tĩnh để khách ấn tạo OTP mới
           if (o.otpCode && !o.otpExpiresAt) {
             updated = { ...updated, otpCode: null, otpExpiresAt: null };
+            hasChanges = true;
           }
           // Tự động nhận diện đơn quá hạn lưu kho (24h00 hôm sau) mà không cần Admin can thiệp
           if (o.status === 'DEPOSITED' && o.expiryDeadline && new Date(o.expiryDeadline).getTime() < now) {
             updated = { ...updated, status: 'OVERDUE' };
-            hasOverdueChange = true;
+            hasChanges = true;
           }
           return updated;
         });
 
-        if (hasOverdueChange) {
+        if (hasChanges) {
           localStorage.setItem(ORDERS_KEY, JSON.stringify(cleaned));
           cleaned.forEach((ord) => {
             if (ord.status === 'OVERDUE' && ord.lockerId && ord.compartmentIndex) {
-              store.updateCompartmentStatus(ord.lockerId, ord.compartmentIndex, 'OVERDUE', ord.orderId);
+              const currentLockers = store.getLockers();
+              const lk = currentLockers.find((l) => l.lockerId === ord.lockerId);
+              const comp = lk?.compartments?.find((c) => c.compIndex === ord.compartmentIndex);
+              if (comp && comp.status !== 'EMPTY') {
+                store.updateCompartmentStatus(ord.lockerId, ord.compartmentIndex, 'OVERDUE', ord.orderId);
+              }
             }
           });
         }
@@ -196,6 +474,64 @@ export const store = {
     } catch (e) {}
     localStorage.setItem(ORDERS_KEY, JSON.stringify(DEFAULT_ORDERS));
     return DEFAULT_ORDERS;
+  },
+
+  // Tạo thêm 1 đơn hàng chờ nạp mẫu cho Shipper
+  generateSamplePendingOrder: (customLockerId = null) => {
+    const lockers = store.getLockers();
+    const targetLocker = (customLockerId && customLockerId !== 'ALL')
+      ? (lockers.find((l) => l.lockerId === customLockerId) || lockers[0])
+      : lockers[Math.floor(Math.random() * Math.min(lockers.length, 6))];
+
+    const sampleProducts = [
+      { name: 'Đồng hồ thông minh Smartwatch V2 Chống Nước', price: 890000, size: 'S', comp: 1 },
+      { name: 'Loa Bluetooth Bass Siêu Trầm Di Động', price: 650000, size: 'L', comp: 2 },
+      { name: 'Cáp Sạc Nhanh C to C Bọc Dù Siêu Bền 100W', price: 120000, size: 'S', comp: 1 },
+      { name: 'Bộ Combo Chuột & Bàn Phím Không Dây', price: 420000, size: 'L', comp: 2 },
+      { name: 'Pin Sạc Dự Phòng Polymer 20.000mAh 22.5W', price: 380000, size: 'S', comp: 1 },
+      { name: 'Nồi Cơm Điện Mini Thông Minh Sinh Viên', price: 590000, size: 'L', comp: 2 },
+      { name: 'Máy Sấy Tóc Ion Âm Gấp Gọn 1800W', price: 290000, size: 'S', comp: 1 },
+      { name: 'Áo Khoác Nỉ PTIT Mùa Đông 2026', price: 350000, size: 'L', comp: 2 },
+    ];
+    const sampleCustomers = [
+      { name: 'Trần Văn An', phone: '0981123456' },
+      { name: 'Lê Thùy Dương', phone: '0972234567' },
+      { name: 'Nguyễn Tiến Đạt', phone: '0963345678' },
+      { name: 'Vũ Ngọc Lan', phone: '0914456789' },
+      { name: 'Hoàng Minh Khang', phone: '0905567890' },
+    ];
+    const randProd = sampleProducts[Math.floor(Math.random() * sampleProducts.length)];
+    const randCust = sampleCustomers[Math.floor(Math.random() * sampleCustomers.length)];
+    const randSuffix = Math.floor(100000 + Math.random() * 900000);
+    const randId = `ORD-${randSuffix}`;
+
+    const newOrder = {
+      orderId: randId,
+      customerName: randCust.name,
+      customerPhone: randCust.phone,
+      productName: randProd.name,
+      productPrice: randProd.price,
+      deliveryType: 'LOCKER',
+      lockerId: targetLocker.lockerId,
+      lockerName: targetLocker.name,
+      lockerAddress: targetLocker.address,
+      compartmentIndex: randProd.comp,
+      compartmentSize: randProd.size,
+      orderDate: new Date().toISOString().split('T')[0],
+      expectedDate: new Date().toISOString().split('T')[0],
+      status: 'PENDING',
+      totalAmount: randProd.price,
+      paymentMethod: 'ONLINE_VIETQR',
+      paymentStatus: 'PAID',
+      qrToken: `PKUP-${randSuffix}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+      otpCode: null,
+      otpExpiresAt: null,
+    };
+
+    const currentOrders = store.getOrders();
+    currentOrders.unshift(newOrder);
+    localStorage.setItem(ORDERS_KEY, JSON.stringify(currentOrders));
+    return newOrder;
   },
 
   // Tự động quét và phát hiện đơn quá hạn ngầm (Event-Driven Push Notification đến Shipper & Khách)
@@ -299,14 +635,106 @@ export const store = {
     return overdueList.length;
   },
 
+  // Kiểm tra sức chứa của tủ theo ngày (Hỗ trợ Local Store / Offline / Graceful Degradation)
+  checkLockerCapacity: (lockerId, targetDate) => {
+    const lockers = store.getLockers();
+    const locker = lockers.find((l) => l.lockerId === lockerId) || lockers[0];
+    const totalSlots = locker && Array.isArray(locker.compartments) ? locker.compartments.length : 2;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const reqDate = targetDate || todayStr;
+    const isToday = reqDate === todayStr;
+
+    const orders = store.getOrders();
+    let remainingSlots = 0;
+
+    if (isToday) {
+      // 1. Ngày HÔM NAY: Sức chứa khả dụng dựa trên số ngăn vật lý thực tế đang TRỐNG (EMPTY)
+      // trừ đi số đơn hàng PENDING hôm nay đang chờ Shipper nạp (nếu chưa gán chiếm ngăn)
+      const physicalEmptyCount = locker && Array.isArray(locker.compartments)
+        ? locker.compartments.filter((c) => c.status === 'EMPTY' || !c.status).length
+        : totalSlots;
+
+      // Đơn PENDING hôm nay chưa gán ngăn hoặc ngăn của nó vẫn còn ghi EMPTY chờ nạp
+      const pendingOrdersWithoutReservedComp = orders.filter((o) => {
+        if (o.lockerId !== lockerId || o.deliveryType !== 'LOCKER') return false;
+        if (o.status !== 'PENDING') return false;
+        const orderDate = o.expectedDate || (o.orderDate ? o.orderDate.split('T')[0] : null);
+        if (orderDate !== todayStr) return false;
+        if (!o.compartmentIndex) return true;
+        const comp = locker?.compartments?.find((c) => c.compIndex === o.compartmentIndex);
+        return comp && comp.status === 'EMPTY';
+      });
+
+      remainingSlots = Math.max(0, physicalEmptyCount - pendingOrdersWithoutReservedComp.length);
+    } else {
+      // 2. Ngày TƯƠNG LAI: Sức chứa dựa trên tổng slot trừ đi số đơn đặt trước cho ngày đó
+      const futureBookedOrders = orders.filter((o) => {
+        if (o.lockerId !== lockerId || o.deliveryType !== 'LOCKER') return false;
+        if (o.status === 'COMPLETED' || o.status === 'CANCELLED') return false;
+        const orderDate = o.expectedDate || (o.orderDate ? o.orderDate.split('T')[0] : null);
+        return orderDate === reqDate;
+      });
+
+      remainingSlots = Math.max(0, totalSlots - futureBookedOrders.length);
+    }
+
+    const available = remainingSlots > 0;
+
+    // Tìm tối đa 3 ngày thay thế còn chỗ trong 7 ngày tới
+    const alternativeAvailableDates = [];
+    if (!available) {
+      const baseDate = new Date(reqDate);
+      for (let i = 1; i <= 7; i++) {
+        const nextD = new Date(baseDate);
+        nextD.setDate(nextD.getDate() + i);
+        const nextDateStr = nextD.toISOString().split('T')[0];
+
+        const nextBookings = orders.filter((o) => {
+          if (o.lockerId !== lockerId || o.deliveryType !== 'LOCKER') return false;
+          if (o.status === 'COMPLETED' || o.status === 'CANCELLED') return false;
+          const orderDate = o.expectedDate || (o.orderDate ? o.orderDate.split('T')[0] : null);
+          return orderDate === nextDateStr;
+        });
+
+        if (totalSlots - nextBookings.length > 0) {
+          alternativeAvailableDates.push(nextDateStr);
+          if (alternativeAvailableDates.length >= 3) break;
+        }
+      }
+    }
+
+    return {
+      lockerId: locker ? locker.lockerId : lockerId,
+      lockerName: locker ? locker.name : 'Tủ Giao Nhận KTX A1',
+      requestedDate: reqDate,
+      isAvailable: available,
+      available: available,
+      remainingSlots,
+      totalSlots,
+      allowHomeDeliveryFallback: true,
+      alternativeAvailableDates,
+    };
+  },
+
   // Lưu đơn hàng mới (từ trang Checkout)
-  createOrder: (order) => {
+  createOrder: (order, options = {}) => {
+    // Nếu có kích hoạt kiểm tra sức chứa (ví dụ từ UI checkout)
+    if (order.deliveryType === 'LOCKER' && order.lockerId && options.validateCapacity) {
+      const cap = store.checkLockerCapacity(order.lockerId, order.expectedDate);
+      if (!cap.available || cap.remainingSlots <= 0) {
+        throw new Error(`Tủ ${cap.lockerName || order.lockerId} đã hết chỗ vào ngày ${order.expectedDate || 'hôm nay'}! Vui lòng chọn ngày khác hoặc Giao tận nhà.`);
+      }
+    }
+
     const list = store.getOrders();
     const updated = [order, ...list];
     localStorage.setItem(ORDERS_KEY, JSON.stringify(updated));
 
     // Cập nhật ngăn tủ tương ứng
-    store.updateCompartmentStatus(order.lockerId, order.compartmentIndex, 'RESERVED', order.orderId);
+    if (order.lockerId && order.compartmentIndex) {
+      store.updateCompartmentStatus(order.lockerId, order.compartmentIndex, 'RESERVED', order.orderId);
+    }
 
     // Kích hoạt event cập nhật
     window.dispatchEvent(new Event('smart_locker_store_updated'));
@@ -395,7 +823,7 @@ export const store = {
   requestOtpForOrder: (orderId, customOtp = null) => {
     const orders = store.getOrders();
     const order = orders.find((o) => o.orderId === orderId);
-    if (!order) return null;
+    if (!order || order.status !== 'DEPOSITED') return null;
 
     // Sinh mã OTP 6 số
     const newOtp = customOtp || Math.floor(100000 + Math.random() * 900000).toString();
@@ -424,8 +852,53 @@ export const store = {
   // Lấy dữ liệu danh sách tủ và ngăn
   getLockers: () => {
     try {
+      const LOCKERS_VERSION = 'v5_all_lockers_2_compartments_s_l';
+      if (localStorage.getItem('smart_locker_lockers_ver') !== LOCKERS_VERSION) {
+        localStorage.setItem('smart_locker_lockers_ver', LOCKERS_VERSION);
+        localStorage.setItem(LOCKERS_KEY, JSON.stringify(DEFAULT_LOCKERS));
+        return DEFAULT_LOCKERS;
+      }
+
       const data = localStorage.getItem(LOCKERS_KEY);
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+          // Tự động đồng bộ tọa độ WGS84 mới và bổ sung trạm thiếu
+          const defaultMap = new Map(DEFAULT_LOCKERS.map((l) => [l.lockerId, l]));
+          const updated = parsed.map((l) => {
+            const def = defaultMap.get(l.lockerId);
+            const comps = (l.compartments && l.compartments.length === 2)
+              ? l.compartments
+              : (def ? def.compartments : (l.compartments || []).slice(0, 2));
+            if (def) {
+              return {
+                ...l,
+                name: def.name,
+                address: def.address,
+                latitude: def.latitude,
+                longitude: def.longitude,
+                status: 'ONLINE',
+                connectionStatus: 'ONLINE',
+                lockerType: def.lockerType,
+                compartments: comps,
+                availableCompartments: comps.filter((c) => c.status === 'EMPTY').length,
+              };
+            }
+            return {
+              ...l,
+              status: 'ONLINE',
+              connectionStatus: 'ONLINE',
+              compartments: comps,
+              availableCompartments: comps.filter((c) => c.status === 'EMPTY').length,
+            };
+          });
+          const existingIds = new Set(updated.map((l) => l.lockerId));
+          const missing = DEFAULT_LOCKERS.filter((l) => !existingIds.has(l.lockerId));
+          const finalLockers = [...updated, ...missing];
+          localStorage.setItem(LOCKERS_KEY, JSON.stringify(finalLockers));
+          return finalLockers;
+        }
+      }
     } catch (e) {}
     localStorage.setItem(LOCKERS_KEY, JSON.stringify(DEFAULT_LOCKERS));
     return DEFAULT_LOCKERS;
@@ -454,6 +927,7 @@ export const store = {
 
   // Mở ngăn khẩn cấp từ xa (Admin Remote Force Unlock)
   forceUnlockCompartment: (lockerId, compIndex) => {
+    store.triggerMqttCommand(lockerId, compIndex, 'OPEN_DOOR', 'ADMIN_FORCE_UNLOCK');
     const lockers = store.getLockers();
     const updated = lockers.map((l) => {
       if (l.lockerId === lockerId) {
@@ -505,112 +979,27 @@ export const store = {
     };
   },
 
-  // ===== QUẢN LÝ GIỎ HÀNG CÔ LẬP THEO TỪNG TÀI KHOẢN (USER-ISOLATED CART HELPERS) =====
-  getUserCartKey: (userParam) => {
-    if (userParam) {
-      if (typeof userParam === 'string') return `smart_locker_cart_${userParam}`;
-      if (userParam.username) return `smart_locker_cart_${userParam.username}`;
-      if (userParam.phone) return `smart_locker_cart_${userParam.phone}`;
-      if (userParam.id) return `smart_locker_cart_user_${userParam.id}`;
-    }
+  // Bắn lệnh MQTT trực tiếp từ Web UI xuống Backend qua API
+  triggerMqttCommand: async (lockerId, compIndex, action = 'OPEN_DOOR', triggeredBy = 'WEB_UI', orderId = null) => {
     try {
-      const raw = localStorage.getItem('smart_locker_user');
-      if (raw) {
-        const u = JSON.parse(raw);
-        if (u) {
-          if (u.username) return `smart_locker_cart_${u.username}`;
-          if (u.phone) return `smart_locker_cart_${u.phone}`;
-          if (u.id) return `smart_locker_cart_user_${u.id}`;
-        }
+      const payload = {
+        lockerId: lockerId || 'LOCKER_HN_01',
+        compIndex: compIndex || 1,
+        action: action || 'OPEN_DOOR',
+        triggeredBy: triggeredBy,
+        orderId: orderId || null,
+      };
+      const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : 'http://localhost:8080/api';
+      if (typeof fetch !== 'undefined') {
+        await fetch(`${baseUrl}/mqtt/command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        console.log(`[MQTT Push] Sent ${triggeredBy} for ${lockerId} #${compIndex}`);
       }
-    } catch (e) {}
-    return 'smart_locker_cart_guest';
-  },
-
-  getCart: (userParam) => {
-    const key = store.getUserCartKey(userParam);
-    try {
-      const data = localStorage.getItem(key);
-      if (data !== null) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed)) {
-          return parsed.map((item) => ({
-            ...item,
-            imageUrl: resolveProductImage(item),
-          }));
-        }
-      }
-    } catch (e) {}
-
-    // Chỉ tài khoản demo mặc định 'khachhang' mới nạp DEFAULT_CART nếu chưa có
-    // Mọi tài khoản khác (User B, tài khoản đăng ký mới) khởi tạo giỏ hàng rỗng []
-    const isDemoCustomer = key === 'smart_locker_cart_khachhang' || key === 'smart_locker_cart_0988123456';
-    const initialCart = isDemoCustomer ? DEFAULT_CART : [];
-    localStorage.setItem(key, JSON.stringify(initialCart));
-    return initialCart.map((item) => ({
-      ...item,
-      imageUrl: resolveProductImage(item),
-    }));
-  },
-
-  addToCart: (product, userParam) => {
-    const key = store.getUserCartKey(userParam);
-    const cleanProduct = {
-      ...product,
-      imageUrl: resolveProductImage(product),
-    };
-    const cart = store.getCart(userParam);
-    const existing = cart.find((item) => item.productId === cleanProduct.productId);
-    let updated;
-    if (existing) {
-      updated = cart.map((item) =>
-        item.productId === cleanProduct.productId
-          ? { ...item, quantity: item.quantity + 1 }
-          : item
-      );
-    } else {
-      updated = [...cart, { ...cleanProduct, quantity: 1 }];
+    } catch (e) {
+      console.warn('[MQTT Push] Failed to trigger MQTT command:', e?.message || e);
     }
-    localStorage.setItem(key, JSON.stringify(updated));
-    window.dispatchEvent(new Event('smart_locker_cart_updated'));
-    return updated;
-  },
-
-  updateCartQuantity: (productId, delta, userParam) => {
-    const key = store.getUserCartKey(userParam);
-    const cart = store.getCart(userParam);
-    const updated = cart
-      .map((item) => {
-        if (item.productId === productId) {
-          const newQty = item.quantity + delta;
-          return newQty > 0 ? { ...item, quantity: newQty } : null;
-        }
-        return item;
-      })
-      .filter(Boolean);
-    localStorage.setItem(key, JSON.stringify(updated));
-    window.dispatchEvent(new Event('smart_locker_cart_updated'));
-    return updated;
-  },
-
-  removeFromCart: (productId, userParam) => {
-    const key = store.getUserCartKey(userParam);
-    const cart = store.getCart(userParam);
-    const updated = cart.filter((item) => item.productId !== productId);
-    localStorage.setItem(key, JSON.stringify(updated));
-    window.dispatchEvent(new Event('smart_locker_cart_updated'));
-    return updated;
-  },
-
-  clearCart: (userParam) => {
-    const key = store.getUserCartKey(userParam);
-    localStorage.setItem(key, JSON.stringify([]));
-    window.dispatchEvent(new Event('smart_locker_cart_updated'));
-    return [];
-  },
-
-  getCartCount: (userParam) => {
-    const cart = store.getCart(userParam);
-    return cart.reduce((sum, item) => sum + item.quantity, 0);
   }
 };

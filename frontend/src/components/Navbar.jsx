@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  ShoppingBag, ShoppingCart, Package, Truck, Shield,
+  Package, Truck, Shield,
   LogOut, Bell, CheckCheck, X, Cpu
 } from 'lucide-react';
 import { store } from '../services/store';
@@ -8,9 +8,8 @@ import { store } from '../services/store';
 export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout }) {
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [cartCount, setCartCount] = useState(() => store.getCartCount());
 
-  // Load notifications & cart count from store
+  // Load notifications from store
   useEffect(() => {
     if (currentUser?.phone) {
       setNotifications(store.getNotifications(currentUser.phone));
@@ -20,15 +19,10 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout 
         setNotifications(store.getNotifications(currentUser.phone));
       }
     };
-    const handleCartUpdate = () => {
-      setCartCount(store.getCartCount());
-    };
 
     window.addEventListener('smart_locker_notifs_updated', handleNotifUpdate);
-    window.addEventListener('smart_locker_cart_updated', handleCartUpdate);
     return () => {
       window.removeEventListener('smart_locker_notifs_updated', handleNotifUpdate);
-      window.removeEventListener('smart_locker_cart_updated', handleCartUpdate);
     };
   }, [currentUser]);
 
@@ -44,13 +38,6 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout 
 
     if (role === 'CUSTOMER') {
       return [
-        { id: 'ecommerce', label: 'Cửa hàng', icon: ShoppingBag },
-        {
-          id: 'cart',
-          label: 'Giỏ hàng',
-          icon: ShoppingCart,
-          badge: cartCount > 0 ? cartCount : null,
-        },
         { id: 'customer', label: 'Đơn hàng & Tủ nhận', icon: Package },
       ];
     }

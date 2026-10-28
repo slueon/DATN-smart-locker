@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 
 import java.time.LocalDate;
 
@@ -11,14 +13,23 @@ import java.time.LocalDate;
 })
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class LockerSlotSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    public LockerSlotSchedule() {}
+
+    public LockerSlotSchedule(Long id, Locker locker, LocalDate scheduleDate, Integer totalSlots, Integer availableSlots, Long version) {
+        this.id = id;
+        this.locker = locker;
+        this.scheduleDate = scheduleDate;
+        this.totalSlots = totalSlots != null ? totalSlots : 3;
+        this.availableSlots = availableSlots != null ? availableSlots : 3;
+        this.version = version != null ? version : 0L;
+    }
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "locker_id", nullable = false)
