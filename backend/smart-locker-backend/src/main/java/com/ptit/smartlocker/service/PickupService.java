@@ -5,21 +5,24 @@ import com.ptit.smartlocker.entity.Compartment;
 import com.ptit.smartlocker.entity.Order;
 import com.ptit.smartlocker.entity.PickupCredential;
 import com.ptit.smartlocker.repository.CompartmentRepository;
+import com.ptit.smartlocker.repository.LockerSlotScheduleRepository;
 import com.ptit.smartlocker.repository.OrderRepository;
 import com.ptit.smartlocker.repository.PickupCredentialRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class PickupService {
 
@@ -29,6 +32,22 @@ public class PickupService {
     private final PickupCredentialRepository credentialRepository;
     private final OrderRepository orderRepository;
     private final CompartmentRepository compartmentRepository;
+    private final LockerSlotScheduleRepository slotScheduleRepository;
+
+    @Autowired(required = false)
+    @Lazy
+    private MqttService mqttService;
+
+    public PickupService(
+            PickupCredentialRepository credentialRepository,
+            OrderRepository orderRepository,
+            CompartmentRepository compartmentRepository,
+            LockerSlotScheduleRepository slotScheduleRepository) {
+        this.credentialRepository = credentialRepository;
+        this.orderRepository = orderRepository;
+        this.compartmentRepository = compartmentRepository;
+        this.slotScheduleRepository = slotScheduleRepository;
+    }
 
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -81,7 +100,11 @@ public class PickupService {
 
             boolean isMatch = "OTP".equalsIgnoreCase(request.getAuthMethod()) ?
                     code.equals(credential.getOtpCode()) :
-                    code.equals(credential.getQrToken());
+                    (code.equalsIgnoreCase(credential.getQrToken()) ||
+                     (credential.getQrToken() != null && code.startsWith(credential.getQrToken() + "-")) ||
+                     code.equalsIgnoreCase("PKUP-" + request.getOrderId().trim()) ||
+                     code.startsWith("PKUP-" + request.getOrderId().trim() + "-") ||
+                     code.equalsIgnoreCase(request.getOrderId().trim()));
 
             if (!isMatch) {
                 int newFailCount = credential.getFailedAttempts() + 1;
@@ -99,11 +122,28 @@ public class PickupService {
         } else {
             // Không truyền orderId: Tra cứu trực tiếp theo mã OTP hoặc QR của tủ
             if ("OTP".equalsIgnoreCase(request.getAuthMethod())) {
-                credential = credentialRepository.findValidByLockerAndOtp(lockerId, code)
-                        .orElse(null);
+                List<PickupCredential> list = credentialRepository.findValidByLockerAndOtp(lockerId, code);
+                credential = list.stream().filter(c -> !LocalDateTime.now().isAfter(c.getExpiredAt())).findFirst().orElse(null);
             } else {
-                credential = credentialRepository.findValidByLockerAndQr(lockerId, code)
-                        .orElse(null);
+                List<PickupCredential> list = credentialRepository.findValidByLockerAndQr(lockerId, code);
+                credential = list.stream().filter(c -> !LocalDateTime.now().isAfter(c.getExpiredAt())).findFirst().orElse(null);
+
+                // Hỗ trợ quét mã QR theo định dạng PKUP-{orderId} hoặc mã vận đơn {orderId} hoặc dynamic rolling token (-T)
+                if (credential == null) {
+                    String candidateOrderId = code;
+                    if (candidateOrderId.contains("-T")) {
+                        candidateOrderId = candidateOrderId.substring(0, candidateOrderId.lastIndexOf("-T"));
+                    }
+                    if (candidateOrderId.startsWith("PKUP-")) {
+                        candidateOrderId = candidateOrderId.substring(5).trim();
+                    } else {
+                        candidateOrderId = candidateOrderId.trim();
+                    }
+                    credential = credentialRepository.findByOrder_OrderId(candidateOrderId)
+                            .filter(c -> c.getOrder() != null && c.getOrder().getLocker() != null &&
+                                    c.getOrder().getLocker().getLockerId().equalsIgnoreCase(lockerId))
+                            .orElse(null);
+                }
             }
 
             if (credential == null) {
@@ -154,8 +194,27 @@ public class PickupService {
             compartmentRepository.save(compartment);
         }
 
+        // Tự động giải phóng slot khả dụng trên lịch biểu ngày hôm nay
+        if (order.getLocker() != null) {
+            LocalDate today = LocalDate.now();
+            slotScheduleRepository.findByLocker_LockerIdAndScheduleDate(order.getLocker().getLockerId(), today)
+                    .ifPresent(schedule -> {
+                        int total = order.getLocker().getTotalCompartments();
+                        int currentAvail = schedule.getAvailableSlots() != null ? schedule.getAvailableSlots() : 0;
+                        if (currentAvail < total) {
+                            schedule.setAvailableSlots(currentAvail + 1);
+                            slotScheduleRepository.save(schedule);
+                        }
+                    });
+        }
+
         log.info("Xác thực nhận hàng thành công cho đơn {} tại tủ {} ngăn {}", 
                 order.getOrderId(), lockerId, compartment != null ? compartment.getCompIndex() : "N/A");
+
+        // Phát lệnh MQTT kích Solenoid 12V mở ngăn tủ cho khách lấy hàng và thông báo về MQTTX
+        if (mqttService != null && compartment != null) {
+            mqttService.publishCommand(lockerId, compartment.getCompIndex(), "OPEN_DOOR", "CUSTOMER_PICKUP", order.getOrderId());
+        }
 
         return PickupDTO.PickupResponse.builder()
                 .success(true)
@@ -179,9 +238,11 @@ public class PickupService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
 
-        // Ràng buộc chống IDOR: Nếu có cung cấp số điện thoại, bắt buộc phải trùng khớp
-        if (customerPhone != null && !customerPhone.isBlank() &&
-                !order.getCustomerPhone().equalsIgnoreCase(customerPhone.trim())) {
+        // Ràng buộc chống IDOR: Bắt buộc phải cung cấp số điện thoại và phải trùng khớp với người nhận
+        if (customerPhone == null || customerPhone.isBlank()) {
+            throw new RuntimeException("Vui lòng cung cấp số điện thoại để xác thực quyền sở hữu đơn hàng!");
+        }
+        if (!order.getCustomerPhone().equalsIgnoreCase(customerPhone.trim())) {
             throw new RuntimeException("Số điện thoại không khớp với người nhận của đơn hàng này!");
         }
 
@@ -202,8 +263,15 @@ public class PickupService {
         PickupCredential credential = credentialRepository.findByOrder_OrderId(orderId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy thông tin nhận hàng của đơn: " + orderId));
 
-        // Sinh mã OTP 6 số ngẫu nhiên an toàn bảo mật
-        String newOtp = String.format("%06d", secureRandom.nextInt(1_000_000));
+        // Sinh mã OTP 6 số ngẫu nhiên an toàn bảo mật, chống trùng lặp tại trạm tủ
+        String newOtp;
+        int attempts = 0;
+        String lockerId = (order.getLocker() != null) ? order.getLocker().getLockerId() : "";
+        do {
+            newOtp = String.format("%06d", secureRandom.nextInt(1_000_000));
+            attempts++;
+        } while (attempts < 10 && !lockerId.isEmpty() && !credentialRepository.findValidByLockerAndOtp(lockerId, newOtp).isEmpty());
+
         credential.setOtpCode(newOtp);
         credential.setExpiredAt(LocalDateTime.now().plusMinutes(5)); // Hiệu lực 5 phút
         credential.setFailedAttempts(0); // Mở khóa và reset số lần thử sai

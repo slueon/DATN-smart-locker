@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
@@ -10,8 +12,6 @@ import java.time.LocalDateTime;
 @Table(name = "device_events")
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class DeviceEvent {
 
@@ -19,6 +19,17 @@ public class DeviceEvent {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "event_id")
     private Long eventId;
+
+    public DeviceEvent() {}
+
+    public DeviceEvent(Long eventId, Locker locker, Integer compartmentId, String eventType, String eventPayload, LocalDateTime createdAt) {
+        this.eventId = eventId;
+        this.locker = locker;
+        this.compartmentId = compartmentId;
+        this.eventType = eventType;
+        this.eventPayload = eventPayload;
+        this.createdAt = createdAt;
+    }
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "locker_id", nullable = false)

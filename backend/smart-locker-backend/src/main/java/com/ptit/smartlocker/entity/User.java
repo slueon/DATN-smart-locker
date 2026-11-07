@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
@@ -10,14 +12,24 @@ import java.time.LocalDateTime;
 @Table(name = "users")
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    public User() {}
+
+    public User(Long id, String username, String password, String fullName, String phone, String role, LocalDateTime createdAt) {
+        this.id = id;
+        this.username = username;
+        this.password = password;
+        this.fullName = fullName;
+        this.phone = phone;
+        this.role = role;
+        this.createdAt = createdAt;
+    }
 
     @Column(name = "username", unique = true, nullable = false, length = 50)
     private String username;

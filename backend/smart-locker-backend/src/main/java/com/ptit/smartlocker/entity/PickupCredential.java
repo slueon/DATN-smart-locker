@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 
 import java.time.LocalDateTime;
 
@@ -9,8 +11,6 @@ import java.time.LocalDateTime;
 @Table(name = "pickup_credentials")
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class PickupCredential {
 
@@ -18,6 +18,19 @@ public class PickupCredential {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "credential_id")
     private Long credentialId;
+
+    public PickupCredential() {}
+
+    public PickupCredential(Long credentialId, Order order, String qrToken, String otpCode, Boolean isUsed, Integer failedAttempts, LocalDateTime expiredAt, LocalDateTime usedAt) {
+        this.credentialId = credentialId;
+        this.order = order;
+        this.qrToken = qrToken;
+        this.otpCode = otpCode;
+        this.isUsed = isUsed != null ? isUsed : false;
+        this.failedAttempts = failedAttempts != null ? failedAttempts : 0;
+        this.expiredAt = expiredAt;
+        this.usedAt = usedAt;
+    }
 
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id", nullable = false)

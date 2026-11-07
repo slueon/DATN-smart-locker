@@ -36,3 +36,8 @@ Desktop.ini
 awesome-cursorrules-main/
 .agents/
 
+# Scratch & reference repositories
+scratch/
+ui-main/
+datt-smart-locker-embedded/
+*.bak

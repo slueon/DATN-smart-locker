@@ -11,5 +11,7 @@ public interface ShipperIdentityTokenRepository extends JpaRepository<ShipperIde
 
     Optional<ShipperIdentityToken> findByDynamicToken(String dynamicToken);
 
+    Optional<ShipperIdentityToken> findByDynamicTokenAndIsVerifiedTrue(String dynamicToken);
+
     Optional<ShipperIdentityToken> findTopByShipperIdOrderByCreatedAtDesc(String shipperId);
 }

@@ -3,7 +3,6 @@ package com.ptit.smartlocker.controller;
 import com.ptit.smartlocker.dto.ApiResponse;
 import com.ptit.smartlocker.dto.AuthDTO;
 import com.ptit.smartlocker.service.AuthService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,10 +10,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/auth")
-@RequiredArgsConstructor
 public class AuthController {
 
     private final AuthService authService;
+
+    public AuthController(AuthService authService) {
+        this.authService = authService;
+    }
 
     /**
      * 1. Đăng nhập dành cho cả 3 nhân vật: KHÁCH HÀNG, SHIPPER, QUẢN TRỊ VIÊN

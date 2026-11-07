@@ -5,7 +5,6 @@ import com.ptit.smartlocker.dto.CapacityDTO;
 import com.ptit.smartlocker.entity.Compartment;
 import com.ptit.smartlocker.entity.Locker;
 import com.ptit.smartlocker.service.LockerService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,10 +14,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/lockers")
-@RequiredArgsConstructor
 public class LockerController {
 
     private final LockerService lockerService;
+
+    public LockerController(LockerService lockerService) {
+        this.lockerService = lockerService;
+    }
 
     /**
      * Lấy danh sách toàn bộ các tủ để hiển thị lên bản đồ số Leaflet
@@ -53,5 +55,16 @@ public class LockerController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         CapacityDTO.CapacityCheckResponse response = lockerService.checkCapacity(lockerId, date);
         return ResponseEntity.ok(ApiResponse.ok(response));
+    }
+
+    /**
+     * Mở khóa khẩn cấp và giải phóng ngăn tủ về EMPTY từ Admin từ xa
+     */
+    @PostMapping("/{lockerId}/compartments/{compIndex}/unlock")
+    public ResponseEntity<ApiResponse<Compartment>> forceUnlockCompartment(
+            @PathVariable String lockerId,
+            @PathVariable Integer compIndex) {
+        Compartment comp = lockerService.forceUnlockCompartment(lockerId, compIndex);
+        return ResponseEntity.ok(ApiResponse.ok("Mở khóa khẩn cấp và giải phóng ngăn thành công!", comp));
     }
 }

@@ -3,44 +3,56 @@ package com.ptit.smartlocker.service;
 import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.entity.*;
 import com.ptit.smartlocker.repository.*;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final ProductRepository productRepository;
     private final LockerRepository lockerRepository;
     private final CompartmentRepository compartmentRepository;
     private final LockerSlotScheduleRepository slotScheduleRepository;
     private final PickupCredentialRepository pickupCredentialRepository;
 
-    private final SecureRandom random = new SecureRandom();
+    public OrderService(
+            OrderRepository orderRepository,
+            LockerRepository lockerRepository,
+            CompartmentRepository compartmentRepository,
+            LockerSlotScheduleRepository slotScheduleRepository,
+            PickupCredentialRepository pickupCredentialRepository) {
+        this.orderRepository = orderRepository;
+        this.lockerRepository = lockerRepository;
+        this.compartmentRepository = compartmentRepository;
+        this.slotScheduleRepository = slotScheduleRepository;
+        this.pickupCredentialRepository = pickupCredentialRepository;
+    }
 
     /**
-     * Đặt hàng E-Commerce với Cơ chế Pessimistic Locking chống Race Condition
+     * Tạo đơn gửi bưu kiện vào Tủ với Cơ chế Pessimistic Locking chống Race Condition
      */
     @Transactional
     public OrderDTO.OrderResponse createOrder(OrderDTO.CheckoutRequest request) {
         String orderId = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        String requiredSize = "S";
+        BigDecimal totalAmount = request.getTotalAmount() != null ? request.getTotalAmount() : BigDecimal.ZERO;
+        String requiredSize = request.getRequiredSize() != null && !request.getRequiredSize().isBlank()
+                ? request.getRequiredSize().trim().toUpperCase() : "S";
+        String productName = request.getProductName() != null && !request.getProductName().isBlank()
+                ? request.getProductName().trim() : "Bưu kiện Smart Locker";
 
-        List<OrderItem> items = new ArrayList<>();
+        LocalDate deliveryDate = request.getDeliveryDate() != null ? request.getDeliveryDate() : LocalDate.now().plusDays(2);
+        if (deliveryDate.isBefore(LocalDate.now())) {
+            throw new IllegalArgumentException("Ngày nhận hàng không thể là ngày trong quá khứ!");
+        }
         String payMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : "ONLINE_VIETQR";
         String payStatus = request.getPaymentStatus() != null ? request.getPaymentStatus() :
                 ("COD".equalsIgnoreCase(payMethod) ? "UNPAID" : "PAID");
@@ -50,43 +62,18 @@ public class OrderService {
                 .customerName(request.getCustomerName())
                 .customerPhone(request.getCustomerPhone())
                 .deliveryType(request.getDeliveryType())
-                .expectedDate(request.getDeliveryDate())
+                .expectedDate(deliveryDate)
                 .paymentMethod(payMethod)
                 .paymentStatus(payStatus)
                 .status("PENDING")
-                .totalAmount(BigDecimal.ZERO)
+                .totalAmount(totalAmount)
+                .productName(productName)
                 .build();
-
-        // Tính toán tổng tiền và kích thước kiện hàng lớn nhất
-        for (OrderDTO.CartItemRequest itemReq : request.getItems()) {
-            Product product = productRepository.findById(itemReq.getProductId())
-                    .orElseThrow(() -> new RuntimeException("Không tìm thấy sản phẩm id: " + itemReq.getProductId()));
-
-            BigDecimal itemTotal = product.getPrice().multiply(BigDecimal.valueOf(itemReq.getQuantity()));
-            totalAmount = totalAmount.add(itemTotal);
-
-            // Cập nhật size ngăn tủ cần thiết (L > M > S)
-            if ("L".equals(product.getRequiredSize())) {
-                requiredSize = "L";
-            } else if ("M".equals(product.getRequiredSize()) && !"L".equals(requiredSize)) {
-                requiredSize = "M";
-            }
-
-            OrderItem item = OrderItem.builder()
-                    .order(order)
-                    .product(product)
-                    .quantity(itemReq.getQuantity())
-                    .unitPrice(product.getPrice())
-                    .build();
-            items.add(item);
-        }
-        order.setOrderItems(items);
-        order.setTotalAmount(totalAmount);
 
         // Xử lý giao tại tủ thông minh (Smart Locker)
         if ("LOCKER".equalsIgnoreCase(request.getDeliveryType())) {
-            if (request.getLockerId() == null || request.getDeliveryDate() == null) {
-                throw new IllegalArgumentException("Vui lòng chọn Tủ giao nhận và Ngày nhận mong muốn!");
+            if (request.getLockerId() == null) {
+                throw new IllegalArgumentException("Vui lòng chọn Tủ giao nhận!");
             }
 
             Locker locker = lockerRepository.findById(request.getLockerId())
@@ -94,53 +81,61 @@ public class OrderService {
             order.setLocker(locker);
 
             // 1. Áp dụng PESSIMISTIC LOCKING để khóa và lấy lịch biểu an toàn (Atomic Lock)
-            LockerSlotSchedule schedule = getOrCreateScheduleWithLock(locker, request.getDeliveryDate());
+            LockerSlotSchedule schedule = getOrCreateScheduleWithLock(locker, deliveryDate);
+
+            // Nếu đặt cho HÔM NAY: Đồng bộ availableSlots với số ngăn EMPTY thực tế
+            if (deliveryDate.isEqual(LocalDate.now())) {
+                List<Compartment> currentEmptyComps = compartmentRepository
+                        .findByLocker_LockerIdAndStatus(request.getLockerId(), "EMPTY");
+                if (currentEmptyComps.size() > schedule.getAvailableSlots()) {
+                    schedule.setAvailableSlots(currentEmptyComps.size());
+                    slotScheduleRepository.save(schedule);
+                }
+            }
 
             if (schedule.getAvailableSlots() <= 0) {
                 throw new RuntimeException("Tủ " + locker.getName() + " đã hết chỗ vào ngày " 
-                        + request.getDeliveryDate() + ". Vui lòng chọn ngày khác hoặc Giao tận nhà!");
+                        + deliveryDate + ". Vui lòng chọn ngày khác hoặc Giao tận nhà!");
             }
 
-            // 2. Tìm và khóa bi quan (SELECT ... FOR UPDATE) các ngăn tủ EMPTY của trạm
-            List<Compartment> lockedEmptyComps = compartmentRepository
-                    .findWithLockByLockerIdAndStatus(request.getLockerId(), "EMPTY");
-
-            // Chọn ngăn tủ thích hợp nhất (ưu tiên đúng size -> nâng cấp size)
-            Compartment assignedComp = selectSuitableCompartment(lockedEmptyComps, requiredSize);
-
-            // 3. Toàn vẹn giao dịch: Nếu không còn ngăn tủ phù hợp kích cỡ, hủy giao dịch và rollback ngay lập tức!
-            if (assignedComp == null) {
-                throw new RuntimeException("Tủ " + locker.getName() + " hiện không còn ngăn tủ trống phù hợp với kích thước kiện hàng (Size " 
-                        + requiredSize + "). Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
-            }
-
-            // Trừ 1 slot khả dụng trên lịch biểu
+            // Trừ 1 slot khả dụng trên lịch biểu theo ngày
             schedule.setAvailableSlots(schedule.getAvailableSlots() - 1);
             slotScheduleRepository.save(schedule);
 
-            // Đánh dấu ngăn tủ đã được giữ chỗ (RESERVED)
-            assignedComp.setStatus("RESERVED");
-            compartmentRepository.save(assignedComp);
-            order.setCompartment(assignedComp);
+            // 2. Chỉ khóa trước ngăn tủ vật lý nếu ngày giao hàng là HÔM NAY
+            // Nếu đặt trước cho ngày tương lai, ngăn tủ sẽ được gán tự động khi Shipper nạp hàng vào ngày đó
+            if (deliveryDate.isEqual(LocalDate.now())) {
+                List<Compartment> lockedEmptyComps = compartmentRepository
+                        .findWithLockByLockerIdAndStatus(request.getLockerId(), "EMPTY");
+
+                Compartment assignedComp = selectSuitableCompartment(lockedEmptyComps, requiredSize);
+                if (assignedComp == null) {
+                    throw new RuntimeException("Tủ " + locker.getName() + " hiện không còn ngăn tủ trống phù hợp với kích thước kiện hàng (Size " 
+                            + requiredSize + "). Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
+                }
+
+                assignedComp.setStatus("RESERVED");
+                compartmentRepository.save(assignedComp);
+                order.setCompartment(assignedComp);
+            }
         }
 
         orderRepository.save(order);
 
-        // 3. Tạo mã nhận hàng (Mã OTP 6 chữ số và mã QR định danh duy nhất)
-        String otpCode = String.format("%06d", random.nextInt(1_000_000));
-        String qrToken = "PKUP-" + UUID.randomUUID().toString();
+        // 3. Tạo mã nhận hàng (Mã QR định danh duy nhất)
+        String qrToken = "PKUP-" + order.getOrderId();
 
         PickupCredential credential = PickupCredential.builder()
                 .order(order)
-                .otpCode(otpCode)
+                .otpCode("") // Sẽ được cấp khi hàng đã nạp vào tủ (DEPOSITED)
                 .qrToken(qrToken)
                 .isUsed(false)
                 .failedAttempts(0)
-                .expiredAt(LocalDateTime.now().plusDays(2)) // Tạm thời set 2 ngày (sẽ chốt khi shipper deposit)
+                .expiredAt(LocalDateTime.now().plusDays(2))
                 .build();
         pickupCredentialRepository.save(credential);
 
-        return mapToOrderResponse(order, qrToken, otpCode);
+        return mapToOrderResponse(order, qrToken, null, true);
     }
 
     @Transactional(readOnly = true)
@@ -148,12 +143,29 @@ public class OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
 
+        boolean isAuthorized = phone != null && !phone.isBlank() && order.getCustomerPhone().equalsIgnoreCase(phone.trim());
+
         // Ràng buộc chống IDOR: Nếu có cung cấp số điện thoại, bắt buộc phải khớp với đơn
-        if (phone != null && !phone.isBlank() && !order.getCustomerPhone().equalsIgnoreCase(phone.trim())) {
+        if (phone != null && !phone.isBlank() && !isAuthorized) {
             throw new RuntimeException("Bạn không có quyền truy cập thông tin đơn hàng này!");
         }
 
-        return mapToOrderResponse(order, null, null);
+        // Chỉ tiết lộ mã mở tủ khi đã xác thực đúng số điện thoại và đơn hàng đã ở trong tủ (DEPOSITED)
+        boolean revealSecrets = isAuthorized && "DEPOSITED".equalsIgnoreCase(order.getStatus());
+        OrderDTO.OrderResponse response = mapToOrderResponse(order, null, null, revealSecrets);
+
+        // Che giấu dữ liệu định danh PII nếu người truy vấn chưa xác thực khớp SĐT
+        if (!isAuthorized) {
+            if (response.getCustomerPhone() != null && response.getCustomerPhone().length() >= 7) {
+                String rawPhone = response.getCustomerPhone();
+                response.setCustomerPhone(rawPhone.substring(0, 3) + "****" + rawPhone.substring(rawPhone.length() - 3));
+            }
+            if (response.getCustomerName() != null && response.getCustomerName().length() > 2) {
+                response.setCustomerName(response.getCustomerName().charAt(0) + "***" + response.getCustomerName().charAt(response.getCustomerName().length() - 1));
+            }
+        }
+
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -163,22 +175,36 @@ public class OrderService {
 
     @Transactional(readOnly = true)
     public List<OrderDTO.OrderResponse> getOrdersByCustomerPhone(String phone) {
-        List<Order> orders = orderRepository.findByCustomerPhone(phone);
+        if (phone == null || phone.isBlank()) {
+            return List.of();
+        }
+        List<Order> orders = orderRepository.findByCustomerPhone(phone.trim());
         return orders.stream()
-                .map(o -> mapToOrderResponse(o, null, null))
+                .map(o -> mapToOrderResponse(o, null, null, "DEPOSITED".equalsIgnoreCase(o.getStatus())))
                 .toList();
     }
 
     public OrderDTO.OrderResponse mapToOrderResponse(Order order, String preloadedQr, String preloadedOtp) {
-        String qrToken = preloadedQr;
-        String otpCode = preloadedOtp;
-        if (qrToken == null || otpCode == null) {
-            var credOpt = pickupCredentialRepository.findByOrder_OrderId(order.getOrderId());
-            if (credOpt.isPresent()) {
-                qrToken = credOpt.get().getQrToken();
-                otpCode = credOpt.get().getOtpCode();
+        return mapToOrderResponse(order, preloadedQr, preloadedOtp, true);
+    }
+
+    public OrderDTO.OrderResponse mapToOrderResponse(Order order, String preloadedQr, String preloadedOtp, boolean includeSecrets) {
+        String qrToken = null;
+        String otpCode = null;
+
+        if (includeSecrets) {
+            qrToken = preloadedQr;
+            otpCode = preloadedOtp;
+            if (qrToken == null || otpCode == null) {
+                var credOpt = pickupCredentialRepository.findByOrder_OrderId(order.getOrderId());
+                if (credOpt.isPresent()) {
+                    qrToken = credOpt.get().getQrToken();
+                    otpCode = credOpt.get().getOtpCode();
+                }
             }
         }
+
+        String productName = order.getProductName() != null ? order.getProductName() : "Bưu kiện Smart Locker";
 
         return OrderDTO.OrderResponse.builder()
                 .orderId(order.getOrderId())
@@ -192,6 +218,7 @@ public class OrderService {
                 .depositedAt(order.getDepositedAt())
                 .expiryDeadline(order.getExpiryDeadline())
                 .status(order.getStatus())
+                .productName(productName)
                 .totalAmount(order.getTotalAmount())
                 .paymentMethod(order.getPaymentMethod())
                 .paymentStatus(order.getPaymentStatus())
@@ -235,15 +262,8 @@ public class OrderService {
             }
         }
 
-        // 2. Nâng cấp lên ngăn lớn hơn nếu ngăn hiện tại nhỏ hơn
-        if ("S".equalsIgnoreCase(requiredSize)) {
-            for (Compartment comp : emptyComps) {
-                if ("M".equalsIgnoreCase(comp.getSize())) return comp;
-            }
-            for (Compartment comp : emptyComps) {
-                if ("L".equalsIgnoreCase(comp.getSize())) return comp;
-            }
-        } else if ("M".equalsIgnoreCase(requiredSize)) {
+        // 2. Nâng cấp lên ngăn lớn (Size L) nếu ngăn nhỏ (Size S) đã kín chỗ
+        if ("S".equalsIgnoreCase(requiredSize) || "M".equalsIgnoreCase(requiredSize)) {
             for (Compartment comp : emptyComps) {
                 if ("L".equalsIgnoreCase(comp.getSize())) return comp;
             }

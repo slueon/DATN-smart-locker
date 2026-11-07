@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.Builder;
 
 @Entity
 @Table(name = "compartments", uniqueConstraints = {
@@ -9,8 +11,6 @@ import lombok.*;
 })
 @Getter
 @Setter
-@NoArgsConstructor
-@AllArgsConstructor
 @Builder
 public class Compartment {
 
@@ -18,6 +18,19 @@ public class Compartment {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "compartment_id")
     private Integer compartmentId;
+
+    public Compartment() {}
+
+    public Compartment(Integer compartmentId, Locker locker, Integer compIndex, String size, String status, Double currentWeight, Boolean isDoorClosed, Integer relayPin) {
+        this.compartmentId = compartmentId;
+        this.locker = locker;
+        this.compIndex = compIndex;
+        this.size = size != null ? size : "M";
+        this.status = status != null ? status : "EMPTY";
+        this.currentWeight = currentWeight != null ? currentWeight : 0.0;
+        this.isDoorClosed = isDoorClosed != null ? isDoorClosed : true;
+        this.relayPin = relayPin;
+    }
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "locker_id", nullable = false)

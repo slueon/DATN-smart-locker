@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -15,14 +16,14 @@ public interface PickupCredentialRepository extends JpaRepository<PickupCredenti
 
     Optional<PickupCredential> findByQrToken(String qrToken);
 
-    @Query("SELECT p FROM PickupCredential p WHERE p.order.locker.lockerId = :lockerId AND p.otpCode = :otpCode AND p.isUsed = false")
-    Optional<PickupCredential> findValidByLockerAndOtp(
+    @Query("SELECT p FROM PickupCredential p WHERE p.order.locker.lockerId = :lockerId AND p.otpCode = :otpCode AND p.isUsed = false AND p.order.status = 'DEPOSITED'")
+    List<PickupCredential> findValidByLockerAndOtp(
             @Param("lockerId") String lockerId,
             @Param("otpCode") String otpCode
     );
 
-    @Query("SELECT p FROM PickupCredential p WHERE p.order.locker.lockerId = :lockerId AND p.qrToken = :qrToken AND p.isUsed = false")
-    Optional<PickupCredential> findValidByLockerAndQr(
+    @Query("SELECT p FROM PickupCredential p WHERE p.order.locker.lockerId = :lockerId AND p.qrToken = :qrToken AND p.isUsed = false AND p.order.status = 'DEPOSITED'")
+    List<PickupCredential> findValidByLockerAndQr(
             @Param("lockerId") String lockerId,
             @Param("qrToken") String qrToken
     );

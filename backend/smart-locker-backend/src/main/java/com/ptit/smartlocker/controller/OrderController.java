@@ -3,7 +3,6 @@ package com.ptit.smartlocker.controller;
 import com.ptit.smartlocker.dto.ApiResponse;
 import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.service.OrderService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,10 +10,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/orders")
-@RequiredArgsConstructor
 public class OrderController {
 
     private final OrderService orderService;
+
+    public OrderController(OrderService orderService) {
+        this.orderService = orderService;
+    }
 
     /**
      * Đặt hàng E-Commerce (Áp dụng Pessimistic Locking chống Race Condition)

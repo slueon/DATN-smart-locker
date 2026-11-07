@@ -3,16 +3,18 @@ package com.ptit.smartlocker.controller;
 import com.ptit.smartlocker.dto.ApiResponse;
 import com.ptit.smartlocker.dto.PickupDTO;
 import com.ptit.smartlocker.service.PickupService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/pickup")
-@RequiredArgsConstructor
 public class PickupController {
 
     private final PickupService pickupService;
+
+    public PickupController(PickupService pickupService) {
+        this.pickupService = pickupService;
+    }
 
     /**
      * Khách hàng lấy đồ tại tủ (Hỗ trợ xác thực bằng mã OTP 6 số hoặc quét mã QR qua GM65)
@@ -35,7 +37,7 @@ public class PickupController {
     @PostMapping("/request-otp")
     public ResponseEntity<ApiResponse<String>> requestOtp(
             @RequestParam String orderId,
-            @RequestParam(required = false) String customerPhone) {
+            @RequestParam String customerPhone) {
         try {
             String otp = pickupService.generateNewOtp(orderId, customerPhone);
             return ResponseEntity.ok(ApiResponse.ok("Tạo mã OTP thành công (hiệu lực 5 phút)!", otp));

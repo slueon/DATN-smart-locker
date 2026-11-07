@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : 'http://localhost:8080/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -27,6 +27,7 @@ export const lockerApi = {
   getById: (id) => api.get(`/lockers/${id}`),
   getCompartments: (id) => api.get(`/lockers/${id}/compartments`),
   checkCapacity: (lockerId, date) => api.get(`/lockers/${lockerId}/capacity?date=${date}`),
+  forceUnlock: (lockerId, compIndex) => api.post(`/lockers/${lockerId}/compartments/${compIndex}/unlock`),
 };
 
 export const orderApi = {
@@ -47,6 +48,11 @@ export const pickupApi = {
   verifyPickup: (data) => api.post('/pickup/verify', data),
   requestOtp: (orderId, customerPhone) => 
     api.post(`/pickup/request-otp?orderId=${orderId}${customerPhone ? `&customerPhone=${encodeURIComponent(customerPhone)}` : ''}`),
+};
+
+export const mqttApi = {
+  sendCommand: (data) => api.post('/mqtt/command', data),
+  getRecentLogs: () => api.get('/mqtt/recent-logs'),
 };
 
 export default api;

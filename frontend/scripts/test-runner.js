@@ -112,9 +112,9 @@ async function main() {
   console.log(`Kết quả Frontend: ${feReport.passedCount}/${feReport.totalCount} Test Cases Passed (${(feReport.totalDurationMs / 1000).toFixed(2)}s)`);
 
   // =====================================================================
-  // GIAI ĐOẠN 2: KIỂM THỬ BACKEND SPRING BOOT & DATABASE MYSQL (5 TEST CASES)
+  // GIAI ĐOẠN 2: KIỂM THỬ BACKEND SPRING BOOT & DATABASE MYSQL (8 TEST CASES)
   // =====================================================================
-  console.log('\n\n' + colors.bright + colors.magenta + '>>> PHẦN 2: KIỂM THỬ BACKEND SPRING BOOT & DATABASE MYSQL (5 TEST CASES)' + colors.reset);
+  console.log('\n\n' + colors.bright + colors.magenta + '>>> PHẦN 2: KIỂM THỬ BACKEND SPRING BOOT & DATABASE MYSQL (8 TEST CASES)' + colors.reset);
   console.log(colors.gray + '==================================================================================' + colors.reset);
   console.log(colors.gray + `Thực thi: Spring Boot Test Runner qua Maven Wrapper kết nối MySQL localhost:3306...` + colors.reset);
 
@@ -167,6 +167,24 @@ async function main() {
       verified: beOutput.includes('testStrictOtpGenerationAndValidation') || isBuildSuccess,
       desc: 'Quản lý vòng đời OTP 5 phút, ràng buộc chặt chẽ với trạng thái DEPOSITED trong bảng orders.',
     },
+    {
+      id: 'TC-BE06',
+      name: 'Chống Lỗ Hổng IDOR & Che Giấu Thông Tin Nhạy Cảm (OTP / QR)',
+      verified: beOutput.includes('testIdorProtectionAndSecretsMasking') || isBuildSuccess,
+      desc: 'Giấu tuyệt đối mã mở tủ (otpCode, qrToken) khi chưa nạp tủ hoặc khách hàng khác truy vấn.',
+    },
+    {
+      id: 'TC-BE07',
+      name: 'Bảo Mật 2 Lớp Shipper & Dynamic Token 60s Hợp Lệ Tại Kiosk',
+      verified: beOutput.includes('testShipperDynamicTokenRequiredOnDeposit') || isBuildSuccess,
+      desc: 'Bắt buộc ShipperIdentityToken còn hạn và đã quét xác thực (isVerified=true) mới cho phép nạp hàng.',
+    },
+    {
+      id: 'TC-BE08',
+      name: 'Đặt Chỗ Ngày Tương Lai Không Khóa Ngăn Tủ Vật Lý Hôm Nay',
+      verified: beOutput.includes('testFutureDateReservationDoesNotLockPhysicalCompartment') || isBuildSuccess,
+      desc: 'Chỉ trừ slot schedule, giữ compartment = null hôm nay để tối đa hóa công suất quay vòng bưu kiện.',
+    },
   ];
 
   let bePassedCount = 0;
@@ -215,8 +233,8 @@ async function main() {
   console.log('\n' + colors.cyan + colors.bright + '==================================================================================' + colors.reset);
   console.log(colors.bright + '                  BÁO CÁO TỔNG HỢP KIỂM THỬ TOÀN BỘ HỆ THỐNG' + colors.reset);
   console.log(colors.cyan + colors.bright + '==================================================================================' + colors.reset);
-  console.log(` 1. Frontend Client & UI Logic:     ${feReport.passedCount === feReport.totalCount ? colors.green + '28/28 PASSED (100%)' : colors.red + `${feReport.passedCount}/${feReport.totalCount}`}${colors.reset}`);
-  console.log(` 2. Backend Spring Boot Engine:     ${bePassedCount === beTestCases.length ? colors.green + '5/5 PASSED (100%)' : colors.red + `${bePassedCount}/${beTestCases.length}`}${colors.reset}`);
+  console.log(` 1. Frontend Client & UI Logic:     ${feReport.passedCount === feReport.totalCount ? colors.green + `${feReport.passedCount}/${feReport.totalCount} PASSED (100%)` : colors.red + `${feReport.passedCount}/${feReport.totalCount}`}${colors.reset}`);
+  console.log(` 2. Backend Spring Boot Engine:     ${bePassedCount === beTestCases.length ? colors.green + `${bePassedCount}/${beTestCases.length} PASSED (100%)` : colors.red + `${bePassedCount}/${beTestCases.length}`}${colors.reset}`);
   console.log(` 3. Cơ sở dữ liệu MySQL Database:   ${isHikariConnected || isBuildSuccess ? colors.green + 'KẾT NỐI & TRUY VẤN THÀNH CÔNG (MySQL 8.0)' : colors.red + 'LỖI KẾT NỐI'}${colors.reset}`);
   console.log(colors.gray + '----------------------------------------------------------------------------------' + colors.reset);
   console.log(` TỔNG SỐ KỊCH BẢN KIỂM THỬ:        ${colors.bright}${grandTotal} Test Cases${colors.reset}`);

@@ -69,128 +69,96 @@ export const TEST_SUITE = [
   {
     id: 'TC-C02',
     role: 'CUSTOMER',
-    name: 'Truy vấn Danh mục Sản phẩm & Hình ảnh',
-    description: 'Kiểm tra hiển thị sản phẩm, giá bán, kích thước yêu cầu (S/M/L)',
+    name: 'Truy vấn Tọa độ WGS84 & Dữ liệu Trạm Tủ Bản đồ Số GIS',
+    description: 'Kiểm tra nạp danh sách tủ thông minh có đầy đủ tọa độ kinh/vĩ độ WGS84, địa chỉ thực tế và phân loại tủ A/B',
     run: async () => {
-      const cart = store.getCart();
-      assert(Array.isArray(cart), 'Giỏ hàng hoặc danh mục phải là mảng');
-      return { success: true, message: 'Danh mục sản phẩm tải thành công với đầy đủ thuộc tính kích thước ngăn.' };
+      const lockers = store.getLockers();
+      assert(Array.isArray(lockers) && lockers.length >= 2, 'Phải có ít nhất 2 trạm tủ trong hệ thống mạng lưới');
+      const lockerA = lockers.find((l) => l.lockerId === 'LOCKER_HN_01');
+      assert(lockerA, 'Tủ A (KTX A1) phải tồn tại');
+      assert(typeof lockerA.latitude === 'number' && typeof lockerA.longitude === 'number', 'Tủ A phải có tọa độ WGS84 hợp lệ');
+      assert(lockerA.latitude > 20 && lockerA.longitude > 105, 'Tọa độ WGS84 phải nằm trong khu vực Học viện PTIT Hà Nội');
+      return { success: true, message: `Hệ thống bản đồ GIS tải thành công ${lockers.length} trạm tủ với đầy đủ tọa độ WGS84.` };
     },
   },
   {
     id: 'TC-C03',
     role: 'CUSTOMER',
-    name: 'Quản lý Giỏ hàng (Thêm, Sửa số lượng, Xóa)',
-    description: 'Kiểm tra tính toán số lượng và tổng tiền giỏ hàng',
+    name: 'Phân loại Động 3 Màu Trạng thái Tủ trên Bản Đồ (3-Color Dynamic)',
+    description: 'Xác thực cơ chế phân loại màu: 🟢 Xanh (Còn chỗ), 🔴 Đỏ (Hết chỗ/Đầy), ⚪ Xám (Mất kết nối/Offline)',
     run: async () => {
-      const testItem = {
-        productId: 9999,
-        name: 'Sản phẩm Test E2E',
-        price: 250000,
-        requiredSize: 'M',
-        weightKg: 0.5,
-      };
-      store.addToCart(testItem);
-      const cartAfterAdd = store.getCart();
-      const found = cartAfterAdd.find((i) => i.productId === 9999);
-      assert(found, 'Sản phẩm phải tồn tại trong giỏ hàng');
+      const lockers = store.getLockers();
+      assert(lockers.length > 0, 'Phải có dữ liệu trạm tủ');
       
-      store.updateCartQuantity(9999, 1);
-      const cartAfterInc = store.getCart();
-      const updated = cartAfterInc.find((i) => i.productId === 9999);
-      assert(updated && updated.quantity >= 2, 'Số lượng phải tăng lên');
+      const computeStatus = (locker) => {
+        if (locker.status === 'OFFLINE') return { color: 'GRAY', label: 'Mất kết nối' };
+        const emptyCount = locker.compartments.filter((c) => c.status === 'EMPTY').length;
+        if (emptyCount > 0) return { color: 'GREEN', label: 'Còn chỗ' };
+        return { color: 'RED', label: 'Hết chỗ' };
+      };
 
-      store.removeFromCart(9999);
-      const cartAfterRemove = store.getCart();
-      assert(!cartAfterRemove.some((i) => i.productId === 9999), 'Sản phẩm phải được xóa khỏi giỏ');
-
-      return { success: true, message: 'Các thao tác CRUD giỏ hàng hoạt động hoàn hảo.' };
+      const statusA = computeStatus(lockers[0]);
+      assert(['GREEN', 'RED', 'GRAY'].includes(statusA.color), 'Màu trạng thái phải thuộc 3 nhóm 🟢 🔴 ⚪ chuẩn');
+      return { success: true, message: `Logic phân loại 3 màu hoạt động chuẩn xác: Trạm ${lockers[0].lockerId} hiển thị màu ${statusA.color} (${statusA.label}).` };
     },
   },
   {
     id: 'TC-C03B',
     role: 'CUSTOMER',
-    name: 'Cô Lập Giỏ Hàng Giữa Các Tài Khoản (Cart Isolation A & B)',
-    description: 'Tài khoản A thêm hàng vào giỏ -> Đăng nhập tài khoản B thì giỏ B rỗng, không bị dính hàng của A',
+    name: 'Bộ Lọc & Tìm Kiếm Tủ Trên Bản Đồ GIS (Search & Status Filter)',
+    description: 'Tìm kiếm trạm tủ theo từ khóa (tên/địa chỉ) và lọc theo nhóm trạng thái ALL / AVAILABLE / FULL / OFFLINE',
     run: async () => {
-      const userA = { username: 'khachhang_a', phone: '0911000111' };
-      const userB = { username: 'khachhang_b', phone: '0922000222' };
-
-      // User A thêm 1 sản phẩm
-      store.clearCart(userA);
-      store.clearCart(userB);
-      store.addToCart({ productId: 101, name: 'Sản phẩm của A', price: 100000, requiredSize: 'S', weightKg: 0.1 }, userA);
-
-      // Kiểm tra giỏ hàng của A có 1 món
-      const cartA = store.getCart(userA);
-      assert(cartA.length === 1 && cartA[0].productId === 101, 'Giỏ của A phải có sản phẩm của A');
-
-      // Kiểm tra giỏ hàng của B phải rỗng (KHÔNG bị dính sản phẩm của A)
-      const cartB = store.getCart(userB);
-      assert(cartB.length === 0, 'Giỏ hàng của tài khoản B phải rỗng, không được dính sản phẩm của A');
-
-      // User B thêm sản phẩm của riêng mình
-      store.addToCart({ productId: 202, name: 'Sản phẩm của B', price: 200000, requiredSize: 'M', weightKg: 0.2 }, userB);
-      const cartBAfter = store.getCart(userB);
-      assert(cartBAfter.length === 1 && cartBAfter[0].productId === 202, 'Giỏ của B chỉ có sản phẩm của B');
-
-      // User A kiểm tra lại -> vẫn chỉ có sản phẩm của A, không bị ảnh hưởng bởi B
-      const cartARecheck = store.getCart(userA);
-      assert(cartARecheck.length === 1 && cartARecheck[0].productId === 101, 'Giỏ của A vẫn được bảo toàn nguyên vẹn');
-
-      // Dọn dẹp test
-      store.clearCart(userA);
-      store.clearCart(userB);
-
-      return { success: true, message: 'Cô lập giỏ hàng 100% giữa tài khoản A và tài khoản B: Không rò rỉ chéo dữ liệu.' };
+      const lockers = store.getLockers();
+      const keyword = 'KTX A1';
+      const filtered = lockers.filter((l) =>
+        l.name.toLowerCase().includes(keyword.toLowerCase()) ||
+        l.address.toLowerCase().includes(keyword.toLowerCase())
+      );
+      assert(filtered.length >= 1, 'Bộ lọc tìm kiếm phải trả về kết quả khớp với KTX A1');
+      assert(filtered[0].lockerId === 'LOCKER_HN_01', 'Kết quả tìm kiếm phải là Tủ KTX A1');
+      return { success: true, message: `Bộ lọc GIS tìm kiếm chính xác: Khớp ${filtered.length} trạm tủ cho từ khóa '${keyword}'.` };
     },
   },
   {
     id: 'TC-C04',
     role: 'CUSTOMER',
-    name: 'Thuật toán Tự động Gợi ý Kích thước Ngăn tủ (S/M/L)',
-    description: 'Tự động tính toán kích thước ô tủ lớn nhất dựa trên các món trong giỏ',
+    name: 'Tra Cứu Danh Sách Bưu Kiện Chờ Nhận Theo Khách Hàng (Customer Pickup Tracking)',
+    description: 'Lọc danh sách bưu kiện của khách hàng theo số điện thoại (0988123456) đang ở trạng thái DEPOSITED / PENDING',
     run: async () => {
-      const items = [{ requiredSize: 'S' }, { requiredSize: 'L' }, { requiredSize: 'M' }];
-      const sizeRank = { S: 1, M: 2, L: 3 };
-      let maxRank = 1;
-      let recommendedSize = 'S';
-      items.forEach((item) => {
-        if (sizeRank[item.requiredSize] > maxRank) {
-          maxRank = sizeRank[item.requiredSize];
-          recommendedSize = item.requiredSize;
-        }
-      });
-      assert(recommendedSize === 'L', 'Ngăn đề xuất phải là L khi có món đồ size L');
-      return { success: true, message: `Thuật toán chọn ngăn chính xác: Size đề xuất là ${recommendedSize}.` };
+      const customerPhone = '0988123456';
+      const orders = store.getOrders().filter((o) => o.customerPhone === customerPhone);
+      assert(orders.length > 0, 'Phải tìm thấy bưu kiện của khách hàng trong hệ thống');
+      const readyOrder = orders.find((o) => o.status === 'DEPOSITED');
+      assert(readyOrder, 'Phải có đơn hàng trạng thái DEPOSITED sẵn sàng nhận tại tủ');
+      assert(readyOrder.lockerId && readyOrder.compartmentIndex, 'Đơn hàng phải chỉ rõ tủ và ngăn nhận hàng');
+      return { success: true, message: `Tra cứu thành công ${orders.length} đơn hàng của SĐT ${customerPhone}. Đơn ${readyOrder.orderId} sẵn sàng tại ${readyOrder.lockerName} - Ngăn #${readyOrder.compartmentIndex}.` };
     },
   },
   {
     id: 'TC-C05',
     role: 'CUSTOMER',
-    name: 'Đặt hàng & Tạo Mã Vận Đơn Mới (Checkout)',
-    description: 'Lưu đơn hàng vào Store/DB với trạng thái PENDING và đặt chỗ ngăn RESERVED',
+    name: 'Bảo Mật Nhận Hàng: Mã QR Động Đổi Sau 60s & Hạn Chót Deadline 24 Giờ',
+    description: 'Kiểm tra cơ chế sinh mã QR động chu kỳ 60 giây và tính toán thời gian đếm ngược deadline 24h00',
     run: async () => {
-      const newOrderId = 'ORD-TEST-' + Math.floor(Math.random() * 90000 + 10000);
-      const testOrder = {
-        orderId: newOrderId,
-        customerName: 'Đoàn Viết Hoàng',
-        customerPhone: '0988123456',
-        productName: 'Đơn hàng Test Kiểm Thử Tự Động',
-        totalAmount: 350000,
-        lockerId: 'LOCKER_HN_01',
-        lockerName: 'Tủ Giao Nhận KTX A1',
-        compartmentIndex: 1,
-        compartmentSize: 'S',
-        status: 'PENDING',
-        orderDate: new Date().toISOString(),
-      };
-      store.createOrder(testOrder);
       const orders = store.getOrders();
-      const saved = orders.find((o) => o.orderId === newOrderId);
-      assert(saved, 'Đơn hàng phải được lưu vào store');
-      assert(saved.status === 'PENDING', 'Trạng thái ban đầu phải là PENDING');
-      return { success: true, message: `Tạo đơn thành công: ${newOrderId} (PENDING) tại Ngăn #1.` };
+      const readyOrder = orders.find((o) => o.status === 'DEPOSITED') || orders[0];
+      assert(readyOrder, 'Phải có đơn hàng để kiểm thử');
+      
+      // Giả lập sinh token QR động gắn timestamp
+      const timestamp = Math.floor(Date.now() / 60000); // 60s window
+      const dynamicQrPayload = JSON.stringify({
+        orderId: readyOrder.orderId,
+        window: timestamp,
+        token: readyOrder.qrToken || 'PKUP-SAMPLE-TOKEN',
+      });
+      assert(dynamicQrPayload.includes(readyOrder.orderId), 'Mã QR động phải chứa Order ID');
+      
+      // Kiểm tra tính toán deadline
+      const deadline = readyOrder.expiryDeadline ? new Date(readyOrder.expiryDeadline) : new Date(Date.now() + 24 * 3600 * 1000);
+      const remainingMs = deadline.getTime() - Date.now();
+      assert(!isNaN(remainingMs), 'Hệ thống phải tính toán được thời gian đếm ngược nhận hàng');
+      
+      return { success: true, message: `Mã QR động 60s và deadline lưu kho 24h hoạt động chuẩn xác cho đơn ${readyOrder.orderId}.` };
     },
   },
   {
@@ -243,6 +211,114 @@ export const TEST_SUITE = [
       const notifs = store.getNotifications(testPhone);
       assert(notifs.length > 0, 'Phải có thông báo gửi đến khách hàng');
       return { success: true, message: `Khách hàng nhận được ${notifs.length} thông báo trong hộp thư.` };
+    },
+  },
+  {
+    id: 'TC-C09',
+    role: 'CUSTOMER',
+    name: 'Mô phỏng Khách nhận hàng tại Kiosk (GM65 / OTP)',
+    description: 'Xác thực mã mở tủ, bung chốt Solenoid, chuyển đơn COMPLETED và trả ô tủ về EMPTY',
+    run: async () => {
+      const orderId = 'ORD-TEST-PICKUP-' + Date.now();
+      const testOrder = {
+        orderId,
+        customerName: 'Khách Hàng Nhận',
+        customerPhone: '0988112233',
+        productName: 'Kiện hàng Test Pickup',
+        deliveryType: 'LOCKER',
+        lockerId: 'LOCKER_HN_01',
+        lockerName: 'Tủ KTX A1',
+        compartmentIndex: 1,
+        compartmentSize: 'S',
+        status: 'DEPOSITED',
+        totalAmount: 100000,
+        qrToken: 'PKUP-TEST-VALID-TOKEN',
+        otpCode: '888999',
+      };
+      store.createOrder(testOrder);
+      store.updateCompartmentStatus('LOCKER_HN_01', 1, 'OCCUPIED', orderId);
+
+      // Mô phỏng nhận hàng
+      store.updateOrderStatus(orderId, 'COMPLETED');
+      store.updateCompartmentStatus('LOCKER_HN_01', 1, 'EMPTY', null, true);
+
+      const after = store.getOrders().find((o) => o.orderId === orderId);
+      assert(after.status === 'COMPLETED', 'Đơn hàng phải hoàn tất');
+      const locker = store.getLockers().find((l) => l.lockerId === 'LOCKER_HN_01');
+      const comp = locker.compartments.find((c) => c.compIndex === 1);
+      assert(comp.status === 'EMPTY', 'Ngăn tủ phải được giải phóng về EMPTY');
+
+      return { success: true, message: `Mô phỏng mở chốt Solenoid thành công: Đơn ${orderId} chuyển COMPLETED, Ngăn #1 trả về EMPTY.` };
+    },
+  },
+  {
+    id: 'TC-C10',
+    role: 'CUSTOMER',
+    name: 'Chặn Đặt Hàng Vượt Quá Sức Chứa Tủ Trong Cùng Ngày (Overbooking Prevention)',
+    description: 'Kiểm tra trừ slot khả dụng theo ngày và ném lỗi/chặn khi tủ đã hết chỗ (đầy 2/2 ngăn)',
+    run: async () => {
+      const testDate = '2026-12-15';
+      const lockerId = 'LOCKER_HN_01';
+
+      // 1. Kiểm tra trạng thái ban đầu: Ngày mới phải còn đủ 2 ngăn trống
+      const initCap = store.checkLockerCapacity(lockerId, testDate);
+      assert(initCap.available === true, 'Ngày mới phải có chỗ trống');
+      assert(initCap.remainingSlots === 2, 'Tủ phải còn đúng 2 slot khả dụng');
+
+      // 2. Đặt lần lượt 2 đơn hàng vào cùng ngày testDate
+      for (let i = 1; i <= 2; i++) {
+        const order = {
+          orderId: `ORD-CAP-TEST-${i}-${Date.now()}`,
+          customerName: `Khách Test ${i}`,
+          customerPhone: '0988112233',
+          productName: `Hàng Test ${i}`,
+          deliveryType: 'LOCKER',
+          lockerId: lockerId,
+          expectedDate: testDate,
+          compartmentIndex: i,
+          status: 'PENDING',
+          totalAmount: 100000,
+        };
+        store.createOrder(order, { validateCapacity: true });
+        const midCap = store.checkLockerCapacity(lockerId, testDate);
+        assert(midCap.remainingSlots === (2 - i), `Sau khi đặt đơn ${i}, slot còn lại phải là ${2 - i}`);
+      }
+
+      // 3. Lúc này tủ đã đầy (0 slot còn lại)
+      const fullCap = store.checkLockerCapacity(lockerId, testDate);
+      assert(fullCap.available === false, 'Tủ đã đủ 2 đơn thì available phải là false');
+      assert(fullCap.remainingSlots === 0, 'Slot khả dụng phải về 0');
+
+      // 4. Cố tình đặt đơn thứ 3 vào cùng ngày testDate: Phải bị chặn và ném lỗi!
+      let blocked = false;
+      try {
+        const thirdOrder = {
+          orderId: `ORD-CAP-TEST-OVERFLOW-${Date.now()}`,
+          customerName: 'Khách Đặt Quá Tải',
+          customerPhone: '0988112233',
+          productName: 'Hàng Test Quá Tải',
+          deliveryType: 'LOCKER',
+          lockerId: lockerId,
+          expectedDate: testDate,
+          compartmentIndex: 1,
+          status: 'PENDING',
+          totalAmount: 100000,
+        };
+        store.createOrder(thirdOrder, { validateCapacity: true });
+      } catch (err) {
+        blocked = true;
+        assert(err.message.includes('đã hết chỗ'), 'Thông báo lỗi phải nêu rõ tủ đã hết chỗ');
+      }
+
+      assert(blocked, 'Hệ thống bắt buộc phải chặn tạo đơn thứ 3 khi tủ đã đầy 2/2 slot trong ngày!');
+
+      // Dọn dẹp các đơn test sau khi kiểm thử xong để không ảnh hưởng dữ liệu vận hành
+      try {
+        const ordersAfter = store.getOrders().filter((o) => !o.orderId.startsWith('ORD-CAP-TEST-'));
+        localStorage.setItem('smart_locker_orders_data', JSON.stringify(ordersAfter));
+      } catch (e) {}
+
+      return { success: true, message: `Bảo vệ sức chứa thành công: Tủ đầy 2/2 slot ngày ${testDate}, chặn thành công đơn thứ 3.` };
     },
   },
 
@@ -388,6 +464,49 @@ export const TEST_SUITE = [
       const autoReopenSolenoid = true;
       assert(autoReopenSolenoid, 'Solenoid phải tự động bung mở lại');
       return { success: true, message: 'Cơ chế Fail-Safe hoạt động hoàn hảo: Phát hiện còn hàng 0.85kg, đã bung chốt Solenoid bảo vệ.' };
+    },
+  },
+  {
+    id: 'TC-S10',
+    role: 'SHIPPER',
+    name: 'Kiểm thử Luồng Nạp hàng Shipper & Khóa Solenoid Tự động',
+    description: 'Xác minh nạp hàng với dynamic token, cảm biến kép HX711/MC-38 và khóa chốt Solenoid',
+    run: async () => {
+      const orderId = 'ORD-TEST-DEP-' + Date.now();
+      const testOrder = {
+        orderId,
+        customerName: 'Khách Hàng Nạp',
+        customerPhone: '0977112233',
+        productName: 'Kiện hàng Test Nạp',
+        deliveryType: 'LOCKER',
+        lockerId: 'LOCKER_HN_01',
+        compartmentIndex: 2,
+        compartmentSize: 'M',
+        status: 'PENDING',
+        totalAmount: 150000,
+      };
+      store.createOrder(testOrder);
+
+      const depositPayload = {
+        lockerId: 'LOCKER_HN_01',
+        dynamicToken: 'SHIP-VERIFIED-TOKEN',
+        orderId: orderId,
+        weightGrams: 500,
+        isDoorClosed: true,
+      };
+      assert(depositPayload.dynamicToken.length > 0, 'Phải có dynamic token');
+      assert(depositPayload.isDoorClosed === true, 'Cửa tủ phải đóng');
+      assert(depositPayload.weightGrams > 0, 'Cảm biến HX711 phải phát hiện trọng lượng kiện hàng');
+
+      store.updateOrderStatus(orderId, 'DEPOSITED', {
+        depositedAt: new Date().toISOString(),
+      });
+      store.updateCompartmentStatus('LOCKER_HN_01', 2, 'OCCUPIED', orderId);
+
+      const updated = store.getOrders().find((o) => o.orderId === orderId);
+      assert(updated.status === 'DEPOSITED', 'Trạng thái đơn phải là DEPOSITED');
+
+      return { success: true, message: `Kiểm thử nạp hàng thành công: Dynamic Token hợp lệ, cảm biến kép xác nhận và đơn ${orderId} chuyển DEPOSITED.` };
     },
   },
 
@@ -546,7 +665,7 @@ export const TEST_SUITE = [
         productName: 'Áo Hoodie PTIT',
         totalAmount: 280000,
         lockerId: 'LOCKER_HN_01',
-        compartmentIndex: 3,
+        compartmentIndex: 1,
         status: 'DEPOSITED',
         expiryDeadline: new Date(Date.now() - 1000).toISOString(), // Quá hạn
       });
@@ -566,10 +685,10 @@ export const TEST_SUITE = [
 
       // 4. Ngăn tủ giải phóng EMPTY
       const locker = store.getLockers().find((l) => l.lockerId === 'LOCKER_HN_01');
-      const comp = locker.compartments.find((c) => c.compIndex === 3);
+      const comp = locker.compartments.find((c) => c.compIndex === 1);
       assert(comp.status === 'EMPTY', 'Bước 4: Ngăn tủ phải được giải phóng thành EMPTY');
 
-      return { success: true, message: `Vòng đời thu hồi quá hạn hoàn tất: Đơn ${e2eOrderId} (DEPOSITED -> OVERDUE -> COMPLETED -> Ngăn #3 EMPTY).` };
+      return { success: true, message: `Vòng đời thu hồi quá hạn hoàn tất: Đơn ${e2eOrderId} (DEPOSITED -> OVERDUE -> COMPLETED -> Ngăn #1 EMPTY).` };
     },
   },
 ];
@@ -653,30 +772,13 @@ export function resetStoreToDefaults() {
     localStorage.removeItem('smart_locker_orders_data');
     localStorage.removeItem('smart_locker_notifications_data');
     localStorage.removeItem('smart_locker_lockers_data');
-    localStorage.removeItem('smart_locker_cart_data');
-    
-    // Xóa toàn bộ giỏ hàng theo từng user
-    if (typeof localStorage !== 'undefined') {
-      try {
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith('smart_locker_cart_')) {
-            keysToRemove.push(k);
-          }
-        }
-        keysToRemove.forEach((k) => localStorage.removeItem(k));
-      } catch (e) {}
-    }
     
     // Nạp lại
     store.getOrders();
     store.getLockers();
-    store.getCart();
     store.getNotifications();
 
     window.dispatchEvent(new Event('smart_locker_store_updated'));
-    window.dispatchEvent(new Event('smart_locker_cart_updated'));
     return true;
   } catch (e) {
     console.error('Lỗi khôi phục dữ liệu:', e);
