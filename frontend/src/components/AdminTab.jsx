@@ -139,10 +139,22 @@ export default function AdminTab() {
     }
   };
 
-  const handleForceUnlock = (lockerId, compIndex) => {
-    if (window.confirm(`XÁC NHẬN: Bạn có chắc chắn muốn mở cưỡng bức Ngăn #${compIndex} của ${lockerId} từ xa qua lệnh khẩn cấp?`)) {
-      store.forceUnlockCompartment(lockerId, compIndex);
-      alert(`Đã gửi lệnh khẩn cấp qua MQTT/HTTP: Mở khóa Solenoid Ngăn #${compIndex}!`);
+  const handleForceUnlock = async (lockerId, compIndex) => {
+    if (!window.confirm(`XÁC NHẬN: Bạn có chắc chắn muốn mở cưỡng bức Ngăn #${compIndex} của ${lockerId} từ xa qua lệnh khẩn cấp?`)) {
+      return;
+    }
+
+    // W5: chỉ báo thành công khi server thực sự nhận lệnh (không còn "báo mở giả").
+    const ok = await store.forceUnlockCompartment(lockerId, compIndex);
+
+    if (ok) {
+      alert(`Đã gửi lệnh mở khóa Solenoid Ngăn #${compIndex} thành công!`);
+    } else {
+      alert(
+        `KHÔNG mở được Ngăn #${compIndex}.\n\n` +
+        `Lệnh đã bị server từ chối hoặc không gửi được (kiểm tra đã đăng nhập ADMIN và backend đang chạy).\n` +
+        `Cửa tủ VẪN ĐANG ĐÓNG.`
+      );
     }
   };
 

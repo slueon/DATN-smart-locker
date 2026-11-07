@@ -3,6 +3,7 @@ package com.ptit.smartlocker.repository;
 import com.ptit.smartlocker.entity.Order;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -22,4 +23,27 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     List<Order> findOverdueOrders(LocalDateTime now);
 
     Optional<Order> findByOrderId(String orderId);
+
+    /**
+     * Nạp đơn hàng KÈM ngăn tủ trong cùng một truy vấn.
+     *
+     * <p>Dùng cho luồng MQTT (`MqttService.handleEmbeddedHardwareMessage`): callback của Paho
+     * chạy trên thread riêng, KHÔNG có Hibernate session → gọi `order.getCompartment()` trên
+     * entity nạp bằng `findById` sẽ ném `LazyInitializationException` (proxy chưa khởi tạo).
+     * `left join fetch` nạp sẵn nên không cần session khi truy cập.
+     */
+    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.compartment WHERE o.orderId = :orderId")
+    Optional<Order> findByIdWithCompartment(@Param("orderId") String orderId);
+
+    /**
+     * Như {@link #findByLocker_LockerIdAndStatus} nhưng nạp sẵn ngăn tủ.
+     *
+     * <p>Dùng cho nhánh `/event` của MQTT: cùng lý do như `findByIdWithCompartment` —
+     * callback Paho chạy ngoài Hibernate session, `ord.getCompartment()` trên entity lazy
+     * sẽ ném `LazyInitializationException` khi payload báo nạp/nhận hàng thành công.
+     */
+    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.compartment "
+            + "WHERE o.locker.lockerId = :lockerId AND o.status = :status")
+    List<Order> findByLockerAndStatusWithCompartment(@Param("lockerId") String lockerId,
+                                                     @Param("status") String status);
 }

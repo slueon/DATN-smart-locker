@@ -41,8 +41,27 @@ public class MqttConfig {
     @Value("${mqtt.lwt.enabled:true}")
     private boolean lwtEnabled;
 
-    @Value("${mqtt.lwt.topic:ptit/backend/status}")
+    /**
+     * Topic LWT. Để trống thì suy ra {@code {mqtt.topic.base}/backend/status} — nhờ vậy
+     * đổi gốc topic chỉ cần sửa `mqtt.topic.base`, không phải sửa thêm chỗ này (dễ quên
+     * và làm LWT trỏ sai chỗ trong khi phần còn lại đã đổi gốc).
+     */
+    @Value("${mqtt.lwt.topic:}")
     private String lwtTopic;
+
+    @Value("${mqtt.topic.base:ptit}")
+    private String topicBase;
+
+    /** Topic LWT thực dùng: ưu tiên cấu hình tường minh, không có thì dựng từ topic.base. */
+    private String resolveLwtTopic() {
+        String base = (topicBase == null || topicBase.isBlank()) ? "ptit" : topicBase.trim();
+        String fallback = base + "/backend/status";
+        if (lwtTopic == null || lwtTopic.isBlank()) {
+            return fallback;
+        }
+        // Cấu hình cũ có thể còn trỏ vào gốc "ptit" trong khi topic.base đã đổi → dịch theo base.
+        return lwtTopic.trim();
+    }
 
     @Bean
     public MqttConnectOptions mqttConnectOptions() {
@@ -79,10 +98,12 @@ public class MqttConfig {
         }
 
         // 3. Nâng cấp Cơ chế Di chúc (Last Will and Testament - LWT)
-        if (lwtEnabled && lwtTopic != null && !lwtTopic.isBlank()) {
+        // Topic LWT theo mqtt.topic.base để không lệch gốc khi đổi base.
+        String effectiveLwtTopic = resolveLwtTopic();
+        if (lwtEnabled && effectiveLwtTopic != null && !effectiveLwtTopic.isBlank()) {
             String lwtPayload = "{\"service\":\"smart-locker-backend\",\"status\":\"OFFLINE\",\"timestamp\":" + System.currentTimeMillis() + "}";
-            options.setWill(lwtTopic, lwtPayload.getBytes(java.nio.charset.StandardCharsets.UTF_8), 1, true); // QoS 1, Retained = true
-            log.info("Đã đăng ký Last Will and Testament (LWT) tại topic: {}", lwtTopic);
+            options.setWill(effectiveLwtTopic, lwtPayload.getBytes(java.nio.charset.StandardCharsets.UTF_8), 1, true); // QoS 1, Retained = true
+            log.info("Đã đăng ký Last Will and Testament (LWT) tại topic: {}", effectiveLwtTopic);
         }
 
         return options;

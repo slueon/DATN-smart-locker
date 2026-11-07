@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.service;
 
 import com.ptit.smartlocker.dto.AuthDTO;
+import com.ptit.smartlocker.entity.AuthSession;
 import com.ptit.smartlocker.entity.User;
+import com.ptit.smartlocker.repository.AuthSessionRepository;
 import com.ptit.smartlocker.repository.UserRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +11,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
+import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -16,12 +21,43 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AuthService {
 
+    /** Nguồn ngẫu nhiên an toàn cho token phiên đăng nhập. */
+    private static final SecureRandom SESSION_RANDOM = new SecureRandom();
+
+    /** Số byte ngẫu nhiên của một session token (32 byte = 256 bit → 43 ký tự Base64URL). */
+    private static final int SESSION_TOKEN_BYTES = 32;
+
+    /** Thời gian sống của một phiên đăng nhập. */
+    private static final int SESSION_TTL_HOURS = 8;
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuthSessionRepository authSessionRepository;
 
-    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public AuthService(UserRepository userRepository,
+                       PasswordEncoder passwordEncoder,
+                       AuthSessionRepository authSessionRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.authSessionRepository = authSessionRepository;
+    }
+
+    /**
+     * Sinh token phiên mới (opaque, ngẫu nhiên — KHÔNG suy ra từ username/hay dữ liệu nào).
+     */
+    private AuthSession issueSession(User user) {
+        byte[] randomBytes = new byte[SESSION_TOKEN_BYTES];
+        SESSION_RANDOM.nextBytes(randomBytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+
+        AuthSession session = AuthSession.builder()
+                .token(token)
+                .user(user)
+                .role(user.getRole())
+                .expiresAt(LocalDateTime.now().plusHours(SESSION_TTL_HOURS))
+                .revoked(false)
+                .build();
+        return authSessionRepository.save(session);
     }
 
     /**
@@ -113,7 +149,12 @@ public class AuthService {
             throw new RuntimeException("Mật khẩu không chính xác!");
         }
 
-        return mapToResponse(user);
+        // W2/W3: cấp token phiên — đây là thứ duy nhất cho phép gọi API sau khi bật xác thực.
+        AuthSession session = issueSession(user);
+
+        AuthDTO.UserResponse response = mapToResponse(user);
+        response.setToken(session.getToken());
+        return response;
     }
 
     /**

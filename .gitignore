@@ -41,3 +41,16 @@ scratch/
 ui-main/
 datt-smart-locker-embedded/
 *.bak
+
+# Team coordination files (không dua vào d? án)
+MAP.md
+STATE.md
+ARCHIVE.md
+LOG.md
+scripts/evidence/
+
+
+# Tai lieu dieu phoi cua team
+WORKFLOW.md
+SPEC.md
+DECISIONS.md

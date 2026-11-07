@@ -8,14 +8,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
 @Service
 @Slf4j
 public class OrderService {
+
+    /** Nguồn ngẫu nhiên an toàn bảo mật dùng riêng cho việc sinh mã QR nhận hàng. */
+    private static final SecureRandom QR_TOKEN_RANDOM = new SecureRandom();
+
+    /** Số byte ngẫu nhiên của một qrToken (32 byte = 256 bit, mã hóa Base64URL ra 43 ký tự). */
+    private static final int QR_TOKEN_BYTES = 32;
 
     private final OrderRepository orderRepository;
     private final LockerRepository lockerRepository;
@@ -122,8 +130,8 @@ public class OrderService {
 
         orderRepository.save(order);
 
-        // 3. Tạo mã nhận hàng (Mã QR định danh duy nhất)
-        String qrToken = "PKUP-" + order.getOrderId();
+        // 3. Tạo mã nhận hàng (QR Token ngẫu nhiên an toàn bảo mật, KHÔNG suy ra từ dữ liệu đơn)
+        String qrToken = generateRandomQrToken();
 
         PickupCredential credential = PickupCredential.builder()
                 .order(order)
@@ -173,6 +181,14 @@ public class OrderService {
         return getOrderById(orderId, null);
     }
 
+    /**
+     * Tra cứu danh sách đơn theo SĐT khách hàng.
+     *
+     * <p>W3: danh sách KHÔNG BAO GIỜ chứa qrToken/otpCode, kể cả đơn DEPOSITED. Trước đây
+     * nhánh này truyền includeSecrets=true cho mọi đơn DEPOSITED, nên chỉ cần biết SĐT của
+     * người khác là đọc được mã mở tủ. Muốn lấy mã mở tủ phải đi qua GET /api/orders/{id}
+     * với SĐT khớp chủ phiên (đã siết ở controller).
+     */
     @Transactional(readOnly = true)
     public List<OrderDTO.OrderResponse> getOrdersByCustomerPhone(String phone) {
         if (phone == null || phone.isBlank()) {
@@ -180,7 +196,7 @@ public class OrderService {
         }
         List<Order> orders = orderRepository.findByCustomerPhone(phone.trim());
         return orders.stream()
-                .map(o -> mapToOrderResponse(o, null, null, "DEPOSITED".equalsIgnoreCase(o.getStatus())))
+                .map(o -> mapToOrderResponse(o, null, null, false))
                 .toList();
     }
 
@@ -226,6 +242,25 @@ public class OrderService {
                 .otpCode(otpCode)
                 .createdAt(order.getCreatedAt())
                 .build();
+    }
+
+    /**
+     * Sinh qrToken nhận hàng bằng nguồn ngẫu nhiên an toàn bảo mật (SecureRandom).
+     * - 32 byte ngẫu nhiên mã hóa Base64URL (không padding) -> chuỗi 43 ký tự.
+     * - KHÔNG chứa, KHÔNG suy ra được từ orderId hay bất kỳ dữ liệu đơn hàng nào.
+     * - Có kiểm tra trùng trong CSDL để tôn trọng ràng buộc UNIQUE của cột qr_token.
+     */
+    private String generateRandomQrToken() {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            byte[] randomBytes = new byte[QR_TOKEN_BYTES];
+            QR_TOKEN_RANDOM.nextBytes(randomBytes);
+            String candidate = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+            if (pickupCredentialRepository.findByQrToken(candidate).isEmpty()) {
+                return candidate;
+            }
+            log.warn("Phát hiện trùng qrToken ngẫu nhiên (lần thử {}), sinh lại mã khác.", attempt + 1);
+        }
+        throw new IllegalStateException("Không thể sinh qrToken duy nhất sau 5 lần thử!");
     }
 
     /**

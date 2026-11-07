@@ -86,8 +86,26 @@ public class ShipperService {
         }
 
         token.setIsVerified(true);
+        // Ghi lại TỦ đã quét mã. Thiếu bước này thì token xác thực ở tủ A
+        // vẫn dùng được để mở cửa tủ B (lỗi cross-locker).
+        token.setLockerId(lockerId);
         tokenRepository.save(token);
         return true;
+    }
+
+    /**
+     * Có phiên shipper ĐÃ xác thực tại ĐÚNG tủ này và CÒN hiệu lực hay không.
+     *
+     * <p>Dùng để chặn topic `ptit/QR_send`. Bắt buộc lọc theo {@code lockerId}:
+     * nếu chỉ kiểm "có token verified nào đó", shipper xác thực ở tủ A sẽ mở được
+     * cửa tủ B — và tệ hơn, mở nhầm sang tủ khác với đơn hàng.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasAnyVerifiedShipperToken(String lockerId, LocalDateTime now) {
+        if (lockerId == null || lockerId.isBlank()) {
+            return false;
+        }
+        return !tokenRepository.findActiveVerifiedTokensForLocker(lockerId, now).isEmpty();
     }
 
     /**

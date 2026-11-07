@@ -91,7 +91,15 @@ CREATE TABLE shipper_identity_tokens (
     dynamic_token VARCHAR(255) NOT NULL UNIQUE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expired_at DATETIME NOT NULL, -- 60 giây hiệu lực
-    is_verified BOOLEAN NOT NULL DEFAULT FALSE
+    is_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    -- W4/W6: tủ mà shipper đã quét mã để xác thực (gán lúc verifyDynamicToken).
+    -- NULL = mã chưa quét ở tủ nào. Bắt buộc có để chặn lỗi cross-locker:
+    -- shipper xác thực ở tủ A thì token chỉ có giá trị tại đúng tủ A, không mở được tủ B.
+    locker_id VARCHAR(50) DEFAULT NULL,
+    -- Truy vấn quyết định mở cửa tủ:
+    --   select ... where is_verified = true and expired_at > :now and locker_id = :lockerId
+    KEY idx_shipper_tokens_locker_verified (locker_id, is_verified, expired_at),
+    CONSTRAINT fk_shipper_tokens_locker FOREIGN KEY (locker_id) REFERENCES lockers(locker_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- 9. BẢNG NHẬT KÝ LỆNH MỞ KHÓA MQTT (COMMAND_LOGS)
@@ -126,6 +134,25 @@ CREATE TABLE users (
     phone VARCHAR(20) NOT NULL UNIQUE,
     role VARCHAR(20) NOT NULL, -- 'ADMIN', 'SHIPPER', 'CUSTOMER'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- 12. BẢNG PHIÊN ĐĂNG NHẬP BẰNG TOKEN OPAQUE (AUTH_SESSIONS)
+-- W2: token Bearer cấp khi /api/auth/login, tra ở mỗi request bởi TokenAuthFilter.
+-- Không dùng JWT — token là 32 byte ngẫu nhiên (SecureRandom) mã hoá Base64URL,
+-- lưu NGUYÊN chuỗi vào cột token. TTL 8 giờ (AuthService.SESSION_TTL_HOURS).
+-- Cột khớp đúng com.ptit.smartlocker.entity.AuthSession.
+CREATE TABLE auth_sessions (
+    session_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token VARCHAR(255) NOT NULL,
+    user_id BIGINT NOT NULL,
+    role VARCHAR(20) NOT NULL, -- bản sao vai trò tại thời điểm cấp token: 'ADMIN' / 'SHIPPER' / 'CUSTOMER'
+    created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),
+    expires_at DATETIME(6) NOT NULL, -- createdAt + 8 giờ; expires_at <= NOW() là token chết
+    revoked BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE KEY idx_auth_sessions_token (token),
+    KEY idx_auth_sessions_expires_at (expires_at),
+    KEY idx_auth_sessions_user_id (user_id),
+    CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- =========================================================================

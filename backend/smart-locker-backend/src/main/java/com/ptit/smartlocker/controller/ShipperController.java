@@ -20,11 +20,23 @@ public class ShipperController {
     }
 
     /**
-     * Shipper bấm "Xác minh danh tính" trên Web Mobile -> Sinh mã QR động 60s
+     * Shipper bấm "Xác minh danh tính" trên Web Mobile -> Sinh mã QR động 60s.
+     *
+     * <p><b>ĐÃ BỊT:</b> trước đây nhận `@RequestParam(defaultValue = "SHIPPER_001") shipperId`,
+     * nên bất kỳ ai gọi endpoint cũng xin được mã QR định danh cho shipper bất kỳ (kể cả
+     * SHIPPER_001) rồi đem quét tại tủ để mở quyền giao hàng. Nay `shipperId` lấy từ
+     * danh tính đã đăng nhập (principal), client KHÔNG tự khai được.
      */
     @PostMapping("/token/generate")
     public ResponseEntity<ApiResponse<ShipperDTO.GenerateTokenResponse>> generateToken(
-            @RequestParam(defaultValue = "SHIPPER_001") String shipperId) {
+            java.security.Principal principal) {
+        String shipperId = (principal != null && principal.getName() != null)
+                ? principal.getName().trim()
+                : "";
+        if (shipperId.isEmpty()) {
+            return ResponseEntity.status(401)
+                    .body(ApiResponse.error("Chưa xác thực: vui lòng đăng nhập bằng tài khoản shipper!"));
+        }
         ShipperDTO.GenerateTokenResponse response = shipperService.generateDynamicToken(shipperId);
         return ResponseEntity.ok(ApiResponse.ok("Mã QR Shipper đã được tạo, hiệu lực trong 60 giây", response));
     }

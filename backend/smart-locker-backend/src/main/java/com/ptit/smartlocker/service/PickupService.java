@@ -98,13 +98,22 @@ public class PickupService {
                 throw new RuntimeException("Mã nhận hàng của đơn này đã bị tạm khóa do nhập sai quá 5 lần! Vui lòng tạo mã OTP mới trên ứng dụng.");
             }
 
-            boolean isMatch = "OTP".equalsIgnoreCase(request.getAuthMethod()) ?
-                    code.equals(credential.getOtpCode()) :
-                    (code.equalsIgnoreCase(credential.getQrToken()) ||
-                     (credential.getQrToken() != null && code.startsWith(credential.getQrToken() + "-")) ||
-                     code.equalsIgnoreCase("PKUP-" + request.getOrderId().trim()) ||
-                     code.startsWith("PKUP-" + request.getOrderId().trim() + "-") ||
-                     code.equalsIgnoreCase(request.getOrderId().trim()));
+            // Chỉ so khớp đúng trường tương ứng với phương thức xác thực:
+            // - authMethod=OTP  -> chỉ chấp nhận otpCode
+            // - ngược lại (QR)  -> chỉ chấp nhận qrToken
+            // TUYỆT ĐỐI không suy ra mã hợp lệ từ orderId (không có nhánh "PKUP-" + orderId,
+            // không có tiền tố "-", không nhận chính orderId làm mã mở tủ).
+            boolean isOtpMethod = "OTP".equalsIgnoreCase(request.getAuthMethod());
+            boolean isMatch;
+            if (isOtpMethod) {
+                isMatch = credential.getOtpCode() != null
+                        && !credential.getOtpCode().isEmpty()
+                        && code.equals(credential.getOtpCode());
+            } else {
+                isMatch = credential.getQrToken() != null
+                        && !credential.getQrToken().isEmpty()
+                        && code.equalsIgnoreCase(credential.getQrToken());
+            }
 
             if (!isMatch) {
                 int newFailCount = credential.getFailedAttempts() + 1;
@@ -125,25 +134,11 @@ public class PickupService {
                 List<PickupCredential> list = credentialRepository.findValidByLockerAndOtp(lockerId, code);
                 credential = list.stream().filter(c -> !LocalDateTime.now().isAfter(c.getExpiredAt())).findFirst().orElse(null);
             } else {
+                // Chỉ tra cứu khớp CHÍNH XÁC qrToken trong CSDL.
+                // Đã bỏ toàn bộ nhánh "đoán" mã từ orderId (bỏ tiền tố "PKUP-", bỏ hậu tố "-T",
+                // không tra ngược theo orderId) vì đó chính là đường vòng bỏ qua mã bí mật.
                 List<PickupCredential> list = credentialRepository.findValidByLockerAndQr(lockerId, code);
                 credential = list.stream().filter(c -> !LocalDateTime.now().isAfter(c.getExpiredAt())).findFirst().orElse(null);
-
-                // Hỗ trợ quét mã QR theo định dạng PKUP-{orderId} hoặc mã vận đơn {orderId} hoặc dynamic rolling token (-T)
-                if (credential == null) {
-                    String candidateOrderId = code;
-                    if (candidateOrderId.contains("-T")) {
-                        candidateOrderId = candidateOrderId.substring(0, candidateOrderId.lastIndexOf("-T"));
-                    }
-                    if (candidateOrderId.startsWith("PKUP-")) {
-                        candidateOrderId = candidateOrderId.substring(5).trim();
-                    } else {
-                        candidateOrderId = candidateOrderId.trim();
-                    }
-                    credential = credentialRepository.findByOrder_OrderId(candidateOrderId)
-                            .filter(c -> c.getOrder() != null && c.getOrder().getLocker() != null &&
-                                    c.getOrder().getLocker().getLockerId().equalsIgnoreCase(lockerId))
-                            .orElse(null);
-                }
             }
 
             if (credential == null) {
