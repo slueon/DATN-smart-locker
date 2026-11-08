@@ -67,6 +67,16 @@ CREATE TABLE orders (
     payment_method VARCHAR(30) DEFAULT 'ONLINE_VIETQR', -- ONLINE_VIETQR, ONLINE_MOMO, ONLINE_VNPAY, COD
     payment_status VARCHAR(20) DEFAULT 'PAID', -- PAID, UNPAID
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- T3: mã vận đơn in trên nhãn kiện hàng. Mặc định lấy order_id (user chốt Q1 = (c)),
+    -- shipper được sửa khi nhãn in mã khác. UNIQUE để quét nhãn không mở nhầm đơn.
+    -- NULL được phép: đơn cũ chưa backfill, và code coi NULL như order_id.
+    tracking_code VARCHAR(50) DEFAULT NULL,
+    UNIQUE KEY uk_orders_tracking (tracking_code),
+    -- T3 (Q4): thời điểm SHIPPER chủ động đặt trước/đổi ngăn trên web.
+    -- NULL = ngăn do hệ thống gán lúc checkout (shipper CHƯA đặt trước).
+    -- NOT NULL = shipper đã chủ động chọn ngăn → quét nhãn mới trả verified/order = 1.
+    -- Không backfill: đơn cũ để NULL đúng nghĩa "chưa đặt trước".
+    shipper_reserved_at DATETIME DEFAULT NULL,
     FOREIGN KEY (locker_id) REFERENCES lockers(locker_id) ON DELETE SET NULL,
     FOREIGN KEY (compartment_id) REFERENCES compartments(compartment_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;

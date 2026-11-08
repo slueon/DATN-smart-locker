@@ -130,11 +130,21 @@ export const orderApi = {
 };
 
 export const shipperApi = {
-  generateToken: (shipperId = 'SHIPPER_001') => api.post(`/shipper/token/generate?shipperId=${shipperId}`),
+  // T3: shipperId lấy từ token đăng nhập ở backend — KHÔNG gửi query nữa (trước đây
+  // gửi `?shipperId=` và bất kỳ ai cũng khai được shipper khác).
+  generateToken: () => api.post('/shipper/token/generate'),
   verifyToken: (lockerId, dynamicToken) => api.post('/shipper/token/verify', { lockerId, dynamicToken }),
   depositPackage: (data) => api.post('/shipper/deposit', data),
   getOverdueOrders: (lockerId) => api.get(`/shipper/overdue-orders${lockerId ? `?lockerId=${lockerId}` : ''}`),
   recallOverdue: (orderId) => api.post(`/shipper/recall-overdue?orderId=${encodeURIComponent(orderId)}`),
+
+  // T3 — đặt trước ngăn trên web.
+  getPendingOrders: (lockerId) =>
+    api.get('/shipper/orders/pending' + (lockerId ? '?lockerId=' + encodeURIComponent(lockerId) : '')),
+  reserveCompartment: (orderId, body) =>
+    api.post('/shipper/orders/' + encodeURIComponent(orderId) + '/reserve', body),
+  cancelReserve: (orderId) =>
+    api.delete('/shipper/orders/' + encodeURIComponent(orderId) + '/reserve'),
 };
 
 export const pickupApi = {

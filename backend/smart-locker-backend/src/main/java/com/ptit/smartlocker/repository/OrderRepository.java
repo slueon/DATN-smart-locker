@@ -46,4 +46,26 @@ public interface OrderRepository extends JpaRepository<Order, String> {
             + "WHERE o.locker.lockerId = :lockerId AND o.status = :status")
     List<Order> findByLockerAndStatusWithCompartment(@Param("lockerId") String lockerId,
                                                      @Param("status") String status);
+
+    /**
+     * T3 — tra đơn theo MÃ VẬN ĐƠN (mã in trên nhãn), nạp sẵn ngăn + tủ.
+     *
+     * <p>Dùng ở luồng quét nhãn tại tủ: callback Paho chạy ngoài Hibernate session, nên
+     * mọi quan hệ cần đọc (`getCompartment()`, `getLocker()`) phải nạp sẵn — nếu không sẽ
+     * ném {@code LazyInitializationException}.
+     */
+    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "WHERE o.trackingCode = :trackingCode")
+    Optional<Order> findByTrackingCode(@Param("trackingCode") String trackingCode);
+
+    /**
+     * T3 — đơn PENDING kèm ngăn + tủ nạp sẵn, lọc theo tủ (null/ALL = mọi tủ).
+     *
+     * <p>Phục vụ `GET /api/shipper/orders/pending` và nhánh quét nhãn. Tách khỏi
+     * {@link #findByLockerAndStatusWithCompartment} vì truy vấn này nạp cả `locker` để
+     * đọc được `lockerId` sau khi session đã đóng, và cho phép không lọc tủ.
+     */
+    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "WHERE o.status = :status")
+    List<Order> findByStatusWithCompartment(@Param("status") String status);
 }

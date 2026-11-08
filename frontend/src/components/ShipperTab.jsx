@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import CircularTimer from './CircularTimer';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
-import { shipperApi } from '../services/api';
+import { shipperApi, lockerApi } from '../services/api';
 import {
   Truck, QrCode, Timer, ShieldCheck, CheckCircle2, AlertTriangle,
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
@@ -34,6 +34,18 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [manualBarcodeInput, setManualBarcodeInput] = useState('');
   const [scanError, setScanError] = useState(null);
   const [isScanningActive, setIsScanningActive] = useState(false);
+
+  // T3 — trạng thái đặt trước ngăn (gọi API thật)
+  const [reserveCompartments, setReserveCompartments] = useState([]);
+  const [reserveCompIndex, setReserveCompIndex] = useState(null);
+  const [reserveTrackingCode, setReserveTrackingCode] = useState('');
+  const [reserveMessage, setReserveMessage] = useState(null);
+  const [isReserving, setIsReserving] = useState(false);
+  const [isLoadingCompartments, setIsLoadingCompartments] = useState(false);
+  // Đơn đã đặt trước hay chưa: backend KHÔNG trả `shipperReservedAt`, nên suy ra từ
+  // việc `reserve` có bị 400 "đã được đặt trước" hay không, hoặc từ lần reserve thành công.
+  const [reservedOrderIds, setReservedOrderIds] = useState({});
+  const [usingMockData, setUsingMockData] = useState(false);
 
   // Âm thanh Bíp nhận diện mã vạch của đầu đọc GM65
   const playBeep = () => {
@@ -78,15 +90,34 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       window.removeEventListener('smart_locker_store_updated', handleUpdate);
       window.removeEventListener('smart_locker_overdue_detected', handleOverdueDetected);
     };
-  }, []);
+  }, [selectedLockerFilter]);
 
-  const loadOrders = () => {
-    const all = store.getOrders();
-    setOrders(all);
+  /**
+   * T3 — danh sách đơn chờ nạp lấy từ BACKEND thật (`GET /api/shipper/orders/pending`).
+   *
+   * <p>Có fallback: API lỗi (mất mạng, 401, backend chưa chạy) thì dùng dữ liệu mô phỏng
+   * trong `store` và bật cờ cảnh báo — thà hiện dữ liệu cũ còn hơn trắng trang.
+   */
+  const loadOrders = async () => {
+    const filterLocker = selectedLockerFilter !== 'ALL' ? selectedLockerFilter : null;
+    try {
+      const res = await shipperApi.getPendingOrders(filterLocker);
+      const apiOrders = res?.data?.data || [];
+      setOrders(apiOrders);
+      setUsingMockData(false);
 
-    const pending = all.filter((o) => o.status === 'PENDING');
-    if (pending.length > 0 && !selectedOrderId) {
-      setSelectedOrderId(pending[0].orderId);
+      if (apiOrders.length > 0 && !selectedOrderId) {
+        setSelectedOrderId(apiOrders[0].orderId);
+      }
+    } catch (err) {
+      console.warn('[ShipperTab] Không gọi được API đơn chờ nạp, dùng dữ liệu mô phỏng:', err?.message);
+      setUsingMockData(true);
+      const all = store.getOrders();
+      setOrders(all);
+      const pending = all.filter((o) => o.status === 'PENDING');
+      if (pending.length > 0 && !selectedOrderId) {
+        setSelectedOrderId(pending[0].orderId);
+      }
     }
   };
 
@@ -112,11 +143,31 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     return () => clearInterval(timer);
   }, [timeLeft]);
 
-  const handleGenerateToken = () => {
-    const token = 'SHIPPER-TOKEN-' + Math.random().toString(36).substring(2, 10).toUpperCase() + '-' + Date.now();
-    setDynamicToken(token);
-    setTimeLeft(60);
-    setShowQrModal(true);
+  /**
+   * T3 — xin mã QR định danh shipper từ BACKEND.
+   *
+   * <p>Trước đây hàm này tự bịa `'SHIPPER-TOKEN-' + Math.random()` ở client. Token giả đó
+   * không tồn tại trong bảng `shipper_identity_tokens`, nên `POST /api/shipper/deposit`
+   * (kiểm bằng `tokenRepository.findByDynamicToken`) sẽ luôn từ chối. Nay lấy token thật
+   * do backend cấp trong 60 giây.
+   */
+  const handleGenerateToken = async () => {
+    try {
+      const res = await shipperApi.generateToken();
+      const token = res?.data?.data?.dynamicToken;
+      if (!token) {
+        setScanError('Backend không trả mã QR shipper. Vui lòng thử lại.');
+        return;
+      }
+      setDynamicToken(token);
+      setTimeLeft(60);
+      setShowQrModal(true);
+      setScanError(null);
+    } catch (err) {
+      const msg = err?.response?.data?.message
+        || 'Không tạo được mã QR shipper. Kiểm tra đã đăng nhập bằng tài khoản SHIPPER và backend đang chạy.';
+      setScanError(msg);
+    }
   };
 
   const handleStartDepositProcess = (orderId) => {
@@ -170,31 +221,145 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const handleProceedDepositStep = (nextStep, order) => {
     setDepositStep(nextStep);
     if (nextStep === 5 && order) {
-      const now = new Date();
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(23, 59, 59, 999);
-
-      store.updateOrderStatus(order.orderId, 'DEPOSITED', {
-        depositedAt: now.toISOString(),
-        expiryDeadline: tomorrow.toISOString(),
+      // T3: bước 2 đã gọi API THẬT (`POST /api/shipper/deposit`) và backend đã tự cập nhật
+      // trạng thái đơn + ngăn + gửi thông báo. Ở đây KHÔNG ghi `store` nữa — nếu vẫn
+      // `store.updateOrderStatus(...)` thì trạng thái mô phỏng sẽ đè lên dữ liệu thật
+      // và lần `loadOrders()` sau hiển thị sai.
+      setReserveMessage({
+        type: 'success',
+        text: `Đã hoàn tất nạp kiện hàng ${order.orderId}. Trạng thái do backend cập nhật.`,
       });
-
-      store.addNotification({
-        phone: order.customerPhone,
-        orderId: order.orderId,
-        title: 'Bưu kiện đã về Tủ!',
-        message: `Đơn hàng ${order.orderId} đã được Shipper gửi vào ${order.lockerName} - Ngăn #${order.compartmentIndex}. Hạn chót lấy hàng: 24h00 ngày mai.`,
-        type: 'DEPOSITED',
-      });
-
-      alert(`Nạp kiện hàng ${order.orderId} thành công! Ngăn #${order.compartmentIndex} (${order.lockerName}) đã được khóa chốt.`);
       setIsDepositing(false);
       setDepositStep(1);
       setScannedBarcode(null);
       setIsScanSuccess(false);
       setScanError(null);
       loadOrders();
+    }
+  };
+
+  /** T3 — nạp danh sách ngăn của tủ để shipper chọn (chỉ hiện ngăn EMPTY). */
+  const loadReserveCompartments = async (lockerId) => {
+    if (!lockerId) {
+      setReserveCompartments([]);
+      return;
+    }
+    setIsLoadingCompartments(true);
+    try {
+      const res = await lockerApi.getCompartments(lockerId);
+      const list = res?.data?.data || [];
+      setReserveCompartments(list.filter((c) => String(c.status).toUpperCase() === 'EMPTY'));
+    } catch (err) {
+      setReserveCompartments([]);
+      setReserveMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không tải được danh sách ngăn của tủ.',
+      });
+    } finally {
+      setIsLoadingCompartments(false);
+    }
+  };
+
+  /** T3 — đặt trước ngăn cho đơn đang chọn. */
+  const handleReserve = async () => {
+    if (!activeOrder) return;
+    if (!reserveCompIndex) {
+      setReserveMessage({ type: 'error', text: 'Vui lòng chọn một ngăn trống trước khi đặt trước.' });
+      return;
+    }
+    setIsReserving(true);
+    setReserveMessage(null);
+    try {
+      const body = {
+        trackingCode: (reserveTrackingCode || activeOrder.trackingCode || activeOrder.orderId || '').trim(),
+        compartmentIndex: reserveCompIndex,
+      };
+      const res = await shipperApi.reserveCompartment(activeOrder.orderId, body);
+      const compIdx = res?.data?.data?.compartmentIndex || reserveCompIndex;
+      setReservedOrderIds((prev) => ({ ...prev, [activeOrder.orderId]: compIdx }));
+      setReserveMessage({ type: 'success', text: `Đã đặt trước ngăn #${compIdx}` });
+      setReserveCompIndex(null);
+      await loadOrders();
+      await loadReserveCompartments(activeOrder.lockerId);
+    } catch (err) {
+      const msg = err?.response?.data?.message || 'Không đặt trước được ngăn này.';
+      // Backend không trả `shipperReservedAt`; nếu 400 báo "đã được đặt trước" thì
+      // đánh dấu đơn này là đã đặt trước để hiện nút huỷ.
+      if (typeof msg === 'string' && msg.toLowerCase().includes('đã được đặt trước')) {
+        setReservedOrderIds((prev) => ({ ...prev, [activeOrder.orderId]: activeOrder.compartmentIndex || true }));
+      }
+      setReserveMessage({ type: 'error', text: msg });
+    } finally {
+      setIsReserving(false);
+    }
+  };
+
+  /** T3 — huỷ đặt trước, nhả ngăn về trống. */
+  const handleCancelReserve = async () => {
+    if (!activeOrder) return;
+    setIsReserving(true);
+    setReserveMessage(null);
+    try {
+      const res = await shipperApi.cancelReserve(activeOrder.orderId);
+      setReservedOrderIds((prev) => {
+        const next = { ...prev };
+        delete next[activeOrder.orderId];
+        return next;
+      });
+      setReserveMessage({ type: 'success', text: res?.data?.message || 'Đã huỷ đặt trước.' });
+      setReserveCompIndex(null);
+      await loadOrders();
+      await loadReserveCompartments(activeOrder.lockerId);
+    } catch (err) {
+      setReserveMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không huỷ được đặt trước.',
+      });
+    } finally {
+      setIsReserving(false);
+    }
+  };
+
+  /**
+   * T3 — bước 2: mở cửa/gửi hàng qua API THẬT (`POST /api/shipper/deposit`).
+   *
+   * <p><b>KHÔNG dùng `store.triggerMqttCommand`</b>: nó gọi `/api/mqtt/command`, endpoint
+   * chỉ dành cho ADMIN, token SHIPPER sẽ bị 403.
+   */
+  const handleOpenDoorAndDeposit = async (order) => {
+    if (!order) return;
+    if (!dynamicToken) {
+      // Dùng `reserveMessage` (render NGOÀI các khối step) chứ không dùng `scanError`
+      // (chỉ render trong `depositStep === 1`) — nút này nằm ở bước 2, dùng `scanError`
+      // thì shipper bấm mà không thấy thông báo gì.
+      setReserveMessage({
+        type: 'error',
+        text: 'Chưa có mã QR shipper. Bấm "Xác minh danh tính" để lấy mã rồi quét tại tủ trước khi gửi hàng.',
+      });
+      return;
+    }
+    setIsReserving(true);
+    setReserveMessage(null);
+    try {
+      const res = await shipperApi.depositPackage({
+        lockerId: order.lockerId,
+        dynamicToken,
+        orderId: order.orderId,
+        weightGrams: 0.85,
+        isDoorClosed: true,
+      });
+      setReserveMessage({
+        type: 'success',
+        text: res?.data?.message || `Đã gửi kiện hàng ${order.orderId} vào ngăn.`,
+      });
+      await loadOrders();
+    } catch (err) {
+      setReserveMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không gửi được kiện hàng vào tủ.',
+      });
+    } finally {
+      setIsReserving(false);
     }
   };
 
@@ -208,6 +373,19 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   });
 
   const activeOrder = orders.find((o) => o.orderId === selectedOrderId) || filteredPending[0] || null;
+
+  // T3: mỗi khi đổi đơn đang chọn → nạp lại danh sách ngăn trống + điền sẵn mã vận đơn.
+  useEffect(() => {
+    if (!activeOrder) {
+      setReserveCompartments([]);
+      return;
+    }
+    setReserveTrackingCode(activeOrder.trackingCode || activeOrder.orderId || '');
+    setReserveCompIndex(null);
+    setReserveMessage(null);
+    loadReserveCompartments(activeOrder.lockerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrder?.orderId, activeOrder?.lockerId]);
 
   return (
     <div className="space-y-5 notranslate select-none">
@@ -317,6 +495,13 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
             </div>
           </div>
 
+          {usingMockData && (
+            <div className="p-2.5 bg-amber-50 border border-amber-300 text-amber-800 text-[11px] rounded-xl flex items-center gap-1.5 font-medium">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>Đang dùng dữ liệu mô phỏng (không gọi được API). Kiểm tra đăng nhập SHIPPER và backend.</span>
+            </div>
+          )}
+
           {sampleToast && (
             <div className="p-2.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-xl flex items-center justify-between animate-in fade-in duration-200 shadow-2xs">
               <div className="flex items-center gap-1.5 font-medium truncate">
@@ -412,6 +597,107 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   <span className="text-blue-600 font-extrabold text-sm">
                     Ngăn #{activeOrder.compartmentIndex} (Size {activeOrder.compartmentSize})
                   </span>
+                </div>
+              </div>
+
+              {/* T3 — PANEL ĐẶT TRƯỚC NGĂN (gọi API thật) */}
+              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs uppercase">
+                    <Layers className="w-4 h-4 text-indigo-600" />
+                    <span>Đặt trước ngăn tủ</span>
+                  </div>
+                  <span className="text-[10px] text-indigo-700 font-semibold">
+                    {isLoadingCompartments
+                      ? 'Đang tải ngăn…'
+                      : `${reserveCompartments.length} ngăn trống`}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-slate-600 font-semibold uppercase block mb-1">
+                    Mã vận đơn (in trên nhãn)
+                  </label>
+                  <input
+                    type="text"
+                    value={reserveTrackingCode}
+                    onChange={(e) => setReserveTrackingCode(e.target.value)}
+                    placeholder={activeOrder.trackingCode || activeOrder.orderId}
+                    className="w-full text-xs bg-white border border-indigo-200 rounded-xl px-3 py-2 font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400/30"
+                  />
+                </div>
+
+                <div>
+                  <span className="text-[10px] text-slate-600 font-semibold uppercase block mb-1">
+                    Chọn ngăn trống
+                  </span>
+                  {reserveCompartments.length === 0 ? (
+                    <p className="text-[11px] text-slate-500 italic">
+                      {isLoadingCompartments ? 'Đang tải…' : 'Tủ này hiện không còn ngăn trống.'}
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {reserveCompartments.map((c) => {
+                        const idx = c.compIndex;
+                        const chosen = reserveCompIndex === idx;
+                        return (
+                          <button
+                            key={c.compartmentId ?? idx}
+                            type="button"
+                            onClick={() => setReserveCompIndex(idx)}
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                              chosen
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                : 'bg-white text-slate-700 border-indigo-200 hover:border-indigo-400'
+                            }`}
+                          >
+                            #{idx}{c.size ? ` · ${c.size}` : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {reserveMessage && (
+                  <div
+                    className={`p-2.5 rounded-xl text-[11px] font-medium flex items-start gap-1.5 ${
+                      reserveMessage.type === 'success'
+                        ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                        : 'bg-rose-50 border border-rose-200 text-rose-800'
+                    }`}
+                  >
+                    {reserveMessage.type === 'success' ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    )}
+                    <span>{reserveMessage.text}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  {reservedOrderIds[activeOrder.orderId] ? (
+                    <button
+                      type="button"
+                      disabled={isReserving}
+                      onClick={handleCancelReserve}
+                      className="flex-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Huỷ đặt trước</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isReserving || !reserveCompIndex}
+                      onClick={handleReserve}
+                      className="flex-1 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-sm"
+                    >
+                      <Package className="w-3.5 h-3.5" />
+                      <span>{isReserving ? 'Đang xử lý…' : 'Đặt trước ngăn'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -517,12 +803,21 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   </p>
 
                   <button
-                    onClick={() => handleProceedDepositStep(3, activeOrder)}
-                    className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                    onClick={() => handleOpenDoorAndDeposit(activeOrder)}
+                    disabled={isReserving}
+                    className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
                   >
                     <DoorOpen className="w-4 h-4" />
-                    <span>Mở Cửa Ngăn #{activeOrder.compartmentIndex}</span>
+                    <span>
+                      {isReserving
+                        ? 'Đang gửi lệnh…'
+                        : `Mở Cửa Ngăn #${activeOrder.compartmentIndex}`}
+                    </span>
                   </button>
+                  <p className="text-[10px] text-amber-800/80 leading-relaxed">
+                    Lệnh mở cửa được gửi qua API thật tới backend. Nếu báo lỗi, kiểm tra đã tạo mã QR
+                    shipper và đăng nhập tài khoản SHIPPER.
+                  </p>
                 </div>
               )}
 

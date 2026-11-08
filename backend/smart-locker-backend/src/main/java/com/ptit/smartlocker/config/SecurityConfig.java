@@ -130,6 +130,10 @@ public class SecurityConfig {
                         "/api/shipper/token/verify",
                         "/api/shipper/deposit",
                         "/api/shipper/recall-overdue").hasRole("SHIPPER")
+                // T3: đặt trước ngăn. Thiếu 3 dòng này là 403 vì anyRequest().denyAll() ở dưới.
+                .requestMatchers(HttpMethod.GET, "/api/shipper/orders/pending").hasRole("SHIPPER")
+                .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
+                .requestMatchers(HttpMethod.DELETE, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.GET, "/api/shipper/overdue-orders").hasAnyRole("SHIPPER", "ADMIN")
 
                 // --- Mặc định đóng ---
