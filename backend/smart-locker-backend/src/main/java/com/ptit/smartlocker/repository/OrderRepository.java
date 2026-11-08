@@ -22,6 +22,20 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     @Query("SELECT o FROM Order o WHERE o.status = 'DEPOSITED' AND o.expiryDeadline < :now")
     List<Order> findOverdueOrders(LocalDateTime now);
 
+    /**
+     * Các đơn shipper đã đặt trước ngăn nhưng quá hạn giữ chỗ ({@code shipper_reserved_at} cũ hơn mốc).
+     *
+     * <p>Dùng cho tác vụ tự nhả ngăn: shipper bấm "đặt trước" trên web rồi không đến tủ, ngăn sẽ
+     * bị giữ vô thời hạn và khách khác không dùng được. Nạp sẵn {@code compartment} và {@code locker}
+     * vì tác vụ chạy ngoài request, tránh {@code LazyInitializationException}.
+     */
+    @Query("SELECT o FROM Order o "
+            + "LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "WHERE o.status = 'PENDING' "
+            + "AND o.shipperReservedAt IS NOT NULL "
+            + "AND o.shipperReservedAt < :cutoff")
+    List<Order> findExpiredShipperReservations(@Param("cutoff") LocalDateTime cutoff);
+
     Optional<Order> findByOrderId(String orderId);
 
     /**
