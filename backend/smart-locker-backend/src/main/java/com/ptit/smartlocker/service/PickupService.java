@@ -1,5 +1,9 @@
 package com.ptit.smartlocker.service;
 
+import com.ptit.smartlocker.exception.BusinessException;
+import com.ptit.smartlocker.exception.ResourceNotFoundException;
+
+
 import com.ptit.smartlocker.dto.PickupDTO;
 import com.ptit.smartlocker.entity.Compartment;
 import com.ptit.smartlocker.entity.Order;
@@ -76,7 +80,7 @@ public class PickupService {
         LockerFailureTracker tracker = lockerFailureMap.get(lockerId);
         if (tracker != null && tracker.lockoutUntil != null && LocalDateTime.now().isBefore(tracker.lockoutUntil)) {
             long remainingSecs = Duration.between(LocalDateTime.now(), tracker.lockoutUntil).getSeconds();
-            throw new RuntimeException("Trạm tủ đang tạm khóa thao tác nhận đồ do phát hiện nhập sai quá nhiều lần. Vui lòng thử lại sau " 
+            throw new BusinessException("Trạm tủ đang tạm khóa thao tác nhận đồ do phát hiện nhập sai quá nhiều lần. Vui lòng thử lại sau " 
                     + Math.max(1, remainingSecs) + " giây!");
         }
 
@@ -90,12 +94,12 @@ public class PickupService {
             if (credential == null || credential.getOrder().getLocker() == null ||
                     !credential.getOrder().getLocker().getLockerId().equalsIgnoreCase(lockerId)) {
                 recordLockerFailure(lockerId);
-                throw new RuntimeException("Không tìm thấy đơn hàng tại trạm tủ này!");
+                throw new ResourceNotFoundException("Không tìm thấy đơn hàng tại trạm tủ này!");
             }
 
             // Kiểm tra trạng thái khóa của đơn hàng
             if (credential.getFailedAttempts() >= MAX_FAILED_ATTEMPTS) {
-                throw new RuntimeException("Mã nhận hàng của đơn này đã bị tạm khóa do nhập sai quá 5 lần! Vui lòng tạo mã OTP mới trên ứng dụng.");
+                throw new BusinessException("Mã nhận hàng của đơn này đã bị tạm khóa do nhập sai quá 5 lần! Vui lòng tạo mã OTP mới trên ứng dụng.");
             }
 
             // Chỉ so khớp đúng trường tương ứng với phương thức xác thực:
@@ -123,9 +127,9 @@ public class PickupService {
 
                 int remaining = MAX_FAILED_ATTEMPTS - newFailCount;
                 if (remaining <= 0) {
-                    throw new RuntimeException("Mã nhận hàng đã bị tạm khóa do nhập sai liên tiếp 5 lần! Vui lòng tạo mã OTP mới trên ứng dụng.");
+                    throw new BusinessException("Mã nhận hàng đã bị tạm khóa do nhập sai liên tiếp 5 lần! Vui lòng tạo mã OTP mới trên ứng dụng.");
                 } else {
-                    throw new RuntimeException("Mã xác thực không chính xác! Bạn còn " + remaining + " lần thử.");
+                    throw new BusinessException("Mã xác thực không chính xác! Bạn còn " + remaining + " lần thử.");
                 }
             }
         } else {
@@ -143,32 +147,32 @@ public class PickupService {
 
             if (credential == null) {
                 recordLockerFailure(lockerId);
-                throw new RuntimeException("Mã OTP/QR không chính xác hoặc đã hết hạn!");
+                throw new BusinessException("Mã OTP/QR không chính xác hoặc đã hết hạn!");
             }
 
             if (credential.getFailedAttempts() >= MAX_FAILED_ATTEMPTS) {
-                throw new RuntimeException("Mã nhận hàng này đã bị tạm khóa do nhập sai quá 5 lần! Vui lòng tạo mã OTP mới trên ứng dụng.");
+                throw new BusinessException("Mã nhận hàng này đã bị tạm khóa do nhập sai quá 5 lần! Vui lòng tạo mã OTP mới trên ứng dụng.");
             }
         }
 
         // 3. Kiểm tra thời hạn hiệu lực của mã
         if (LocalDateTime.now().isAfter(credential.getExpiredAt())) {
-            throw new RuntimeException("Mã OTP/QR nhận hàng đã hết hiệu lực. Vui lòng tạo mã OTP mới trên ứng dụng!");
+            throw new BusinessException("Mã OTP/QR nhận hàng đã hết hiệu lực. Vui lòng tạo mã OTP mới trên ứng dụng!");
         }
 
         // 4. Kiểm tra trạng thái đơn hàng
         Order order = credential.getOrder();
         if (!"DEPOSITED".equalsIgnoreCase(order.getStatus())) {
             if ("PENDING".equalsIgnoreCase(order.getStatus())) {
-                throw new RuntimeException("Kiện hàng chưa được nhân viên giao nạp vào tủ! Vui lòng chờ thông báo.");
+                throw new BusinessException("Kiện hàng chưa được nhân viên giao nạp vào tủ! Vui lòng chờ thông báo.");
             }
             if ("COMPLETED".equalsIgnoreCase(order.getStatus())) {
-                throw new RuntimeException("Đơn hàng này đã được lấy thành công trước đó!");
+                throw new BusinessException("Đơn hàng này đã được lấy thành công trước đó!");
             }
             if ("OVERDUE".equalsIgnoreCase(order.getStatus())) {
-                throw new RuntimeException("Đơn hàng này đã quá hạn lưu kho, hệ thống đã khóa mã lấy đồ!");
+                throw new BusinessException("Đơn hàng này đã quá hạn lưu kho, hệ thống đã khóa mã lấy đồ!");
             }
-            throw new RuntimeException("Đơn hàng không ở trạng thái sẵn sàng để lấy đồ (Trạng thái: " + order.getStatus() + ")!");
+            throw new BusinessException("Đơn hàng không ở trạng thái sẵn sàng để lấy đồ (Trạng thái: " + order.getStatus() + ")!");
         }
 
         // 5. Xác thực thành công: Reset số lần thử sai, cập nhật trạng thái đơn và giải phóng ngăn tủ
@@ -232,32 +236,32 @@ public class PickupService {
     @Transactional
     public String generateNewOtp(String orderId, String customerPhone) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng: " + orderId));
 
         // Ràng buộc chống IDOR: Bắt buộc phải cung cấp số điện thoại và phải trùng khớp với người nhận
         if (customerPhone == null || customerPhone.isBlank()) {
-            throw new RuntimeException("Vui lòng cung cấp số điện thoại để xác thực quyền sở hữu đơn hàng!");
+            throw new BusinessException("Vui lòng cung cấp số điện thoại để xác thực quyền sở hữu đơn hàng!");
         }
         if (!order.getCustomerPhone().equalsIgnoreCase(customerPhone.trim())) {
-            throw new RuntimeException("Số điện thoại không khớp với người nhận của đơn hàng này!");
+            throw new BusinessException("Số điện thoại không khớp với người nhận của đơn hàng này!");
         }
 
         // Ràng buộc trạng thái đơn hàng
         if (!"DEPOSITED".equalsIgnoreCase(order.getStatus())) {
             if ("PENDING".equalsIgnoreCase(order.getStatus())) {
-                throw new RuntimeException("Kiện hàng chưa được nhân viên nạp vào tủ! Vui lòng chờ sau khi nạp hàng để nhận mã OTP.");
+                throw new BusinessException("Kiện hàng chưa được nhân viên nạp vào tủ! Vui lòng chờ sau khi nạp hàng để nhận mã OTP.");
             }
             if ("COMPLETED".equalsIgnoreCase(order.getStatus())) {
-                throw new RuntimeException("Đơn hàng này đã được nhận thành công trước đó!");
+                throw new BusinessException("Đơn hàng này đã được nhận thành công trước đó!");
             }
             if ("OVERDUE".equalsIgnoreCase(order.getStatus())) {
-                throw new RuntimeException("Đơn hàng đã quá hạn lưu kho tại tủ. Vui lòng liên hệ quản trị viên để được hỗ trợ!");
+                throw new BusinessException("Đơn hàng đã quá hạn lưu kho tại tủ. Vui lòng liên hệ quản trị viên để được hỗ trợ!");
             }
-            throw new RuntimeException("Không thể tạo mã OTP cho đơn hàng đang ở trạng thái: " + order.getStatus());
+            throw new BusinessException("Không thể tạo mã OTP cho đơn hàng đang ở trạng thái: " + order.getStatus());
         }
 
         PickupCredential credential = credentialRepository.findByOrder_OrderId(orderId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy thông tin nhận hàng của đơn: " + orderId));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin nhận hàng của đơn: " + orderId));
 
         // Sinh mã OTP 6 số ngẫu nhiên an toàn bảo mật, chống trùng lặp tại trạm tủ
         String newOtp;

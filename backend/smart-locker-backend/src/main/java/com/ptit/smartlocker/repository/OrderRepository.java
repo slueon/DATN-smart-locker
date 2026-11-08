@@ -73,6 +73,12 @@ public interface OrderRepository extends JpaRepository<Order, String> {
      * <p>Dùng cho nhánh `/event` của MQTT: cùng lý do như `findByIdWithCompartment` —
      * callback Paho chạy ngoài Hibernate session, `ord.getCompartment()` trên entity lazy
      * sẽ ném `LazyInitializationException` khi payload báo nạp/nhận hàng thành công.
+     *
+     * <p><b>⚠ CẢNH BÁO N+1:</b> query này CHỈ fetch {@code compartment}, <b>KHÔNG</b> fetch
+     * {@code locker}. Hiện tại an toàn vì các vòng lặp dùng nó chỉ đọc {@code getCompartment()}.
+     * Nếu sau này ai thêm {@code ord.getLocker().getLockerId()} vào trong vòng lặp ở
+     * {@code MqttService.handleCompartmentEvent} thì N+1 sẽ quay lại (1 SELECT/đơn).
+     * Khi đó dùng {@link #findByLockerAndStatusFetchAll} (fetch cả hai) thay vì thêm fetch ở đây.
      */
     @Query("SELECT o FROM Order o LEFT JOIN FETCH o.compartment "
             + "WHERE o.locker.lockerId = :lockerId AND o.status = :status")
@@ -100,4 +106,26 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     @Query("SELECT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
             + "WHERE o.status = :status")
     List<Order> findByStatusWithCompartment(@Param("status") String status);
+
+    /**
+     * Đơn theo tủ + trạng thái, NẠP SẴN cả {@code compartment} và {@code locker}.
+     *
+     * <p><b>Vì sao cần bản riêng:</b> {@link #findByLocker_LockerIdAndStatus} để hai quan hệ ở
+     * dạng LAZY. Khi tác vụ quét lặp qua N đơn rồi đọc {@code order.getCompartment()} /
+     * {@code order.getLocker()}, Hibernate phát thêm 1 câu SELECT cho MỖI đơn (lỗi N+1). Bản này
+     * nạp sẵn trong đúng 1 câu nên tổng số query không tăng theo số đơn.
+     */
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "WHERE o.locker.lockerId = :lockerId AND o.status = :status")
+    List<Order> findByLockerAndStatusFetchAll(@Param("lockerId") String lockerId,
+                                              @Param("status") String status);
+
+    /**
+     * Đơn quá hạn, NẠP SẴN {@code locker} để đọc được {@code lockerId} mà không phát thêm query.
+     * Dùng bởi {@code OverdueSchedulerService.scanAndLockOverdueOrders()} — vòng lặp của nó đọc
+     * {@code order.getLocker().getLockerId()} cho từng đơn.
+     */
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.locker "
+            + "WHERE o.status = 'DEPOSITED' AND o.expiryDeadline < :now")
+    List<Order> findOverdueOrdersFetchLocker(@Param("now") LocalDateTime now);
 }

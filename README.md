@@ -95,6 +95,11 @@ Hệ thống giải quyết bài toán giao nhận hàng hóa chặng cuối (La
    spring.datasource.password=${DB_PASSWORD:}
    app.cors.allowed-origins=${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000}
    ```
+
+   > ⚠️ **Nếu quên bước này, app KHÔNG khởi động được** — không phải lỗi code. Triệu chứng:
+   > `HikariPool-1 - Exception during pool initialization` / `Access denied for user 'root'@'localhost' (using password: NO)`
+   > rồi `Failed to determine a suitable driver class`. Nguyên nhân: mật khẩu để trống nên MySQL từ chối.
+   > Chạy lại với `-Dspring-boot.run.profiles=local` (Cách A) hoặc set `$env:DB_PASSWORD` (Cách B).
 3. Chạy kiểm thử tự động (Integration Tests):
    ```bash
    .\mvnw.cmd test

@@ -61,7 +61,9 @@ public class LockerService {
     @Transactional
     public void autoReleaseExpiredReservations(String lockerId) {
         LocalDate today = LocalDate.now();
-        List<Order> pendingOrders = orderRepository.findByLocker_LockerIdAndStatus(lockerId, "PENDING");
+        // N+1: dùng bản NẠP SẴN compartment + locker. Nếu dùng findByLocker_LockerIdAndStatus
+        // (LAZY), vòng lặp dưới đọc order.getCompartment() và sinh thêm 1 SELECT cho mỗi đơn.
+        List<Order> pendingOrders = orderRepository.findByLockerAndStatusFetchAll(lockerId, "PENDING");
         for (Order order : pendingOrders) {
             if (order.getExpectedDate() != null && order.getExpectedDate().isBefore(today)) {
                 Compartment comp = order.getCompartment();

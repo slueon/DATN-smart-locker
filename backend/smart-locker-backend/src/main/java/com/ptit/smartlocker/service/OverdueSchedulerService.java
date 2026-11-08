@@ -28,7 +28,9 @@ public class OverdueSchedulerService {
     @Transactional
     public void scanAndLockOverdueOrders() {
         LocalDateTime now = LocalDateTime.now();
-        List<Order> overdueOrders = orderRepository.findOverdueOrders(now);
+        // N+1: bản nạp sẵn `locker` — vòng lặp dưới đọc order.getLocker().getLockerId() cho
+        // từng đơn, nếu để LAZY thì mỗi đơn phát thêm 1 SELECT.
+        List<Order> overdueOrders = orderRepository.findOverdueOrdersFetchLocker(now);
 
         if (!overdueOrders.isEmpty()) {
             log.info("Phát hiện {} đơn hàng quá hạn lưu kho tại tủ! Bắt đầu khóa mã...", overdueOrders.size());
