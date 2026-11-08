@@ -13,10 +13,17 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * Ánh xạ ngoại lệ → HTTP status, dùng CHUNG một shape {@link ApiResponse}.
  *
  * <h2>Vấn đề trước đây</h2>
- * Không có {@code @ControllerAdvice} nào, và 41 chỗ {@code throw new RuntimeException} rải ở
- * 4 service. Mỗi controller lại tự {@code catch (Exception e)} rồi trả {@code badRequest}, nên
+ * Không có {@code @ControllerAdvice} nào, và trước GĐ3 có <b>41 chỗ</b> ném {@code RuntimeException}
+ * rải ở 4 service; mỗi controller lại tự {@code catch (Exception e)} rồi trả {@code badRequest}, nên
  * <b>mọi</b> lỗi đều ra 400 giống nhau: client không phân biệt được "không tìm thấy đơn" với
  * "vi phạm nghiệp vụ" hay "hệ thống lỗi".
+ *
+ * <p><b>Số đo hiện tại</b> (đếm bằng máy, liệt kê từng dòng trên {@code src/main}): <b>53 điểm ném lỗi</b>,
+ * trong đó <b>20 đã gắn nhãn</b> (17 {@link BusinessException} → 409 + 3 {@link ResourceNotFoundException}
+ * → 404, tất cả ở {@code PickupService}) và <b>33 còn là {@code RuntimeException} trần</b> → 400, gồm
+ * <b>23</b> {@code throw new} + <b>10</b> {@code orElseThrow} (AuthService 10+1, ShipperService 10+4,
+ * OrderService 3+3, LockerService 0+2). Con số <b>41</b> nêu trên là số đo TRƯỚC GĐ3, giữ lại để ghi
+ * bối cảnh lịch sử.
  *
  * <h2>Ràng buộc KHÔNG được phá (đã đếm trước khi làm)</h2>
  * <ul>
@@ -32,7 +39,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  *   <tr><td>{@link ResourceNotFoundException}</td><td>404</td></tr>
  *   <tr><td>{@link BusinessException}</td><td>409 Conflict (vi phạm nghiệp vụ vì trạng thái hiện tại)</td></tr>
  *   <tr><td>{@link IllegalArgumentException}</td><td>400</td></tr>
- *   <tr><td>{@code RuntimeException} trần (41 chỗ chưa gắn nhãn)</td><td>400 — <b>giữ đúng hành vi cũ</b></td></tr>
+ *   <tr><td>{@code RuntimeException} trần (33 chỗ chưa gắn nhãn)</td><td>400 — <b>giữ đúng hành vi cũ</b></td></tr>
  *   <tr><td>Mọi {@code Exception} khác</td><td>500</td></tr>
  * </table>
  */
@@ -67,7 +74,7 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * {@code RuntimeException} trần — 41 chỗ chưa được gắn nhãn cụ thể.
+     * {@code RuntimeException} trần — 33 chỗ chưa được gắn nhãn cụ thể.
      *
      * <p>Cố tình giữ <b>400</b> giống hành vi cũ để không phá client đang chạy: mọi thứ
      * {@code catch (Exception e) → badRequest} trước đây vẫn cho ra đúng mã đó.
