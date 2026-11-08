@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.repository;
 
 import com.ptit.smartlocker.entity.Order;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -15,6 +17,22 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     List<Order> findByCustomerPhone(String customerPhone);
     List<Order> findByLocker_LockerIdAndStatus(String lockerId, String status);
     List<Order> findByStatus(String status);
+
+    /**
+     * Như {@link #findExpiredShipperReservations} nhưng KHÓA BI QUAN từng đơn ({@code SELECT ... FOR UPDATE}).
+     *
+     * <p>Lý do: tác vụ nhả ngăn chạy song song với luồng shipper nạp hàng ({@code depositPackage}).
+     * Nếu không khoá, hai bên cùng đọc một {@code Order} rồi cùng ghi đè — tác vụ nhả ngăn có thể
+     * biến ngăn vừa được nạp hàng ({@code OCCUPIED}) trở lại {@code EMPTY} và xoá dấu ngăn của đơn
+     * đã {@code DEPOSITED}. Không có {@code @Version} trên entity nên Hibernate không tự phát hiện.
+     *
+     * <p>Bắt buộc gọi trong một transaction NGẮN cho từng đơn, không bọc cả lượt quét.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o "
+            + "LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "WHERE o.orderId = :orderId")
+    Optional<Order> findByIdForReleaseWithLock(@Param("orderId") String orderId);
 
     /**
      * Tìm các đơn hàng đã gửi vào tủ nhưng quá hạn 24h00 của ngày N+1

@@ -66,8 +66,8 @@ public class LockerService {
             if (order.getExpectedDate() != null && order.getExpectedDate().isBefore(today)) {
                 Compartment comp = order.getCompartment();
                 if (comp != null) {
+                    // Chỉ giải phóng trạng thái chiếm dụng; cân nặng/cửa do cảm biến quyết định.
                     comp.setStatus("EMPTY");
-                    comp.setCurrentWeight(0.0);
                     compartmentRepository.save(comp);
                     order.setCompartment(null);
                 }
@@ -85,8 +85,8 @@ public class LockerService {
                             && o.getExpectedDate() != null && !o.getExpectedDate().isBefore(today)
             );
             if (!hasActiveReservation) {
+                // Ngăn mồ côi: chỉ trả trạng thái về EMPTY, không bịa số cân.
                 comp.setStatus("EMPTY");
-                comp.setCurrentWeight(0.0);
                 compartmentRepository.save(comp);
                 log.info("Giải phóng ngăn mồ côi {} của tủ {} về EMPTY", comp.getCompIndex(), lockerId);
             }
@@ -101,11 +101,14 @@ public class LockerService {
         Compartment comp = compartmentRepository.findByLocker_LockerIdAndCompIndex(lockerId, compIndex)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy ngăn " + compIndex + " của tủ " + lockerId));
 
+        // Admin mở khoá khẩn cấp: chỉ giải phóng trạng thái CHIẾM DỤNG của ngăn.
+        // KHÔNG ghi currentWeight/isDoorClosed ở đây — đó là trạng thái cảm biến (HX711, MC-38)
+        // và sẽ được MqttService.handleCompartmentStatus cập nhật khi cửa thực sự mở.
+        // Đoán "cửa đang mở, cân nặng 0" làm dashboard hiển thị sai so với tủ thật.
         comp.setStatus("EMPTY");
-        comp.setCurrentWeight(0.0);
-        comp.setIsDoorClosed(false);
         Compartment saved = compartmentRepository.save(comp);
-        log.info("Admin đã mở khóa khẩn cấp và giải phóng ngăn #{} của tủ {}", compIndex, lockerId);
+        log.info("Admin đã mở khóa khẩn cấp và giải phóng ngăn #{} của tủ {} (giữ nguyên trạng thái cảm biến: cửa {}, nặng {})",
+                compIndex, lockerId, comp.getIsDoorClosed(), comp.getCurrentWeight());
 
         // Phát lệnh điều khiển mở khóa Solenoid qua MQTT tới Kiosk / MQTTX
         if (mqttService != null) {

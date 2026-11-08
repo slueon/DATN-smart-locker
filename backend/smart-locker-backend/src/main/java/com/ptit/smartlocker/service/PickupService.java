@@ -184,8 +184,9 @@ public class PickupService {
 
         Compartment compartment = order.getCompartment();
         if (compartment != null) {
+            // Khách đã lấy hàng: giải phóng trạng thái chiếm dụng. Cân nặng thật do HX711 báo
+            // qua MqttService.handleCompartmentStatus — không tự đặt 0 ở đây.
             compartment.setStatus("EMPTY");
-            compartment.setCurrentWeight(0.0);
             compartmentRepository.save(compartment);
         }
 

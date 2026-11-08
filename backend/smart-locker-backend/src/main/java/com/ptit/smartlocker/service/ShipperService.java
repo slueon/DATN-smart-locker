@@ -157,12 +157,19 @@ public class ShipperService {
             throw new RuntimeException("Cảm biến chưa phát hiện kiện hàng được đặt vào ngăn tủ!");
         }
 
-        // Cập nhật trạng thái ngăn tủ
+        // Cập nhật trạng thái ngăn tủ.
+        //
+        // KHÔNG hardcode isDoorClosed = true: đây là trạng thái của cảm biến từ MC-38 (và
+        // currentWeight của HX711). Nếu client không gửi giá trị nào thì phải GIỮ NGUYÊN giá trị
+        // phần cứng đã báo, không được tự khẳng định "cửa đã đóng" — nếu không dashboard sẽ hiển
+        // thị sai khi cửa thật đang mở.
         compartment.setStatus("OCCUPIED");
         if (request.getWeightGrams() != null) {
             compartment.setCurrentWeight(request.getWeightGrams());
         }
-        compartment.setIsDoorClosed(true);
+        if (request.getIsDoorClosed() != null) {
+            compartment.setIsDoorClosed(request.getIsDoorClosed());
+        }
         compartmentRepository.save(compartment);
 
         // Quy định lưu trữ: Đến hết ngày tiếp theo (24h00 của ngày N+1)
@@ -497,8 +504,9 @@ public class ShipperService {
 
         if (order.getCompartment() != null) {
             Compartment compartment = order.getCompartment();
+            // Shipper đã thu hồi kiện hàng: giải phóng trạng thái chiếm dụng. Cân nặng thật do
+            // HX711 báo qua MqttService.handleCompartmentStatus — không tự đặt 0 ở đây.
             compartment.setStatus("EMPTY");
-            compartment.setCurrentWeight(0.0);
             compartmentRepository.save(compartment);
         }
 
