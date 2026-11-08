@@ -51,11 +51,19 @@ Hệ thống giải quyết bài toán giao nhận hàng hóa chặng cuối (La
 
 ### 1. Cơ Sở Dữ Liệu (MySQL)
 1. Cài đặt MySQL 8.0 (Port 3306).
-2. Tạo database:
-   ```sql
-   CREATE DATABASE smart_locker_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+2. Tạo database và bảng — file này **an toàn**, không xoá dữ liệu, chạy lại được nhiều lần:
+   ```bash
+   mysql -uroot -p < schema.sql
    ```
-3. Import file cấu trúc và dữ liệu mẫu `smart_locker_db.sql` vào database.
+3. (Tuỳ chọn) Nạp dữ liệu mẫu: 10 trạm tủ, 3 tài khoản, lịch biểu.
+   Chạy **một lần** sau bước 2; chạy lại sẽ báo lỗi trùng khoá chính (dữ liệu vẫn nguyên):
+   ```bash
+   mysql -uroot -p < seed.sql
+   ```
+
+> **Trước đây** dự án dùng một file duy nhất `smart_locker_db.sql` có `DROP DATABASE` ở đầu —
+> chạy nhầm là mất sạch đơn hàng và tài khoản (đã từng xảy ra). File đó đã được tách thành
+> `schema.sql` (chỉ DDL, có `IF NOT EXISTS`) và `seed.sql` (chỉ INSERT), và đã xoá khỏi repo.
 
 ### 2. Khởi Chạy Backend (Spring Boot)
 1. Mở thư mục `backend/smart-locker-backend` bằng **IntelliJ IDEA** hoặc Terminal.

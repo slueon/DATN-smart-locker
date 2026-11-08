@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "orders",
-        // Tên UNIQUE đặt tường minh để khớp `smart_locker_db.sql`; nếu chỉ dùng
+        // Tên UNIQUE đặt tường minh để khớp `schema.sql`; nếu chỉ dùng
         // @Column(unique=true) thì Hibernate sinh tên ngẫu nhiên (UK8g2mgw...) và
         // file SQL sẽ không còn mô tả đúng schema thật.
         uniqueConstraints = @UniqueConstraint(
