@@ -12,14 +12,20 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * Test tác vụ tự nhả ngăn đặt trước quá hạn.
@@ -42,6 +48,15 @@ class ReservationTimeoutServiceTests {
     @Autowired private OrderRepository orderRepository;
     @Autowired private LockerRepository lockerRepository;
     @Autowired private CompartmentRepository compartmentRepository;
+
+    /**
+     * Spy trên repository để chứng minh đường nhả ngăn THẬT SỰ đọc bằng truy vấn có KHOÁ.
+     *
+     * <p>Đây là assertion tất định duy nhất khoá lại được yêu cầu "phải dùng
+     * `findByIdForReleaseWithLock`": nếu ai đổi sang `findById` thường thì lời gọi hàm có khoá
+     * không còn xảy ra → `verify(...)` FAIL ngay, không phụ thuộc thời điểm như test 2 luồng.
+     */
+    @MockitoSpyBean private OrderRepository orderRepositorySpy;
 
     private Locker locker;
 
@@ -171,8 +186,7 @@ class ReservationTimeoutServiceTests {
 
     @Test
     @DisplayName("Ngăn đã bị người khác giải phóng (compartment null): chỉ xoá dấu, không lỗi")
-    void nganDaBiGiaiPhong() {
-        Order order = taoDonDatTruoc("ORD-TT-NGANNULL", 1, 180);
+    void nganDaBiGiaiPhong() {        Order order = taoDonDatTruoc("ORD-TT-NGANNULL", 1, 180);
         order.setCompartment(null);
         orderRepository.save(order);
 
@@ -201,5 +215,66 @@ class ReservationTimeoutServiceTests {
         assertEquals(compsTruoc + 1, compsSau,
                 "Ngăn EMPTY phải tăng 1 sau khi nhả (nhưng available_slots thì không được đụng)");
         assertNotNull(schedule, "Tủ phải tồn tại");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // CHỐNG RACE — phần mà test cũ KHÔNG khoá được
+    //
+    // Test cũ `boQuaDonVuaDuocNapHang` chạy ĐƠN LUỒNG: nó set DEPOSITED rồi mới gọi
+    // tác vụ, nên dù không có khoá thì điều kiện `status != PENDING` vẫn chặn — bỏ
+    // `findByIdForReleaseWithLock` mà test vẫn PASS. Hai test dưới đây khoá lại ĐÚNG
+    // cơ chế: (E) đường nhả ngăn phải đọc bằng truy vấn CÓ KHOÁ, và (F) sau khi đọc
+    // có khoá phải KIỂM LẠI điều kiện trên dữ liệu vừa đọc.
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Đường nhả ngăn PHẢI đọc bằng truy vấn có khoá bi quan (findByIdForReleaseWithLock)")
+    void nhaNganPhaiDungTruyVanCoKhoa() {
+        taoDonDatTruoc("ORD-TT-KHOA", 1, 180);
+        org.mockito.Mockito.clearInvocations(orderRepositorySpy);
+
+        service.releaseExpiredReservations();
+
+        // Assertion TẤT ĐỊNH: đổi sang `findById` thường là FAIL ngay tại đây.
+        verify(orderRepositorySpy, atLeastOnce()).findByIdForReleaseWithLock("ORD-TT-KHOA");
+        // Và không được đi đường không khoá cho chính đơn này.
+        verify(orderRepositorySpy, never()).findById("ORD-TT-KHOA");
+
+        assertEquals("EMPTY", layNgan(1).getStatus(), "Ngăn phải thật sự được nhả");
+    }
+
+    @Test
+    @DisplayName("Sau khi đọc có khoá phải KIỂM LẠI: đơn đã DEPOSITED thì không được nhả ngăn")
+    void kiemLaiTrenBanGhiDaKhoa() {
+        Order order = taoDonDatTruoc("ORD-TT-KIEMLAI", 1, 180);
+
+        // Mô phỏng đúng kịch bản thật: danh sách quét thấy đơn này (vẫn PENDING, quá hạn),
+        // nhưng NGAY TRƯỚC khi `releaseOne` đọc bản ghi có khoá thì shipper đã nạp hàng xong
+        // và commit (trạng thái đổi thành DEPOSITED, ngăn OCCUPIED).
+        //
+        // Chặn tại chính lời gọi `findByIdForReleaseWithLock` để mô phỏng thứ tự này một cách
+        // tất định — không phụ thuộc may rủi về thời điểm.
+        org.mockito.Mockito.doAnswer(invocation -> {
+            Compartment comp = compartmentRepository
+                    .findByLocker_LockerIdAndCompIndex(locker.getLockerId(), 1).orElseThrow();
+            comp.setStatus("OCCUPIED");
+            compartmentRepository.save(comp);
+
+            Order fresh = orderRepository.findById("ORD-TT-KIEMLAI").orElseThrow();
+            fresh.setStatus("DEPOSITED");
+            fresh.setDepositedAt(LocalDateTime.now());
+            orderRepository.save(fresh);
+
+            return invocation.callRealMethod();
+        }).when(orderRepositorySpy).findByIdForReleaseWithLock("ORD-TT-KIEMLAI");
+
+        service.releaseExpiredReservations();
+
+        // Đây chính là dữ liệu từng bị mất: hàng nằm trong tủ nhưng DB ghi trống.
+        assertEquals("OCCUPIED", layNgan(1).getStatus(),
+                "Ngăn vừa được nạp hàng (OCCUPIED) TUYỆT ĐỐI không được bị nhả về EMPTY");
+        Order sau = orderRepository.findById("ORD-TT-KIEMLAI").orElseThrow();
+        assertEquals("DEPOSITED", sau.getStatus(), "Đơn đã nạp hàng phải giữ DEPOSITED");
+        assertNotNull(sau.getCompartment(), "Đơn đã nạp hàng phải còn liên kết ngăn");
     }
 }

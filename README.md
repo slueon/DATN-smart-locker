@@ -67,17 +67,40 @@ Hệ thống giải quyết bài toán giao nhận hàng hóa chặng cuối (La
 
 ### 2. Khởi Chạy Backend (Spring Boot)
 1. Mở thư mục `backend/smart-locker-backend` bằng **IntelliJ IDEA** hoặc Terminal.
-2. Cấu hình biến môi trường trong `src/main/resources/application.properties` (hoặc truyền qua Environment Variables của hệ điều hành):
+2. Cấu hình kết nối CSDL. **Mật khẩu KHÔNG nằm trong repo** — `application.properties` chỉ khai
+   `spring.datasource.password=${DB_PASSWORD:}` (không có giá trị mặc định), nên chọn 1 trong 2 cách:
+
+   **Cách A — file cấu hình cục bộ (khuyến nghị):**
+   Tạo file `backend/smart-locker-backend/application-local.properties` (đã nằm trong `.gitignore`,
+   không bao giờ bị commit) với nội dung:
+   ```properties
+   spring.datasource.password=<mật-khẩu-MySQL-của-bạn>
+   ```
+   rồi chạy với profile `local`:
+   ```bash
+   .\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
+   ```
+   (hoặc trên IntelliJ: VM options / Program arguments thêm `--spring.profiles.active=local`)
+
+   **Cách B — biến môi trường:**
+   ```powershell
+   $env:DB_PASSWORD = "<mật-khẩu-MySQL-của-bạn>"
+   .\mvnw.cmd spring-boot:run
+   ```
+
+   Các biến khác (đều có mặc định dùng được):
    ```properties
    spring.datasource.url=${DB_URL:jdbc:mysql://localhost:3306/smart_locker_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Ho_Chi_Minh&characterEncoding=UTF-8}
    spring.datasource.username=${DB_USERNAME:root}
-   spring.datasource.password=${DB_PASSWORD:200220}
+   spring.datasource.password=${DB_PASSWORD:}
    app.cors.allowed-origins=${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000}
    ```
 3. Chạy kiểm thử tự động (Integration Tests):
    ```bash
    .\mvnw.cmd test
    ```
+   *(Test dùng `src/test/resources/application.properties` với DB riêng `smart_locker_tester`
+   và `TEST_DB_PASSWORD`, nên không phụ thuộc file cấu hình cục bộ ở trên.)*
 4. Khởi chạy ứng dụng:
    ```bash
    .\mvnw.cmd spring-boot:run

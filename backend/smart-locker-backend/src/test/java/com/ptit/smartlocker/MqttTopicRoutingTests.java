@@ -7,16 +7,25 @@ import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.verify;
 
 /**
  * Test tầng MQTT — phần phức tạp nhất của backend (MqttService ~1037 dòng)
@@ -44,6 +53,15 @@ class MqttTopicRoutingTests {
     @Autowired private CommandLogRepository commandLogRepository;
     @Autowired private DeviceEventRepository deviceEventRepository;
     @Autowired private ShipperIdentityTokenRepository tokenRepository;
+
+    /**
+     * Spy trên {@link MqttService} để bắt được các lần gọi {@code publishRawMessage}.
+     *
+     * <p>Vì sao bắt buộc phải spy: trong test `mqtt.enabled=false` nên `mqttClient` là null,
+     * {@code publishRawMessage} không làm gì cả — nếu không spy thì KHÔNG thể quan sát
+     * payload {@code verified/order} mà chỉ kiểm được gián tiếp qua `command_logs`.
+     */
+    @MockitoSpyBean private MqttService mqttServiceSpy;
 
     private Locker locker;
 
@@ -86,6 +104,67 @@ class MqttTopicRoutingTests {
 
     private long demDeviceEvent() {
         return deviceEventRepository.count();
+    }
+
+    /**
+     * Dựng một đơn ĐỦ ĐIỀU KIỆN NẠP — chính là tổ hợp mà test cũ bỏ sót.
+     *
+     * <p>Đủ 4 điều kiện để {@code handleOrderScan} đi tới nhánh mở tủ:
+     * {@code status=PENDING}, {@code compartment != null}, {@code shipper_reserved_at != null},
+     * {@code orders.locker_id} = tủ nhận bản tin. Thiếu {@code shipperReservedAt} thì hàm
+     * {@code return} sớm ở {@code ready.isEmpty()} và khối {@code hasActiveShipperVerification}
+     * KHÔNG BAO GIỜ chạy — đó đúng là lý do test cũ vô nghĩa.
+     */
+    private Order taoDonDaDatTruoc(String orderId, String trackingCode, int compartmentIndex) {
+        Compartment comp = compartmentRepository
+                .findByLocker_LockerIdAndCompIndex(locker.getLockerId(), compartmentIndex)
+                .orElseThrow();
+        comp.setStatus("RESERVED");
+        compartmentRepository.save(comp);
+
+        Order order = Order.builder()
+                .orderId(orderId)
+                .customerName("Khách Test")
+                .customerPhone("0912345678")
+                .deliveryType("LOCKER")
+                .locker(locker)
+                .compartment(comp)
+                .expectedDate(LocalDate.now())
+                .status("PENDING")
+                .totalAmount(BigDecimal.valueOf(50000))
+                .productName("Kiện test")
+                .trackingCode(trackingCode)
+                .shipperReservedAt(LocalDateTime.now().minusMinutes(1))
+                .build();
+        return orderRepository.save(order);
+    }
+
+    /** Tạo phiên shipper đã xác thực (60 giây) tại một tủ cụ thể. */
+    private ShipperIdentityToken taoPhienShipper(String dynamicToken, String lockerId) {
+        LocalDateTime now = LocalDateTime.now();
+        ShipperIdentityToken token = ShipperIdentityToken.builder()
+                .shipperId("shipper")
+                .dynamicToken(dynamicToken)
+                .createdAt(now)
+                .expiredAt(now.plusMinutes(5))
+                .isVerified(true)
+                .lockerId(lockerId)
+                .build();
+        return tokenRepository.save(token);
+    }
+
+    /** Các payload đã được phát tới các topic kết thúc bằng {@code /verified/order}. */
+    private List<String> cacPayloadVerifiedOrder() {
+        ArgumentCaptor<String> topicCap = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> payloadCap = ArgumentCaptor.forClass(String.class);
+        verify(mqttServiceSpy, atLeastOnce())
+                .publishRawMessage(topicCap.capture(), payloadCap.capture(), anyInt());
+        List<String> topics = topicCap.getAllValues();
+        List<String> payloads = payloadCap.getAllValues();
+        return java.util.stream.IntStream.range(0, Math.min(topics.size(), payloads.size()))
+                .filter(i -> topics.get(i).endsWith("/verified/order"))
+                .mapToObj(payloads::get)
+                .collect(Collectors.toList());
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -200,6 +279,86 @@ class MqttTopicRoutingTests {
         publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"ORD-TEST-DA-GUI\"}");
 
         assertEquals(cmdTruoc, demCommandLog(), "Đơn đã DEPOSITED không được mở tủ lần nữa");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 4b. XÁC THỰC SHIPPER — nhánh THẬT SỰ chạy khi đơn đã đặt trước
+    //
+    // Bộ test cũ chỉ có `qrSendKhongCoXacThucThiKhongMoTu` với đơn KHÔNG có
+    // `shipper_reserved_at`, nên `handleOrderScan` return sớm và khối
+    // `hasActiveShipperVerification` chưa bao giờ được thực thi — xoá cả khối đó
+    // mà test vẫn PASS. Ba test dưới đây khoá đúng nhánh đó, cả hai chiều.
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Đơn ĐÃ đặt trước nhưng CHƯA có phiên shipper: không mở tủ, phát verified/order=0")
+    void donDaDatTruocKhongCoPhienShipperThiKhongMo() {
+        taoDonDaDatTruoc("ORD-TEST-AUTH-NO", "TRACK-AUTH-NO", 1);
+        // KHÔNG tạo ShipperIdentityToken nào → findActiveVerifiedTokensForLocker trả rỗng.
+        long cmdTruoc = demCommandLog();
+        clearInvocations(mqttServiceSpy);
+
+        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"TRACK-AUTH-NO\"}");
+
+        // (1) Không được phát lệnh mở: đây là assertion bắt được việc xoá khối xác thực,
+        //     vì nếu khối bị xoá thì publishCommand chạy và command_logs +1.
+        assertEquals(cmdTruoc, demCommandLog(),
+                "Đơn đã đặt trước nhưng chưa có phiên shipper thì KHÔNG được mở tủ");
+
+        // (2) Đơn phải giữ nguyên PENDING.
+        Order sau = orderRepository.findById("ORD-TEST-AUTH-NO").orElseThrow();
+        assertEquals("PENDING", sau.getStatus(), "Đơn không được đổi trạng thái");
+
+        // (3) Phải phát THẬT verified/order = 0 (R3) — im lặng thì TFT treo chờ.
+        List<String> payloads = cacPayloadVerifiedOrder();
+        assertTrue(payloads.contains("0"),
+                "Thiếu phiên shipper phải phát verified/order=0, thực tế: " + payloads);
+        assertFalse(payloads.contains("1"),
+                "Không được phát verified/order=1 khi chưa có phiên shipper, thực tế: " + payloads);
+    }
+
+    @Test
+    @DisplayName("Đơn ĐÃ đặt trước + CÓ phiên shipper đúng tủ: mở đúng ngăn, phát verified/order=1")
+    void donDaDatTruocCoPhienShipperThiMoDungNgan() {
+        taoDonDaDatTruoc("ORD-TEST-AUTH-OK", "TRACK-AUTH-OK", 1);
+        taoPhienShipper("SHIP-TEST-AUTH-OK", locker.getLockerId());
+        long cmdTruoc = demCommandLog();
+        clearInvocations(mqttServiceSpy);
+
+        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"TRACK-AUTH-OK\"}");
+
+        // Đối chứng dương: nếu ai đó chặn mọi trường hợp thì test A vẫn pass nhưng test này FAIL.
+        assertEquals(cmdTruoc + 1, demCommandLog(),
+                "Có phiên shipper hợp lệ thì phải phát đúng 1 lệnh mở");
+        CommandLog cmd = commandLogRepository.findAll().stream()
+                .filter(c -> c.getLocker() != null
+                        && locker.getLockerId().equals(c.getLocker().getLockerId()))
+                .reduce((a, b) -> b)
+                .orElseThrow(() -> new AssertionError("Không thấy command_log của LOCKER_HN_01"));
+        assertEquals("OPEN_DOOR", cmd.getCommandType(), "Lệnh phải là OPEN_DOOR");
+        assertEquals(1, cmd.getCompartmentId(), "Phải mở đúng ngăn 1 của đơn");
+
+        List<String> payloads = cacPayloadVerifiedOrder();
+        assertTrue(payloads.contains("1"),
+                "Có phiên shipper hợp lệ phải phát verified/order=1, thực tế: " + payloads);
+    }
+
+    @Test
+    @DisplayName("Phiên shipper xác thực tại TỦ KHÁC: không mở (khoá lỗi cross-locker)")
+    void phienShipperDangKyTaiTuKhacThiKhongMo() {
+        taoDonDaDatTruoc("ORD-TEST-AUTH-KHAC-TU", "TRACK-AUTH-KHAC-TU", 1);
+        // Phiên hợp lệ nhưng đăng ký tại LOCKER_HN_03, không phải tủ của đơn.
+        taoPhienShipper("SHIP-TEST-AUTH-KHAC-TU", "LOCKER_HN_03");
+        long cmdTruoc = demCommandLog();
+        clearInvocations(mqttServiceSpy);
+
+        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"TRACK-AUTH-KHAC-TU\"}");
+
+        assertEquals(cmdTruoc, demCommandLog(),
+                "Phiên xác thực ở tủ khác KHÔNG được mở tủ này");
+        List<String> payloads = cacPayloadVerifiedOrder();
+        assertFalse(payloads.contains("1"),
+                "Không được phát verified/order=1 khi phiên thuộc tủ khác, thực tế: " + payloads);
     }
 
     // ─────────────────────────────────────────────────────────────

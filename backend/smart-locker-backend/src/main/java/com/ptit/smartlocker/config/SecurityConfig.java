@@ -38,6 +38,22 @@ public class SecurityConfig {
     @Value("${app.security.enabled:true}")
     private boolean securityEnabled;
 
+    /**
+     * Bật/tắt tài liệu Swagger. Mặc định TẮT.
+     *
+     * <p>Vì sao cần cờ này: Swagger UI là trang HTML tĩnh mở bằng TRÌNH DUYỆT. Trình duyệt
+     * KHÔNG gửi header {@code Authorization: Bearer ...} khi ta gõ URL, token của dự án nằm
+     * trong localStorage chứ không phải cookie — nên nếu bắt {@code authenticated()} thì
+     * trang luôn 401 và Swagger thành vô dụng. Đặt {@code permitAll} vô điều kiện thì lại
+     * phơi toàn bộ danh sách endpoint ra ngoài.
+     *
+     * <p>Cách chọn: chỉ mở ở profile dev/local ({@code application-local.properties} đặt
+     * {@code app.swagger.enabled=true}); bản chạy thường để mặc định false → nhánh
+     * {@code anyRequest().denyAll()} đóng luôn, không lộ tài liệu.
+     */
+    @Value("${app.swagger.enabled:false}")
+    private boolean swaggerEnabled;
+
     /** Giữ nguyên bean cũ — không đổi implementation, không đổi tên. */
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -103,6 +119,20 @@ public class SecurityConfig {
 
                 // --- Công khai: phải đăng nhập được mới có token ---
                 .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register").permitAll()
+
+                // --- Swagger / OpenAPI ---
+                // Mặc định TẮT (app.swagger.enabled=false) → CHẶN HẲN, kể cả khi có token.
+                // Chỉ profile dev/local mới bật cờ để mở bằng trình duyệt.
+                //
+                // Lưu ý đã kiểm thật: KHÔNG dùng `authentication.get().isAuthenticated()` làm
+                // điều kiện — request chưa đăng nhập vẫn có `AnonymousAuthenticationToken` với
+                // isAuthenticated() == true, nên điều kiện đó luôn đúng và Swagger vẫn mở (đã
+                // chứng minh bằng Invoke-WebRequest: profile mặc định vẫn trả 200).
+                .requestMatchers("/swagger-ui.html", "/swagger-ui/**",
+                        "/v3/api-docs", "/v3/api-docs/**",
+                        "/swagger-resources/**", "/webjars/**")
+                        .access((authentication, context) ->
+                                new org.springframework.security.authorization.AuthorizationDecision(swaggerEnabled))
 
                 // --- Chỉ ADMIN ---
                 .requestMatchers("/api/auth/admin/**").hasRole("ADMIN")
