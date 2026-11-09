@@ -4,7 +4,7 @@ import LockerMap from './LockerMap';
 import CircularTimer from './CircularTimer';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
-import { pickupApi } from '../services/api';
+import { pickupApi, orderApi } from '../services/api';
 import {
   Package, Clock, CheckCircle2, AlertTriangle, QrCode,
   Search, MapPin, X, AlertCircle, Timer,
@@ -22,7 +22,6 @@ export default function CustomerPickupTab({ currentUser }) {
   // Modal QR Rolling 60s
   const [qrModalOrder, setQrModalOrder] = useState(null);
   const [qrToken, setQrToken] = useState('');
-  const [qrTimeLeft, setQrTimeLeft] = useState(60);
 
   // State OTP 5 phút
   const [otpModalOrder, setOtpModalOrder] = useState(null);
@@ -70,31 +69,45 @@ export default function CustomerPickupTab({ currentUser }) {
     }
   };
 
-  const generateDynamicQr = (order) => {
+  /**
+   * W2: mã QR nhận hàng LẤY TỪ SERVER, không tự sinh ở client.
+   * Trước đây hàm này tự ghép `PKUP-${orderId}-...` và chỉ mở được tủ nhờ nhánh
+   * startsWith("PKUP-"+orderId+"-") trong PickupService — nhánh đó đã bị bỏ vì là lỗ hổng.
+   * Mã thật do backend cấp (cột pickup_credentials.qr_token), chỉ trả về cho chủ đơn đúng SĐT.
+   */
+  const loadRealQrToken = async (order) => {
     if (!order) return;
-    const token = `PKUP-${order.orderId}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    setQrToken(token);
-    setQrTimeLeft(60);
+    const phone = currentUser?.phone || order.customerPhone;
+    if (!phone) {
+      setQrToken('');
+      return;
+    }
+    try {
+      const res = await orderApi.getById(order.orderId, phone);
+      const realToken = res?.data?.data?.qrToken || '';
+      setQrToken(realToken);
+    } catch {
+      // Không lấy được mã (chưa đăng nhập / không phải chủ đơn / đơn chưa vào tủ):
+      // để rỗng và hiện thông báo "Chờ nạp hàng", KHÔNG dựng mã giả.
+      setQrToken('');
+    }
   };
 
   const handleOpenQrModal = (order) => {
     setQrModalOrder(order);
-    generateDynamicQr(order);
+    loadRealQrToken(order);
   };
 
+  // W2: KHÔNG còn đồng hồ đếm 60 giây cho mã QR.
+  // Mã QR lấy từ server là mã TĨNH của đơn (không xoay vòng), nên đếm ngược 60s sẽ
+  // khiến khách tưởng mã sắp hết hạn và bỏ đi. Hạn thật của đơn (expiryDeadline) đã
+  // được hiển thị riêng ở phần thông tin đơn. Ở đây chỉ cần nạp lại mã khi mở modal.
   useEffect(() => {
     if (!qrModalOrder) return;
-    const interval = setInterval(() => {
-      setQrTimeLeft((prev) => {
-        if (prev <= 1) {
-          generateDynamicQr(qrModalOrder);
-          return 60;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [qrModalOrder]);
+    // Nạp lại mã mỗi lần mở modal để phản ánh trạng thái mới nhất từ server.
+    loadRealQrToken(qrModalOrder);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qrModalOrder?.orderId]);
 
   const calculateRemainingTime = (expiryDeadline) => {
     if (!expiryDeadline) return { label: 'Chờ nạp tủ', color: 'slate', percent: 0, isOverdue: false };
@@ -501,7 +514,7 @@ export default function CustomerPickupTab({ currentUser }) {
                     >
                       <div className="flex items-center gap-2 text-blue-600 font-bold text-xs mb-1">
                         <QrCode className="w-4 h-4" />
-                        <span>Mã QR Động 60s</span>
+                        <span>Mã QR Nhận Hàng</span>
                       </div>
                       <p className="text-[11px] text-slate-500">
                         Quét tại camera Kiosk để mở tủ.
@@ -692,20 +705,21 @@ export default function CustomerPickupTab({ currentUser }) {
               Mã vận đơn: <strong className="text-slate-900">{qrModalOrder.orderId}</strong>
             </p>
 
-            <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 inline-block my-3 shadow-md">
-              <QRCodeSVG value={qrToken} size={180} />
-            </div>
-
-            {/* Circular Timer for QR 60s */}
-            <div className="flex flex-col items-center justify-center my-2">
-              <CircularTimer
-                secondsLeft={qrTimeLeft}
-                totalSeconds={60}
-                size={70}
-                strokeWidth={5}
-                label="Mã Động"
-              />
-            </div>
+            {qrToken ? (
+              <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 inline-block my-3 shadow-md">
+                <QRCodeSVG value={qrToken} size={180} />
+              </div>
+            ) : (
+              // W2: chưa có mã thật (đơn chưa được nạp vào tủ, hoặc chưa phải chủ đơn).
+              // Hiện thông báo rõ ràng — KHÔNG dựng mã giả, KHÔNG để màn trắng.
+              <div className="my-6 mx-auto max-w-xs p-4 rounded-2xl bg-amber-50 border border-amber-200 text-center">
+                <AlertTriangle className="w-7 h-7 text-amber-500 mx-auto mb-2" />
+                <p className="text-sm font-bold text-amber-800">Chờ nạp hàng vào tủ</p>
+                <p className="text-[11px] text-amber-700 mt-1">
+                  Mã QR nhận hàng chỉ hiện sau khi shipper đã bỏ kiện hàng vào tủ.
+                </p>
+              </div>
+            )}
 
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-3 text-xs text-slate-700 text-left space-y-1 mb-4">
               <p><strong>Trạm tủ:</strong> {qrModalOrder.lockerName}</p>
@@ -715,11 +729,11 @@ export default function CustomerPickupTab({ currentUser }) {
 
             <div className="flex gap-2">
               <button
-                onClick={() => generateDynamicQr(qrModalOrder)}
+                onClick={() => loadRealQrToken(qrModalOrder)}
                 className="ios-btn flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>Đổi mã ngay</span>
+                <span>Tải lại mã</span>
               </button>
               <button
                 onClick={() => setQrModalOrder(null)}

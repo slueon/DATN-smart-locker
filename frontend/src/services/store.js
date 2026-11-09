@@ -926,8 +926,18 @@ export const store = {
   },
 
   // Mở ngăn khẩn cấp từ xa (Admin Remote Force Unlock)
-  forceUnlockCompartment: (lockerId, compIndex) => {
-    store.triggerMqttCommand(lockerId, compIndex, 'OPEN_DOOR', 'ADMIN_FORCE_UNLOCK');
+  //
+  // W5 — chỉ cập nhật trạng thái `doorOpen` khi server XÁC NHẬN lệnh thành công.
+  // Trước đây hàm này bắn lệnh rồi set `doorOpen: true` ngay, không chờ kết quả:
+  // backend trả 401/403 thì admin vẫn thấy cửa mở trong khi cửa đóng — nguy hiểm hơn báo lỗi.
+  forceUnlockCompartment: async (lockerId, compIndex) => {
+    const ok = await store.triggerMqttCommand(lockerId, compIndex, 'OPEN_DOOR', 'ADMIN_FORCE_UNLOCK');
+
+    if (!ok) {
+      // KHÔNG set doorOpen. Trả false để màn hình hiện cảnh báo cho admin.
+      return false;
+    }
+
     const lockers = store.getLockers();
     const updated = lockers.map((l) => {
       if (l.lockerId === lockerId) {
@@ -945,6 +955,7 @@ export const store = {
     });
     localStorage.setItem(LOCKERS_KEY, JSON.stringify(updated));
     window.dispatchEvent(new Event('smart_locker_lockers_updated'));
+    return true;
   },
 
   // Tính toán KPI cho Admin
@@ -979,7 +990,12 @@ export const store = {
     };
   },
 
-  // Bắn lệnh MQTT trực tiếp từ Web UI xuống Backend qua API
+  // Bắn lệnh MQTT trực tiếp từ Web UI xuống Backend qua API.
+  //
+  // W5 — BẮT BUỘC: hàm này trả về true/false theo kết quả THẬT của server.
+  // Trước đây nó `await fetch(...)` rồi bỏ qua response: backend trả 401/403/500 thì
+  // UI vẫn báo "đã mở cửa" trong khi cửa không mở. Với nút "mở khóa khẩn cấp" của
+  // admin, báo thành công giả còn nguy hiểm hơn báo lỗi — nên phải kiểm res.ok.
   triggerMqttCommand: async (lockerId, compIndex, action = 'OPEN_DOOR', triggeredBy = 'WEB_UI', orderId = null) => {
     try {
       const payload = {
@@ -990,16 +1006,45 @@ export const store = {
         orderId: orderId || null,
       };
       const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : 'http://localhost:8080/api';
-      if (typeof fetch !== 'undefined') {
-        await fetch(`${baseUrl}/mqtt/command`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        console.log(`[MQTT Push] Sent ${triggeredBy} for ${lockerId} #${compIndex}`);
+
+      if (typeof fetch === 'undefined') {
+        return false;
       }
+
+      // Gắn token phiên đăng nhập — backend đã bật xác thực, /api/mqtt/command chỉ cho ADMIN.
+      let token = null;
+      try {
+        const rawUser = localStorage.getItem('smart_locker_user');
+        if (rawUser) {
+          const parsed = JSON.parse(rawUser);
+          token = parsed && parsed.token ? parsed.token : null;
+        }
+      } catch {
+        token = null;
+      }
+
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${baseUrl}/mqtt/command`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      // 401/403/500 → coi như THẤT BẠI. Không được báo cửa đã mở.
+      if (!res.ok) {
+        console.warn(`[MQTT Push] Server từ chối lệnh ${triggeredBy} (HTTP ${res.status}) — CỬA CHƯA MỞ.`);
+        return false;
+      }
+
+      console.log(`[MQTT Push] Sent ${triggeredBy} for ${lockerId} #${compIndex} (HTTP ${res.status})`);
+      return true;
     } catch (e) {
       console.warn('[MQTT Push] Failed to trigger MQTT command:', e?.message || e);
+      return false;
     }
   }
 };

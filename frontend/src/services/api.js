@@ -10,6 +10,99 @@ const api = axios.create({
   timeout: 10000,
 });
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * W4 — Xác thực Bearer token.
+ *
+ * Backend đã bật Spring Security: mọi endpoint (trừ /auth/login và /auth/register)
+ * đều đòi `Authorization: Bearer <token>`. Token được cấp khi login và lưu trong
+ * localStorage.smart_locker_user.token (do LoginPage lưu nguyên object user trả về).
+ *
+ * Hai điều bắt buộc, nếu làm sai sẽ gây lỗi rất khó hiểu cho người dùng:
+ *
+ * 1. KHÔNG có token thì KHÔNG được gọi API kèm vòng lặp đăng nhập. Nhánh fallback
+ *    của LoginPage.jsx tạo user KHÔNG có token (khi backend lỗi); nếu request 401
+ *    mà ta cứ xoá phiên + reload() thì sẽ thành vòng lặp reload vô hạn, người dùng
+ *    thấy như "gõ đúng mật khẩu mà không vào được".
+ *
+ * 2. Chỉ điều hướng về trang đăng nhập MỘT LẦN bằng cờ `redirecting`, và không
+ *    reload khi đường dẫn hiện tại đã là trang đăng nhập.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+const USER_KEY = 'smart_locker_user';
+
+/** Đọc token phiên hiện tại từ localStorage. Không có thì trả null. */
+export const getAuthToken = () => {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    return user && user.token ? user.token : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Xoá phiên đăng nhập ở client. */
+export const clearAuthSession = () => {
+  try {
+    localStorage.removeItem(USER_KEY);
+  } catch {
+    /* localStorage bị chặn — bỏ qua */
+  }
+};
+
+// Cờ chống vòng lặp: chỉ xử lý 401 một lần cho tới khi trang được tải lại.
+let redirecting = false;
+
+const isOnLoginScreen = () => {
+  if (typeof window === 'undefined') return true;
+  const path = (window.location.pathname || '').toLowerCase();
+  const hash = (window.location.hash || '').toLowerCase();
+  // Không đoán theo route cụ thể — coi "đang ở màn đăng nhập" khi đường dẫn
+  // không có dấu hiệu của ứng dụng đã đăng nhập, hoặc do chính ta vừa điều hướng.
+  return redirecting || path.includes('login') || hash.includes('login') || path === '/' || path === '';
+};
+
+api.interceptors.request.use(
+  (config) => {
+    const token = getAuthToken();
+    if (token) {
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+
+    // 401: token sai / hết hạn / không có. Phiên không còn dùng được.
+    if (status === 401) {
+      // Nếu request không hề mang token thì đây là "chưa đăng nhập", không phải "hết phiên"
+      // → chỉ xoá phiên, KHÔNG điều hướng, KHÔNG reload (tránh vòng lặp với nhánh fallback).
+      const hadToken = Boolean(error?.config?.headers?.Authorization);
+
+      clearAuthSession();
+
+      if (hadToken && !redirecting) {
+        redirecting = true;
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('smart_locker_unauthorized'));
+          // Tải lại trang để App.jsx đọc lại localStorage (đã xoá) và hiện màn đăng nhập.
+          window.location.reload();
+        }
+      }
+    }
+
+    // 403: đã đăng nhập nhưng không đủ quyền — KHÔNG xoá phiên, chỉ trả lỗi cho màn hình xử lý.
+    return Promise.reject(error);
+  }
+);
+
 export const authApi = {
   login: (data) => api.post('/auth/login', data),
   register: (data) => api.post('/auth/register', data),
@@ -37,11 +130,21 @@ export const orderApi = {
 };
 
 export const shipperApi = {
-  generateToken: (shipperId = 'SHIPPER_001') => api.post(`/shipper/token/generate?shipperId=${shipperId}`),
+  // T3: shipperId lấy từ token đăng nhập ở backend — KHÔNG gửi query nữa (trước đây
+  // gửi `?shipperId=` và bất kỳ ai cũng khai được shipper khác).
+  generateToken: () => api.post('/shipper/token/generate'),
   verifyToken: (lockerId, dynamicToken) => api.post('/shipper/token/verify', { lockerId, dynamicToken }),
   depositPackage: (data) => api.post('/shipper/deposit', data),
   getOverdueOrders: (lockerId) => api.get(`/shipper/overdue-orders${lockerId ? `?lockerId=${lockerId}` : ''}`),
   recallOverdue: (orderId) => api.post(`/shipper/recall-overdue?orderId=${encodeURIComponent(orderId)}`),
+
+  // T3 — đặt trước ngăn trên web.
+  getPendingOrders: (lockerId) =>
+    api.get('/shipper/orders/pending' + (lockerId ? '?lockerId=' + encodeURIComponent(lockerId) : '')),
+  reserveCompartment: (orderId, body) =>
+    api.post('/shipper/orders/' + encodeURIComponent(orderId) + '/reserve', body),
+  cancelReserve: (orderId) =>
+    api.delete('/shipper/orders/' + encodeURIComponent(orderId) + '/reserve'),
 };
 
 export const pickupApi = {

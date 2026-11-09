@@ -41,3 +41,26 @@ scratch/
 ui-main/
 datt-smart-locker-embedded/
 *.bak
+
+# Team coordination files (kh�ng dua v�o d? �n)
+MAP.md
+STATE.md
+ARCHIVE.md
+LOG.md
+scripts/evidence/
+
+
+# Tai lieu dieu phoi cua team
+WORKFLOW.md
+SPEC.md
+DECISIONS.md
+PLAN-T3.md
+
+
+# B?n sao luu DB c?c b? (kh�ng dua l�n repo)
+backups/
+
+# Cau hinh cuc bo chua mat khau (KHONG commit)
+application-local.properties
+backend/smart-locker-backend/application-local.properties
+**/application-local.properties

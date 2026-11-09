@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { authApi } from '../services/api';
 import { store } from '../services/store';
@@ -10,9 +10,9 @@ import {
 } from 'lucide-react';
 
 const INITIAL_USERS = [
-  { id: 1, username: 'admin', fullName: 'Quản Trị Viên Hệ Thống', phone: '0900000001', role: 'ADMIN' },
-  { id: 2, username: 'shipper', fullName: 'Nguyễn Văn Shipper PTIT', phone: '0900000002', role: 'SHIPPER' },
-  { id: 3, username: 'khachhang', fullName: 'Đoàn Viết Hoàng', phone: '0988123456', role: 'CUSTOMER' },
+  { id: 1, username: 'admin', fullName: 'Quáº£n Trá»‹ ViÃªn Há»‡ Thá»‘ng', phone: '0900000001', role: 'ADMIN' },
+  { id: 2, username: 'shipper', fullName: 'Nguyá»…n VÄƒn Shipper PTIT', phone: '0900000002', role: 'SHIPPER' },
+  { id: 3, username: 'khachhang', fullName: 'ÄoÃ n Viáº¿t HoÃ ng', phone: '0988123456', role: 'CUSTOMER' },
 ];
 
 export default function AdminTab() {
@@ -34,7 +34,7 @@ export default function AdminTab() {
   const [filterRole, setFilterRole] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Form cấp tài khoản mới
+  // Form cáº¥p tÃ i khoáº£n má»›i
   const [newRole, setNewRole] = useState('SHIPPER');
   const [newFullName, setNewFullName] = useState('');
   const [newPhone, setNewPhone] = useState('');
@@ -46,37 +46,22 @@ export default function AdminTab() {
   const [cronRunning, setCronRunning] = useState(false);
   const [cronMsg, setCronMsg] = useState('');
 
-  useEffect(() => {
-    refreshAllData();
-    const handleUpdate = () => refreshAllData();
-    window.addEventListener('smart_locker_store_updated', handleUpdate);
-    window.addEventListener('smart_locker_lockers_updated', handleUpdate);
-    return () => {
-      window.removeEventListener('smart_locker_store_updated', handleUpdate);
-      window.removeEventListener('smart_locker_lockers_updated', handleUpdate);
-    };
-  }, []);
-
   const refreshAllData = () => {
     setKpi(store.calculateKpi());
     setLockers(store.getLockers());
     setOrders(store.getOrders());
   };
 
-  useEffect(() => {
-    fetchUsers();
-  }, [filterRole]);
-
   const getDisplayName = (u) => {
-    if (u.username === 'admin') return 'Quản Trị Viên Hệ Thống';
-    if (u.username === 'shipper') return 'Nguyễn Văn Shipper PTIT';
-    if (u.username === 'khachhang') return 'Đoàn Viết Hoàng';
-    if (u.fullName && (u.fullName.includes('|') || u.fullName.includes('¬') || u.fullName.includes('¡') || u.fullName.includes('—') || u.fullName.includes('¿'))) {
-      if (u.username === 'admin') return 'Quản Trị Viên Hệ Thống';
-      if (u.username === 'shipper') return 'Nguyễn Văn Shipper PTIT';
-      if (u.username === 'khachhang') return 'Đoàn Viết Hoàng';
+    if (u.username === 'admin') return 'Quáº£n Trá»‹ ViÃªn Há»‡ Thá»‘ng';
+    if (u.username === 'shipper') return 'Nguyá»…n VÄƒn Shipper PTIT';
+    if (u.username === 'khachhang') return 'ÄoÃ n Viáº¿t HoÃ ng';
+    if (u.fullName && (u.fullName.includes('|') || u.fullName.includes('Â¬') || u.fullName.includes('Â¡') || u.fullName.includes('â€”') || u.fullName.includes('Â¿'))) {
+      if (u.username === 'admin') return 'Quáº£n Trá»‹ ViÃªn Há»‡ Thá»‘ng';
+      if (u.username === 'shipper') return 'Nguyá»…n VÄƒn Shipper PTIT';
+      if (u.username === 'khachhang') return 'ÄoÃ n Viáº¿t HoÃ ng';
     }
-    return u.fullName || 'Người dùng';
+    return u.fullName || 'NgÆ°á»i dÃ¹ng';
   };
 
   const fetchUsers = async () => {
@@ -101,6 +86,21 @@ export default function AdminTab() {
     }
   };
 
+  useEffect(() => {
+    refreshAllData();
+    const handleUpdate = () => refreshAllData();
+    window.addEventListener('smart_locker_store_updated', handleUpdate);
+    window.addEventListener('smart_locker_lockers_updated', handleUpdate);
+    return () => {
+      window.removeEventListener('smart_locker_store_updated', handleUpdate);
+      window.removeEventListener('smart_locker_lockers_updated', handleUpdate);
+    };
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [filterRole]);
+
   const handleCreateAccount = async (e) => {
     e.preventDefault();
     setUserMsg({ text: '', type: '' });
@@ -114,7 +114,7 @@ export default function AdminTab() {
       });
 
       if (res.data?.success) {
-        setUserMsg({ text: `Cấp tài khoản ${newRole} cho '${newFullName}' thành công!`, type: 'success' });
+        setUserMsg({ text: `Cáº¥p tÃ i khoáº£n ${newRole} cho '${newFullName}' thÃ nh cÃ´ng!`, type: 'success' });
         setNewFullName('');
         setNewPhone('');
         setNewUsername('');
@@ -131,7 +131,7 @@ export default function AdminTab() {
         role: newRole,
       };
       setUsers([newUser, ...users]);
-      setUserMsg({ text: `Đã cấp tài khoản ${newRole} cho '${newFullName}' thành công!`, type: 'success' });
+      setUserMsg({ text: `ÄÃ£ cáº¥p tÃ i khoáº£n ${newRole} cho '${newFullName}' thÃ nh cÃ´ng!`, type: 'success' });
       setNewFullName('');
       setNewPhone('');
       setNewUsername('');
@@ -139,10 +139,22 @@ export default function AdminTab() {
     }
   };
 
-  const handleForceUnlock = (lockerId, compIndex) => {
-    if (window.confirm(`XÁC NHẬN: Bạn có chắc chắn muốn mở cưỡng bức Ngăn #${compIndex} của ${lockerId} từ xa qua lệnh khẩn cấp?`)) {
-      store.forceUnlockCompartment(lockerId, compIndex);
-      alert(`Đã gửi lệnh khẩn cấp qua MQTT/HTTP: Mở khóa Solenoid Ngăn #${compIndex}!`);
+  const handleForceUnlock = async (lockerId, compIndex) => {
+    if (!window.confirm(`XÃC NHáº¬N: Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n má»Ÿ cÆ°á»¡ng bá»©c NgÄƒn #${compIndex} cá»§a ${lockerId} tá»« xa qua lá»‡nh kháº©n cáº¥p?`)) {
+      return;
+    }
+
+    // W5: chá»‰ bÃ¡o thÃ nh cÃ´ng khi server thá»±c sá»± nháº­n lá»‡nh (khÃ´ng cÃ²n "bÃ¡o má»Ÿ giáº£").
+    const ok = await store.forceUnlockCompartment(lockerId, compIndex);
+
+    if (ok) {
+      alert(`ÄÃ£ gá»­i lá»‡nh má»Ÿ khÃ³a Solenoid NgÄƒn #${compIndex} thÃ nh cÃ´ng!`);
+    } else {
+      alert(
+        `KHÃ”NG má»Ÿ Ä‘Æ°á»£c NgÄƒn #${compIndex}.\n\n` +
+        `Lá»‡nh Ä‘Ã£ bá»‹ server tá»« chá»‘i hoáº·c khÃ´ng gá»­i Ä‘Æ°á»£c (kiá»ƒm tra Ä‘Ã£ Ä‘Äƒng nháº­p ADMIN vÃ  backend Ä‘ang cháº¡y).\n` +
+        `Cá»­a tá»§ VáºªN ÄANG ÄÃ“NG.`
+      );
     }
   };
 
@@ -152,7 +164,7 @@ export default function AdminTab() {
     setTimeout(() => {
       const result = store.checkAndScanOverdueOrders();
       setCronRunning(false);
-      setCronMsg(`Đã quét thủ công lúc ${new Date().toLocaleTimeString('vi-VN')}! Phát hiện ${result.sweptCount} đơn quá hạn mới (Hệ thống cũng đang tự động chạy ngầm mỗi 30s và bắn Push Alert tới Shipper).`);
+      setCronMsg(`ÄÃ£ quÃ©t thá»§ cÃ´ng lÃºc ${new Date().toLocaleTimeString('vi-VN')}! PhÃ¡t hiá»‡n ${result.sweptCount} Ä‘Æ¡n quÃ¡ háº¡n má»›i (Há»‡ thá»‘ng cÅ©ng Ä‘ang tá»± Ä‘á»™ng cháº¡y ngáº§m má»—i 30s vÃ  báº¯n Push Alert tá»›i Shipper).`);
       refreshAllData();
     }, 700);
   };
@@ -160,13 +172,13 @@ export default function AdminTab() {
   const getCompartmentBadge = (status) => {
     switch (status) {
       case 'EMPTY':
-        return <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">TRỐNG</span>;
+        return <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">TRá»NG</span>;
       case 'RESERVED':
-        return <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">ĐÃ GIỮ CHỖ</span>;
+        return <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">ÄÃƒ GIá»® CHá»–</span>;
       case 'OCCUPIED':
-        return <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">CÓ BƯU KIỆN</span>;
+        return <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">CÃ“ BÆ¯U KIá»†N</span>;
       case 'OVERDUE':
-        return <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded text-[10px] font-bold">QUÁ HẠN</span>;
+        return <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded text-[10px] font-bold">QUÃ Háº N</span>;
       default:
         return <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-medium">{status}</span>;
     }
@@ -175,11 +187,11 @@ export default function AdminTab() {
   const getRoleBadge = (role) => {
     switch (role) {
       case 'ADMIN':
-        return <span className="bg-purple-50 text-purple-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-purple-200">Quản trị viên</span>;
+        return <span className="bg-purple-50 text-purple-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-purple-200">Quáº£n trá»‹ viÃªn</span>;
       case 'SHIPPER':
         return <span className="bg-amber-50 text-amber-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-amber-200">Shipper</span>;
       case 'CUSTOMER':
-        return <span className="bg-blue-50 text-blue-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-blue-200">Khách hàng</span>;
+        return <span className="bg-blue-50 text-blue-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-blue-200">KhÃ¡ch hÃ ng</span>;
       default:
         return <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded">{role}</span>;
     }
@@ -194,10 +206,10 @@ export default function AdminTab() {
         <div>
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
             <Shield className="w-6 h-6 text-purple-600" />
-            Bảng Điều Khiển KPI & Giám Sát Vận Hành
+            Báº£ng Äiá»u Khiá»ƒn KPI & GiÃ¡m SÃ¡t Váº­n HÃ nh
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Trung tâm kiểm soát hiệu suất tủ, ma trận ngăn vật lý thời gian thực và tự động hóa tác vụ DevSecOps.
+            Trung tÃ¢m kiá»ƒm soÃ¡t hiá»‡u suáº¥t tá»§, ma tráº­n ngÄƒn váº­t lÃ½ thá»i gian thá»±c vÃ  tá»± Ä‘á»™ng hÃ³a tÃ¡c vá»¥ DevSecOps.
           </p>
         </div>
       </div>
@@ -205,10 +217,10 @@ export default function AdminTab() {
       {/* Admin Subtabs (Apple iOS Segmented Control) */}
       <div className="ios-segmented-tray flex max-w-xl mx-auto gap-1 shadow-sm">
         {[
-          { id: 'kpi', label: 'Tổng quan KPI', icon: BarChart3 },
-          { id: 'matrix', label: 'Sơ đồ ngăn tủ', icon: Radio },
-          { id: 'overdue', label: 'Đơn quá hạn', icon: AlertTriangle },
-          { id: 'users', label: 'Người dùng & RBAC', icon: Users },
+          { id: 'kpi', label: 'Tá»•ng quan KPI', icon: BarChart3 },
+          { id: 'matrix', label: 'SÆ¡ Ä‘á»“ ngÄƒn tá»§', icon: Radio },
+          { id: 'overdue', label: 'ÄÆ¡n quÃ¡ háº¡n', icon: AlertTriangle },
+          { id: 'users', label: 'NgÆ°á»i dÃ¹ng & RBAC', icon: Users },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeAdminSubTab === tab.id;
@@ -235,7 +247,7 @@ export default function AdminTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md relative overflow-hidden">
               <div className="flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
-                <span>Tỷ lệ lấp đầy tủ</span>
+                <span>Tá»· lá»‡ láº¥p Ä‘áº§y tá»§</span>
                 <span className="text-blue-600 font-mono text-[10px] bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 font-bold">Real-time</span>
               </div>
               <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
@@ -251,38 +263,38 @@ export default function AdminTab() {
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                Hạ tầng Tủ & Ngăn
+                Háº¡ táº§ng Tá»§ & NgÄƒn
               </div>
               <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
-                {kpi.totalLockers} <span className="text-base text-slate-400 font-normal">Trạm</span> / {kpi.totalSlots} <span className="text-base text-slate-400 font-normal">Ngăn</span>
+                {kpi.totalLockers} <span className="text-base text-slate-400 font-normal">Tráº¡m</span> / {kpi.totalSlots} <span className="text-base text-slate-400 font-normal">NgÄƒn</span>
               </div>
               <div className="text-xs text-emerald-600 mt-2.5 flex items-center gap-1.5 font-bold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                <span>100% Cảm biến kết nối ổn định</span>
+                <span>100% Cáº£m biáº¿n káº¿t ná»‘i á»•n Ä‘á»‹nh</span>
               </div>
             </div>
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                Lượt giao hoàn tất
+                LÆ°á»£t giao hoÃ n táº¥t
               </div>
               <div className="text-3xl font-extrabold text-emerald-600 mt-2 font-mono">
-                {kpi.deliveredCount} <span className="text-base text-slate-400 font-normal">Đơn</span>
+                {kpi.deliveredCount} <span className="text-base text-slate-400 font-normal">ÄÆ¡n</span>
               </div>
               <div className="text-xs text-slate-500 mt-2.5 font-medium">
-                Tỷ lệ mở khóa đúng hạn: <strong className="text-slate-800 font-mono">98.5%</strong>
+                Tá»· lá»‡ má»Ÿ khÃ³a Ä‘Ãºng háº¡n: <strong className="text-slate-800 font-mono">98.5%</strong>
               </div>
             </div>
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                Tổng giá trị đơn hàng
+                Tá»•ng giÃ¡ trá»‹ Ä‘Æ¡n hÃ ng
               </div>
               <div className="text-2xl font-extrabold text-slate-900 mt-2 font-mono">
                 {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(kpi.totalRevenue)}
               </div>
               <div className="text-xs text-slate-500 mt-2.5 font-medium">
-                Từ các giao dịch qua trạm tủ PTIT
+                Tá»« cÃ¡c giao dá»‹ch qua tráº¡m tá»§ PTIT
               </div>
             </div>
           </div>
@@ -290,8 +302,8 @@ export default function AdminTab() {
           {/* Station Occupancy Overview */}
           <div className="liquid-glass-card rounded-3xl border border-white/80 p-6 sm:p-7 shadow-lg space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm">Tỷ lệ lấp đầy từng trạm tủ PTIT</h3>
-              <span className="text-xs text-slate-400 font-mono">Cập nhật thời gian thực</span>
+              <h3 className="font-bold text-slate-900 text-sm">Tá»· lá»‡ láº¥p Ä‘áº§y tá»«ng tráº¡m tá»§ PTIT</h3>
+              <span className="text-xs text-slate-400 font-mono">Cáº­p nháº­t thá»i gian thá»±c</span>
             </div>
             <div className="space-y-4">
               {lockers.map((locker) => {
@@ -307,7 +319,7 @@ export default function AdminTab() {
                         {locker.name} ({locker.lockerId})
                       </span>
                       <span className="font-mono text-slate-700 font-bold">
-                        {occ}/{total} ngăn ({percent}%)
+                        {occ}/{total} ngÄƒn ({percent}%)
                       </span>
                     </div>
                     <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
@@ -324,22 +336,22 @@ export default function AdminTab() {
         </div>
       )}
 
-      {/* TAB 2: LOCKER MATRIX (SƠ ĐỒ MA TRẬN TỦ) */}
+      {/* TAB 2: LOCKER MATRIX (SÆ  Äá»’ MA TRáº¬N Tá»¦) */}
       {activeAdminSubTab === 'matrix' && (
         <div className="space-y-5">
           <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                <Radio className="w-4 h-4 text-blue-600" /> Sơ đồ ngăn tủ vật lý
+                <Radio className="w-4 h-4 text-blue-600" /> SÆ¡ Ä‘á»“ ngÄƒn tá»§ váº­t lÃ½
               </h3>
               <p className="text-xs text-slate-500">
-                Theo dõi cảm biến cửa, trọng lượng và điều khiển mở khóa khẩn cấp.
+                Theo dÃµi cáº£m biáº¿n cá»­a, trá»ng lÆ°á»£ng vÃ  Ä‘iá»u khiá»ƒn má»Ÿ khÃ³a kháº©n cáº¥p.
               </p>
             </div>
             <button
               onClick={refreshAllData}
               className="p-2.5 bg-white hover:bg-slate-50 rounded-xl text-slate-600 transition border border-slate-200 cursor-pointer shadow-2xs"
-              title="Làm mới ma trận"
+              title="LÃ m má»›i ma tráº­n"
             >
               <RefreshCw className="w-4 h-4" />
             </button>
@@ -359,13 +371,13 @@ export default function AdminTab() {
                     <p className="text-xs text-slate-500 mt-0.5">{locker.address}</p>
                     <div className="flex items-center gap-2 mt-1.5 text-[11px] font-mono text-slate-500">
                       <span>IP: {locker.ipAddress}</span>
-                      <span>•</span>
-                      <span>ESP32 NodeMCU • Port 1883</span>
+                      <span>â€¢</span>
+                      <span>ESP32 NodeMCU â€¢ Port 1883</span>
                     </div>
                   </div>
                   <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
-                    Đang kết nối
+                    Äang káº¿t ná»‘i
                   </span>
                 </div>
 
@@ -381,7 +393,7 @@ export default function AdminTab() {
 
                 <div className="space-y-2.5 pt-2">
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                    Bảng Điều Khiển Ngăn & Mở Khẩn Cấp ({locker.compartments.length} ngăn)
+                    Báº£ng Äiá»u Khiá»ƒn NgÄƒn & Má»Ÿ Kháº©n Cáº¥p ({locker.compartments.length} ngÄƒn)
                   </span>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -422,11 +434,11 @@ export default function AdminTab() {
                           <div className="text-[11px] text-slate-500 flex items-center justify-center gap-1 py-0.5">
                             {isDoorOpen ? (
                               <span className="text-amber-700 flex items-center gap-1 font-bold">
-                                <DoorOpen className="w-3.5 h-3.5" /> Đang mở chốt
+                                <DoorOpen className="w-3.5 h-3.5" /> Äang má»Ÿ chá»‘t
                               </span>
                             ) : (
                               <span className="text-slate-500 flex items-center gap-1">
-                                <Lock className="w-3.5 h-3.5 text-slate-400" /> Đã chốt Solenoid
+                                <Lock className="w-3.5 h-3.5 text-slate-400" /> ÄÃ£ chá»‘t Solenoid
                               </span>
                             )}
                           </div>
@@ -434,9 +446,9 @@ export default function AdminTab() {
                           <button
                             onClick={() => handleForceUnlock(locker.lockerId, comp.compIndex)}
                             className="ios-btn w-full bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-[11px] font-bold py-1.5 px-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer border border-slate-200/80 shadow-2xs"
-                            title="Mở khóa khẩn cấp từ xa"
+                            title="Má»Ÿ khÃ³a kháº©n cáº¥p tá»« xa"
                           >
-                            <Unlock className="w-3 h-3 text-rose-500" /> Mở khẩn cấp
+                            <Unlock className="w-3 h-3 text-rose-500" /> Má»Ÿ kháº©n cáº¥p
                           </button>
                         </div>
                       );
@@ -455,10 +467,10 @@ export default function AdminTab() {
           <div className="liquid-glass-card rounded-3xl border border-white/90 p-5 sm:p-7 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600" /> Quản Lý Đơn Quá Hạn (24h)
+                <AlertTriangle className="w-4 h-4 text-rose-600" /> Quáº£n LÃ½ ÄÆ¡n QuÃ¡ Háº¡n (24h)
               </h3>
               <p className="text-xs text-slate-500">
-                Quét và điều phối thu hồi bưu kiện quá hạn lưu kho 24h.
+                QuÃ©t vÃ  Ä‘iá»u phá»‘i thu há»“i bÆ°u kiá»‡n quÃ¡ háº¡n lÆ°u kho 24h.
               </p>
             </div>
 
@@ -468,7 +480,7 @@ export default function AdminTab() {
               className="ios-btn bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs py-3 px-5 rounded-2xl shadow-md flex items-center gap-2 transition shrink-0 cursor-pointer"
             >
               <Zap className="w-4 h-4 text-amber-400" />
-              <span>{cronRunning ? 'Đang quét dữ liệu...' : 'Quét Đơn Quá Hạn'}</span>
+              <span>{cronRunning ? 'Äang quÃ©t dá»¯ liá»‡u...' : 'QuÃ©t ÄÆ¡n QuÃ¡ Háº¡n'}</span>
             </button>
           </div>
 
@@ -482,17 +494,17 @@ export default function AdminTab() {
           {overdueList.length === 0 ? (
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-12 text-center shadow-md">
               <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
-              <h4 className="font-bold text-slate-900 text-sm">Hiện không có bưu kiện nào quá hạn</h4>
-              <p className="text-xs text-slate-500 mt-1">Tất cả khách hàng đã nhận đồ đúng thời hạn quy định.</p>
+              <h4 className="font-bold text-slate-900 text-sm">Hiá»‡n khÃ´ng cÃ³ bÆ°u kiá»‡n nÃ o quÃ¡ háº¡n</h4>
+              <p className="text-xs text-slate-500 mt-1">Táº¥t cáº£ khÃ¡ch hÃ ng Ä‘Ã£ nháº­n Ä‘á»“ Ä‘Ãºng thá»i háº¡n quy Ä‘á»‹nh.</p>
             </div>
           ) : (
             <div className="liquid-glass-card rounded-3xl border border-white/90 overflow-hidden shadow-md">
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                 <span className="font-bold text-slate-900 text-xs">
-                  Đơn Hàng Cần Thu Hồi ({overdueList.length})
+                  ÄÆ¡n HÃ ng Cáº§n Thu Há»“i ({overdueList.length})
                 </span>
                 <span className="text-[11px] bg-rose-50 text-rose-700 font-bold px-2.5 py-0.5 rounded-full border border-rose-200">
-                  Cần giải phóng ngăn
+                  Cáº§n giáº£i phÃ³ng ngÄƒn
                 </span>
               </div>
 
@@ -505,10 +517,10 @@ export default function AdminTab() {
                         <span className="text-xs font-bold text-slate-900">{ord.productName}</span>
                       </div>
                       <p className="text-xs text-slate-500 mt-1">
-                        Khách: <strong className="text-slate-800">{ord.customerName}</strong> (<span className="font-mono">{ord.customerPhone}</span>) • Trạm: <strong>{ord.lockerName} (Ngăn #{ord.compartmentIndex})</strong>
+                        KhÃ¡ch: <strong className="text-slate-800">{ord.customerName}</strong> (<span className="font-mono">{ord.customerPhone}</span>) â€¢ Tráº¡m: <strong>{ord.lockerName} (NgÄƒn #{ord.compartmentIndex})</strong>
                       </p>
                       <p className="text-[11px] text-rose-600 font-mono mt-0.5">
-                        Hạn chót: {new Date(ord.expiryDeadline).toLocaleString('vi-VN')}
+                        Háº¡n chÃ³t: {new Date(ord.expiryDeadline).toLocaleString('vi-VN')}
                       </p>
                     </div>
 
@@ -516,13 +528,13 @@ export default function AdminTab() {
                       onClick={() => {
                         store.updateOrderStatus(ord.orderId, 'COMPLETED', {
                           returnedAt: new Date().toISOString(),
-                          note: 'Admin thu hồi cưỡng bức',
+                          note: 'Admin thu há»“i cÆ°á»¡ng bá»©c',
                         });
-                        alert(`Đã thu hồi bưu kiện ${ord.orderId} và giải phóng Ngăn #${ord.compartmentIndex}!`);
+                        alert(`ÄÃ£ thu há»“i bÆ°u kiá»‡n ${ord.orderId} vÃ  giáº£i phÃ³ng NgÄƒn #${ord.compartmentIndex}!`);
                       }}
                       className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs py-2 px-4 rounded-xl transition cursor-pointer shadow-xs whitespace-nowrap"
                     >
-                      Thu hồi & Giải phóng ngăn
+                      Thu há»“i & Giáº£i phÃ³ng ngÄƒn
                     </button>
                   </div>
                 ))}
@@ -538,7 +550,7 @@ export default function AdminTab() {
           {/* Create Account Card */}
           <div className="liquid-glass-card rounded-3xl border border-white/90 p-5 sm:p-7 shadow-md space-y-4">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
-              <UserPlus className="w-4 h-4 text-blue-600" /> Cấp Tài Khoản Người Dùng Mới
+              <UserPlus className="w-4 h-4 text-blue-600" /> Cáº¥p TÃ i Khoáº£n NgÆ°á»i DÃ¹ng Má»›i
             </h3>
 
             {userMsg.text && (
@@ -552,24 +564,24 @@ export default function AdminTab() {
 
             <form onSubmit={handleCreateAccount} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Vai trò</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Vai trÃ²</label>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
                   className="w-full text-xs px-3 py-2 bg-slate-50/70 border border-slate-200/80 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 font-bold text-slate-800"
                 >
                   <option value="SHIPPER">Shipper</option>
-                  <option value="CUSTOMER">Khách hàng</option>
-                  <option value="ADMIN">Quản trị viên</option>
+                  <option value="CUSTOMER">KhÃ¡ch hÃ ng</option>
+                  <option value="ADMIN">Quáº£n trá»‹ viÃªn</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Họ và tên</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Há» vÃ  tÃªn</label>
                 <input
                   type="text"
                   required
-                  placeholder="VD: Lê Văn Nam"
+                  placeholder="VD: LÃª VÄƒn Nam"
                   value={newFullName}
                   onChange={(e) => setNewFullName(e.target.value)}
                   className="w-full text-xs px-3 py-2 bg-slate-50/70 border border-slate-200/80 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 text-slate-900 font-medium"
@@ -577,7 +589,7 @@ export default function AdminTab() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Số điện thoại</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Sá»‘ Ä‘iá»‡n thoáº¡i</label>
                 <input
                   type="tel"
                   required
@@ -589,7 +601,7 @@ export default function AdminTab() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Tên đăng nhập</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">TÃªn Ä‘Äƒng nháº­p</label>
                 <input
                   type="text"
                   required
@@ -601,11 +613,11 @@ export default function AdminTab() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Mật khẩu</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Máº­t kháº©u</label>
                 <input
                   type="password"
                   required
-                  placeholder="Ít nhất 6 ký tự"
+                  placeholder="Ãt nháº¥t 6 kÃ½ tá»±"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="w-full text-xs px-3 py-2 bg-slate-50/70 border border-slate-200/80 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 text-slate-900 font-medium"
@@ -618,7 +630,7 @@ export default function AdminTab() {
                   className="ios-btn bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs py-2.5 px-5 rounded-xl transition shadow-md shadow-blue-500/25 flex items-center gap-1.5 cursor-pointer border border-white/20"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>Xác nhận cấp tài khoản</span>
+                  <span>XÃ¡c nháº­n cáº¥p tÃ i khoáº£n</span>
                 </button>
               </div>
             </form>
@@ -628,7 +640,7 @@ export default function AdminTab() {
           <div className="liquid-glass-card rounded-3xl border border-white/90 overflow-hidden shadow-md">
             <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <span className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-                Danh Sách Người Dùng Trong Hệ Thống ({users.length})
+                Danh SÃ¡ch NgÆ°á»i DÃ¹ng Trong Há»‡ Thá»‘ng ({users.length})
               </span>
 
               <div className="flex items-center gap-2">
@@ -637,10 +649,10 @@ export default function AdminTab() {
                   onChange={(e) => setFilterRole(e.target.value)}
                   className="text-xs bg-slate-50/80 border border-slate-200/80 rounded-xl px-3 py-1.5 font-bold text-slate-700 focus:outline-none shadow-2xs"
                 >
-                  <option value="">Tất cả vai trò</option>
-                  <option value="ADMIN">Quản trị viên</option>
+                  <option value="">Táº¥t cáº£ vai trÃ²</option>
+                  <option value="ADMIN">Quáº£n trá»‹ viÃªn</option>
                   <option value="SHIPPER">Shipper</option>
-                  <option value="CUSTOMER">Khách hàng</option>
+                  <option value="CUSTOMER">KhÃ¡ch hÃ ng</option>
                 </select>
               </div>
             </div>
@@ -650,10 +662,10 @@ export default function AdminTab() {
                 <thead className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   <tr>
                     <th className="py-3 px-4">ID</th>
-                    <th className="py-3 px-4">Họ và tên</th>
-                    <th className="py-3 px-4">Số điện thoại</th>
-                    <th className="py-3 px-4">Tên đăng nhập</th>
-                    <th className="py-3 px-4">Vai trò</th>
+                    <th className="py-3 px-4">Há» vÃ  tÃªn</th>
+                    <th className="py-3 px-4">Sá»‘ Ä‘iá»‡n thoáº¡i</th>
+                    <th className="py-3 px-4">TÃªn Ä‘Äƒng nháº­p</th>
+                    <th className="py-3 px-4">Vai trÃ²</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

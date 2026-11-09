@@ -86,8 +86,26 @@ public class ShipperService {
         }
 
         token.setIsVerified(true);
+        // Ghi lại TỦ đã quét mã. Thiếu bước này thì token xác thực ở tủ A
+        // vẫn dùng được để mở cửa tủ B (lỗi cross-locker).
+        token.setLockerId(lockerId);
         tokenRepository.save(token);
         return true;
+    }
+
+    /**
+     * Có phiên shipper ĐÃ xác thực tại ĐÚNG tủ này và CÒN hiệu lực hay không.
+     *
+     * <p>Dùng để chặn topic `ptit/QR_send`. Bắt buộc lọc theo {@code lockerId}:
+     * nếu chỉ kiểm "có token verified nào đó", shipper xác thực ở tủ A sẽ mở được
+     * cửa tủ B — và tệ hơn, mở nhầm sang tủ khác với đơn hàng.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasAnyVerifiedShipperToken(String lockerId, LocalDateTime now) {
+        if (lockerId == null || lockerId.isBlank()) {
+            return false;
+        }
+        return !tokenRepository.findActiveVerifiedTokensForLocker(lockerId, now).isEmpty();
     }
 
     /**
@@ -139,12 +157,19 @@ public class ShipperService {
             throw new RuntimeException("Cảm biến chưa phát hiện kiện hàng được đặt vào ngăn tủ!");
         }
 
-        // Cập nhật trạng thái ngăn tủ
+        // Cập nhật trạng thái ngăn tủ.
+        //
+        // KHÔNG hardcode isDoorClosed = true: đây là trạng thái của cảm biến từ MC-38 (và
+        // currentWeight của HX711). Nếu client không gửi giá trị nào thì phải GIỮ NGUYÊN giá trị
+        // phần cứng đã báo, không được tự khẳng định "cửa đã đóng" — nếu không dashboard sẽ hiển
+        // thị sai khi cửa thật đang mở.
         compartment.setStatus("OCCUPIED");
         if (request.getWeightGrams() != null) {
             compartment.setCurrentWeight(request.getWeightGrams());
         }
-        compartment.setIsDoorClosed(true);
+        if (request.getIsDoorClosed() != null) {
+            compartment.setIsDoorClosed(request.getIsDoorClosed());
+        }
         compartmentRepository.save(compartment);
 
         // Quy định lưu trữ: Đến hết ngày tiếp theo (24h00 của ngày N+1)
@@ -185,6 +210,248 @@ public class ShipperService {
                 .relayPin(compartment.getRelayPin())
                 .lockerId(order.getLocker().getLockerId())
                 .build();
+    }
+
+    /**
+     * T3 — Danh sách đơn PENDING cho shipper chọn đặt trước trên web.
+     *
+     * <p>{@code trackingCode} trả về = {@code tracking_code} nếu đã đặt, ngược lại là
+     * {@code order_id} (user chốt Q1 = (c): mặc định lấy order_id, cho phép sửa).
+     *
+     * @param lockerId null/rỗng/"ALL" = mọi tủ
+     */
+    @Transactional(readOnly = true)
+    public List<OrderDTO.OrderResponse> getPendingOrders(String lockerId) {
+        List<Order> list;
+        if (lockerId == null || lockerId.isBlank() || "ALL".equalsIgnoreCase(lockerId)) {
+            list = orderRepository.findByStatusWithCompartment("PENDING");
+        } else {
+            list = orderRepository.findByLockerAndStatusWithCompartment(lockerId, "PENDING");
+        }
+
+        return list.stream()
+                .map(o -> OrderDTO.OrderResponse.builder()
+                        .orderId(o.getOrderId())
+                        .customerName(o.getCustomerName())
+                        .customerPhone(o.getCustomerPhone())
+                        .deliveryType(o.getDeliveryType())
+                        .lockerId(o.getLocker() != null ? o.getLocker().getLockerId() : null)
+                        .lockerName(o.getLocker() != null ? o.getLocker().getName() : null)
+                        .compartmentIndex(o.getCompartment() != null ? o.getCompartment().getCompIndex() : null)
+                        .expectedDate(o.getExpectedDate())
+                        .status(o.getStatus())
+                        .productName(o.getProductName())
+                        .totalAmount(o.getTotalAmount())
+                        .paymentMethod(o.getPaymentMethod())
+                        .paymentStatus(o.getPaymentStatus())
+                        .createdAt(o.getCreatedAt())
+                        // Mặc định mã vận đơn = order_id khi chưa đặt trước (Q1 = (c)).
+                        .trackingCode(o.getTrackingCode() != null && !o.getTrackingCode().isBlank()
+                                ? o.getTrackingCode()
+                                : o.getOrderId())
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * T3 — Shipper đặt trước một ngăn cụ thể cho đơn PENDING.
+     *
+     * <p><b>R2:</b> hàm này KHÔNG đụng {@code available_slots}. {@code createOrder} đã trừ slot
+     * lúc khách đặt; trừ lần nữa là một đơn ăn hai slot. Chỉ {@link #cancelReserve} mới cộng lại,
+     * và chỉ khi ngăn thật sự về {@code EMPTY}.
+     *
+     * <p>Dùng {@code findWithLockByLockerIdAndStatus} để giữ khoá bi quan trên các ngăn EMPTY của
+     * tủ: hai shipper bấm cùng lúc thì chỉ một người giành được ngăn, người kia nhận lỗi.
+     */
+    @Transactional
+    public OrderDTO.OrderResponse reserveCompartment(String orderId, String trackingCode, Integer compartmentIndex) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã đơn hàng cần đặt trước!");
+        }
+        if (compartmentIndex == null || compartmentIndex < 1) {
+            throw new IllegalArgumentException("Chỉ số ngăn không hợp lệ (phải từ 1 trở lên)!");
+        }
+
+        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Chỉ đặt trước được đơn đang chờ gửi. Đơn " + orderId + " hiện ở trạng thái "
+                            + order.getStatus() + ".");
+        }
+
+        // Q4 (08:40): shipper ĐƯỢC ĐỔI NGĂN kể cả khi khách đã chọn ngăn lúc checkout —
+        // nên KHÔNG chặn theo `order.getCompartment() != null` nữa. Chỉ chặn khi đơn
+        // ĐÃ được shipper đặt trước rồi (cột `shipper_reserved_at` khác NULL).
+        if (order.getShipperReservedAt() != null) {
+            throw new IllegalArgumentException(
+                    "Đơn " + orderId + " đã được đặt trước. Huỷ đặt trước trước khi đổi ngăn.");
+        }
+
+        if (order.getLocker() == null || order.getLocker().getLockerId() == null) {
+            throw new IllegalArgumentException(
+                    "Đơn " + orderId + " chưa được gán trạm tủ nên không thể đặt trước ngăn.");
+        }
+        String lockerId = order.getLocker().getLockerId();
+
+        // Mã vận đơn: để trống thì lấy order_id (Q1 = (c)).
+        String finalTracking = (trackingCode == null || trackingCode.isBlank())
+                ? order.getOrderId()
+                : trackingCode.trim();
+        if (finalTracking.length() > 50) {
+            throw new IllegalArgumentException("Mã vận đơn quá dài (tối đa 50 ký tự)!");
+        }
+
+        // Mã vận đơn không được trùng đơn KHÁC.
+        orderRepository.findByTrackingCode(finalTracking).ifPresent(other -> {
+            if (!other.getOrderId().equalsIgnoreCase(order.getOrderId())) {
+                throw new IllegalArgumentException(
+                        "Mã vận đơn '" + finalTracking + "' đã thuộc đơn " + other.getOrderId() + "!");
+            }
+        });
+
+        // Khoá bi quan toàn bộ ngăn EMPTY của tủ → chống 2 shipper giành cùng ngăn.
+        List<Compartment> empties = compartmentRepository
+                .findWithLockByLockerIdAndStatus(lockerId, "EMPTY");
+        Compartment target = empties.stream()
+                .filter(c -> compartmentIndex.equals(c.getCompIndex()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Ngăn " + compartmentIndex + " của tủ " + lockerId
+                                + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác."));
+
+        // Đổi ngăn: nhả ngăn CŨ trước — nhưng CHỈ khi ngăn cũ đang RESERVED (ngăn do checkout
+        // gán giữ chỗ). Nếu ngăn cũ đang OCCUPIED thì có hàng thật trong đó: KHÔNG được đá
+        // hàng của người khác ra, phải từ chối để shipper chọn ngăn khác.
+        Compartment old = order.getCompartment();
+        if (old != null && !old.getCompIndex().equals(compartmentIndex)) {
+            if ("OCCUPIED".equalsIgnoreCase(old.getStatus())) {
+                throw new IllegalArgumentException(
+                        "Ngăn " + old.getCompIndex() + " mà đơn đang trỏ tới đang CHỨA HÀNG (OCCUPIED). "
+                                + "Không thể đổi sang ngăn " + compartmentIndex
+                                + " vì sẽ mất dấu kiện hàng. Vui lòng liên hệ admin.");
+            }
+            if ("RESERVED".equalsIgnoreCase(old.getStatus())) {
+                old.setStatus("EMPTY");
+                compartmentRepository.save(old);
+            }
+        }
+
+        target.setStatus("RESERVED");
+        compartmentRepository.save(target);
+
+        order.setCompartment(target);
+        order.setTrackingCode(finalTracking);
+        // Dấu hiệu DUY NHẤT cho biết shipper đã chủ động đặt trước (Q4).
+        order.setShipperReservedAt(LocalDateTime.now());
+        orderRepository.save(order);
+
+        // KHÔNG đụng available_slots (R2).
+
+        DeviceEvent event = DeviceEvent.builder()
+                .locker(order.getLocker())
+                .compartmentId(target.getCompartmentId())
+                .eventType("RESERVE_COMPARTMENT")
+                .eventPayload("Order " + order.getOrderId() + " reserved compartment "
+                        + target.getCompIndex() + " (tracking=" + finalTracking + ")"
+                        + (old != null && !old.getCompIndex().equals(compartmentIndex)
+                                ? ", released old compartment " + old.getCompIndex() : ""))
+                .build();
+        deviceEventRepository.save(event);
+
+        return OrderDTO.OrderResponse.builder()
+                .orderId(order.getOrderId())
+                .customerName(order.getCustomerName())
+                .customerPhone(order.getCustomerPhone())
+                .deliveryType(order.getDeliveryType())
+                .lockerId(lockerId)
+                .lockerName(order.getLocker().getName())
+                .compartmentIndex(target.getCompIndex())
+                .expectedDate(order.getExpectedDate())
+                .status(order.getStatus())
+                .productName(order.getProductName())
+                .totalAmount(order.getTotalAmount())
+                .paymentMethod(order.getPaymentMethod())
+                .paymentStatus(order.getPaymentStatus())
+                .createdAt(order.getCreatedAt())
+                .trackingCode(finalTracking)
+                .build();
+    }
+
+    /**
+     * T3 — Huỷ đặt trước: ngăn về {@code EMPTY}, đơn bỏ ngăn, hoàn 1 slot.
+     *
+     * <p>Chỉ cộng {@code available_slots} khi ngăn THẬT SỰ về {@code EMPTY} — nếu ngăn đang
+     * chứa hàng (OCCUPIED) thì trả lại slot sẽ làm lịch biểu sai.
+     */
+    @Transactional
+    public void cancelReserve(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã đơn hàng cần huỷ đặt trước!");
+        }
+
+        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+
+        if (order.getCompartment() == null) {
+            throw new IllegalArgumentException("Đơn " + orderId + " hiện không giữ ngăn nào để huỷ.");
+        }
+        // Q4: chỉ huỷ được cái do CHÍNH shipper đặt trước. Ngăn do checkout gán
+        // (`shipper_reserved_at = NULL`) không phải "đặt trước" nên không có gì để huỷ.
+        if (order.getShipperReservedAt() == null) {
+            throw new IllegalArgumentException(
+                    "Đơn " + orderId + " chưa được đặt trước nên không có gì để huỷ. "
+                            + "Ngăn hiện tại là do hệ thống gán lúc khách đặt hàng.");
+        }
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Không huỷ đặt trước cho đơn đang ở trạng thái " + order.getStatus() + ".");
+        }
+
+        Compartment compartment = order.getCompartment();
+        String lockerId = order.getLocker() != null ? order.getLocker().getLockerId() : null;
+
+        // Chỉ nhả khi ngăn chưa bị dùng: EMPTY (bình thường) hoặc vẫn đang RESERVED (đúng ca này).
+        boolean canRelease = "RESERVED".equalsIgnoreCase(compartment.getStatus())
+                || "EMPTY".equalsIgnoreCase(compartment.getStatus());
+        if (!canRelease) {
+            throw new IllegalArgumentException(
+                    "Ngăn " + compartment.getCompIndex() + " đang ở trạng thái " + compartment.getStatus()
+                            + " nên không thể huỷ đặt trước.");
+        }
+
+        boolean becameEmpty = !"EMPTY".equalsIgnoreCase(compartment.getStatus());
+        compartment.setStatus("EMPTY");
+        compartmentRepository.save(compartment);
+
+        order.setCompartment(null);
+        // Xoá dấu đặt trước → đơn trở về trạng thái "ngăn do hệ thống/khách", quét nhãn sẽ ra 0.
+        order.setShipperReservedAt(null);
+        orderRepository.save(order);
+
+        // R2: chỉ cộng slot khi ngăn thật sự chuyển về EMPTY ở lần huỷ này.
+        if (becameEmpty && lockerId != null) {
+            LocalDate today = LocalDate.now();
+            slotScheduleRepository.findByLocker_LockerIdAndScheduleDate(lockerId, today)
+                    .ifPresent(schedule -> {
+                        Integer total = order.getLocker() != null ? order.getLocker().getTotalCompartments() : null;
+                        int currentAvail = schedule.getAvailableSlots() != null ? schedule.getAvailableSlots() : 0;
+                        if (total == null || currentAvail < total) {
+                            schedule.setAvailableSlots(currentAvail + 1);
+                            slotScheduleRepository.save(schedule);
+                        }
+                    });
+        }
+
+        DeviceEvent event = DeviceEvent.builder()
+                .locker(order.getLocker())
+                .compartmentId(compartment.getCompartmentId())
+                .eventType("CANCEL_RESERVE")
+                .eventPayload("Order " + order.getOrderId() + " released compartment "
+                        + compartment.getCompIndex())
+                .build();
+        deviceEventRepository.save(event);
     }
 
     /**
@@ -237,8 +504,9 @@ public class ShipperService {
 
         if (order.getCompartment() != null) {
             Compartment compartment = order.getCompartment();
+            // Shipper đã thu hồi kiện hàng: giải phóng trạng thái chiếm dụng. Cân nặng thật do
+            // HX711 báo qua MqttService.handleCompartmentStatus — không tự đặt 0 ở đây.
             compartment.setStatus("EMPTY");
-            compartment.setCurrentWeight(0.0);
             compartmentRepository.save(compartment);
         }
 

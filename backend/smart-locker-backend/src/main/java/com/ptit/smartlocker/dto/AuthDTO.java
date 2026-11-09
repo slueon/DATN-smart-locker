@@ -77,6 +77,11 @@ public class AuthDTO {
         private String phone;
         private String role;
         private LocalDateTime createdAt;
+        /**
+         * Token phiên đăng nhập (Bearer). Chỉ có giá trị trong response của /api/auth/login.
+         * Không trả về ở các endpoint khác.
+         */
+        private String token;
 
         public UserResponse() {
         }
@@ -88,6 +93,12 @@ public class AuthDTO {
             this.phone = phone;
             this.role = role;
             this.createdAt = createdAt;
+        }
+
+        public UserResponse(Long id, String username, String fullName, String phone, String role,
+                            LocalDateTime createdAt, String token) {
+            this(id, username, fullName, phone, role, createdAt);
+            this.token = token;
         }
     }
 }

@@ -51,25 +51,61 @@ Hệ thống giải quyết bài toán giao nhận hàng hóa chặng cuối (La
 
 ### 1. Cơ Sở Dữ Liệu (MySQL)
 1. Cài đặt MySQL 8.0 (Port 3306).
-2. Tạo database:
-   ```sql
-   CREATE DATABASE smart_locker_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+2. Tạo database và bảng — file này **an toàn**, không xoá dữ liệu, chạy lại được nhiều lần:
+   ```bash
+   mysql -uroot -p < schema.sql
    ```
-3. Import file cấu trúc và dữ liệu mẫu `smart_locker_db.sql` vào database.
+3. (Tuỳ chọn) Nạp dữ liệu mẫu: 10 trạm tủ, 3 tài khoản, lịch biểu.
+   Chạy **một lần** sau bước 2; chạy lại sẽ báo lỗi trùng khoá chính (dữ liệu vẫn nguyên):
+   ```bash
+   mysql -uroot -p < seed.sql
+   ```
+
+> **Trước đây** dự án dùng một file duy nhất `smart_locker_db.sql` có `DROP DATABASE` ở đầu —
+> chạy nhầm là mất sạch đơn hàng và tài khoản (đã từng xảy ra). File đó đã được tách thành
+> `schema.sql` (chỉ DDL, có `IF NOT EXISTS`) và `seed.sql` (chỉ INSERT), và đã xoá khỏi repo.
 
 ### 2. Khởi Chạy Backend (Spring Boot)
 1. Mở thư mục `backend/smart-locker-backend` bằng **IntelliJ IDEA** hoặc Terminal.
-2. Cấu hình biến môi trường trong `src/main/resources/application.properties` (hoặc truyền qua Environment Variables của hệ điều hành):
+2. Cấu hình kết nối CSDL. **Mật khẩu KHÔNG nằm trong repo** — `application.properties` chỉ khai
+   `spring.datasource.password=${DB_PASSWORD:}` (không có giá trị mặc định), nên chọn 1 trong 2 cách:
+
+   **Cách A — file cấu hình cục bộ (khuyến nghị):**
+   Tạo file `backend/smart-locker-backend/application-local.properties` (đã nằm trong `.gitignore`,
+   không bao giờ bị commit) với nội dung:
+   ```properties
+   spring.datasource.password=<mật-khẩu-MySQL-của-bạn>
+   ```
+   rồi chạy với profile `local`:
+   ```bash
+   .\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
+   ```
+   (hoặc trên IntelliJ: VM options / Program arguments thêm `--spring.profiles.active=local`)
+
+   **Cách B — biến môi trường:**
+   ```powershell
+   $env:DB_PASSWORD = "<mật-khẩu-MySQL-của-bạn>"
+   .\mvnw.cmd spring-boot:run
+   ```
+
+   Các biến khác (đều có mặc định dùng được):
    ```properties
    spring.datasource.url=${DB_URL:jdbc:mysql://localhost:3306/smart_locker_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Ho_Chi_Minh&characterEncoding=UTF-8}
    spring.datasource.username=${DB_USERNAME:root}
-   spring.datasource.password=${DB_PASSWORD:200220}
+   spring.datasource.password=${DB_PASSWORD:}
    app.cors.allowed-origins=${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000}
    ```
+
+   > ⚠️ **Nếu quên bước này, app KHÔNG khởi động được** — không phải lỗi code. Triệu chứng:
+   > `HikariPool-1 - Exception during pool initialization` / `Access denied for user 'root'@'localhost' (using password: NO)`
+   > rồi `Failed to determine a suitable driver class`. Nguyên nhân: mật khẩu để trống nên MySQL từ chối.
+   > Chạy lại với `-Dspring-boot.run.profiles=local` (Cách A) hoặc set `$env:DB_PASSWORD` (Cách B).
 3. Chạy kiểm thử tự động (Integration Tests):
    ```bash
    .\mvnw.cmd test
    ```
+   *(Test dùng `src/test/resources/application.properties` với DB riêng `smart_locker_tester`
+   và `TEST_DB_PASSWORD`, nên không phụ thuộc file cấu hình cục bộ ở trên.)*
 4. Khởi chạy ứng dụng:
    ```bash
    .\mvnw.cmd spring-boot:run

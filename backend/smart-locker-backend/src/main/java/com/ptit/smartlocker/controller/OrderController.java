@@ -2,8 +2,12 @@ package com.ptit.smartlocker.controller;
 
 import com.ptit.smartlocker.dto.ApiResponse;
 import com.ptit.smartlocker.dto.OrderDTO;
+import com.ptit.smartlocker.entity.User;
+import com.ptit.smartlocker.repository.UserRepository;
 import com.ptit.smartlocker.service.OrderService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -12,10 +16,15 @@ import java.util.List;
 @RequestMapping("/api/orders")
 public class OrderController {
 
-    private final OrderService orderService;
+    private static final String ROLE_ADMIN = "ROLE_ADMIN";
+    private static final String DENY_PHONE = "Bạn không có quyền xem đơn hàng của số điện thoại này!";
 
-    public OrderController(OrderService orderService) {
+    private final OrderService orderService;
+    private final UserRepository userRepository;
+
+    public OrderController(OrderService orderService, UserRepository userRepository) {
         this.orderService = orderService;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -32,12 +41,21 @@ public class OrderController {
     }
 
     /**
-     * Tra cứu chi tiết đơn hàng (Hỗ trợ xác thực số điện thoại để chống IDOR)
+     * Tra cứu chi tiết đơn hàng (Hỗ trợ xác thực số điện thoại để chống IDOR).
+     *
+     * <p>W3: CUSTOMER chỉ được dùng SĐT của chính mình. Nếu không phải ADMIN mà tham số
+     * {@code phone} không trùng SĐT của chủ phiên thì từ chối 403 — nếu không, bất kỳ ai biết
+     * SĐT của người khác đều đọc được qrToken/otpCode của đơn DEPOSITED và mở được tủ.
      */
     @GetMapping("/{orderId}")
     public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> getOrderById(
             @PathVariable String orderId,
-            @RequestParam(required = false) String phone) {
+            @RequestParam(required = false) String phone,
+            Authentication authentication) {
+        if (phone != null && !phone.isBlank() && !isAdmin(authentication)
+                && !phone.equalsIgnoreCase(nullToEmpty(currentPhone(authentication)))) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(DENY_PHONE));
+        }
         try {
             OrderDTO.OrderResponse order = orderService.getOrderById(orderId, phone);
             return ResponseEntity.ok(ApiResponse.ok(order));
@@ -47,10 +65,40 @@ public class OrderController {
     }
 
     /**
-     * Tra cứu danh sách đơn hàng theo số điện thoại khách hàng
+     * Tra cứu danh sách đơn hàng theo số điện thoại khách hàng.
+     *
+     * <p>W3: khoá theo chủ phiên. ADMIN xem được mọi SĐT; các vai trò khác chỉ xem được
+     * SĐT của chính mình (khác → 403). Danh sách không bao giờ chứa qrToken/otpCode —
+     * xem {@code OrderService#getOrdersByCustomerPhone}.
      */
     @GetMapping("/by-phone")
-    public ResponseEntity<ApiResponse<List<OrderDTO.OrderResponse>>> getOrdersByPhone(@RequestParam String phone) {
+    public ResponseEntity<ApiResponse<List<OrderDTO.OrderResponse>>> getOrdersByPhone(
+            @RequestParam String phone,
+            Authentication authentication) {
+        if (!isAdmin(authentication)
+                && !phone.trim().equalsIgnoreCase(nullToEmpty(currentPhone(authentication)))) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(DENY_PHONE));
+        }
         return ResponseEntity.ok(ApiResponse.ok(orderService.getOrdersByCustomerPhone(phone)));
+    }
+
+    /** SĐT của người đang đăng nhập (null nếu không tra được — khi đó mọi so khớp đều trượt). */
+    private String currentPhone(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            return null;
+        }
+        return userRepository.findByUsername(authentication.getName())
+                .map(User::getPhone)
+                .orElse(null);
+    }
+
+    private boolean isAdmin(Authentication authentication) {
+        return authentication != null && authentication.getAuthorities() != null
+                && authentication.getAuthorities().stream()
+                        .anyMatch(a -> ROLE_ADMIN.equals(a.getAuthority()));
+    }
+
+    private static String nullToEmpty(String value) {
+        return value != null ? value : "";
     }
 }

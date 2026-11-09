@@ -17,17 +17,17 @@ public class PickupController {
     }
 
     /**
-     * Khách hàng lấy đồ tại tủ (Hỗ trợ xác thực bằng mã OTP 6 số hoặc quét mã QR qua GM65)
+     * Khách hàng lấy đồ tại tủ (Hỗ trợ xác thực bằng mã OTP 6 số hoặc quét mã QR qua GM65).
+     *
+     * <p>Không {@code catch} tại đây nữa: {@code GlobalExceptionHandler} ánh xạ
+     * {@code ResourceNotFoundException → 404}, {@code BusinessException → 409}.
+     * Message tiếng Việt vẫn nguyên văn nên client không phải đổi gì.
      */
     @PostMapping("/verify")
     public ResponseEntity<ApiResponse<PickupDTO.PickupResponse>> verifyPickup(
             @RequestBody PickupDTO.VerifyCredentialRequest request) {
-        try {
-            PickupDTO.PickupResponse response = pickupService.verifyAndPickup(request);
-            return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        PickupDTO.PickupResponse response = pickupService.verifyAndPickup(request);
+        return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
     }
 
     /**
@@ -38,11 +38,7 @@ public class PickupController {
     public ResponseEntity<ApiResponse<String>> requestOtp(
             @RequestParam String orderId,
             @RequestParam String customerPhone) {
-        try {
-            String otp = pickupService.generateNewOtp(orderId, customerPhone);
-            return ResponseEntity.ok(ApiResponse.ok("Tạo mã OTP thành công (hiệu lực 5 phút)!", otp));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        String otp = pickupService.generateNewOtp(orderId, customerPhone);
+        return ResponseEntity.ok(ApiResponse.ok("Tạo mã OTP thành công (hiệu lực 5 phút)!", otp));
     }
 }
