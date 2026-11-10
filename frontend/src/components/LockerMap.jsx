@@ -58,6 +58,14 @@ export default function LockerMap({
   minHeight = '320px',
   onActionClick = null,
   actionButtonLabel = 'Xem bưu kiện tại tủ này',
+  // GĐ8 — hai prop TUỲ CHỌN cho nhánh ADMIN. Mặc định `undefined` nên nhánh CUSTOMER
+  // (checkout) chạy y hệt như trước: không badge, popup giữ nguyên.
+  //
+  // `getMarkerBadge(locker)` → `{ count, tone } | null`: badge nhỏ trên marker (số đơn quá hạn).
+  // `onPopupOpen(locker)` → gọi khi mở popup, để màn ADMIN tải chi tiết theo nhu cầu thay vì
+  //   tải sẵn cho cả 10 tủ lúc mở tab.
+  getMarkerBadge = undefined,
+  onPopupOpen = undefined,
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -135,6 +143,28 @@ export default function LockerMap({
         const statusInfo = getLockerStatusInfo(locker);
         const availCount = locker.availableCompartments ?? 0;
         const totalCount = locker.totalCompartments ?? 3;
+        // GĐ8 — badge tuỳ chọn (chỉ ADMIN truyền vào). Không truyền → `null` → HTML y hệt cũ.
+        const badge = typeof getMarkerBadge === 'function' ? getMarkerBadge(locker) : null;
+        const badgeHtml = badge && badge.count > 0
+          ? `<span style="
+                position: absolute;
+                top: -8px;
+                right: -8px;
+                min-width: 18px;
+                height: 18px;
+                padding: 0 5px;
+                border-radius: 9999px;
+                background: ${badge.tone === 'amber' ? '#f59e0b' : '#ef4444'};
+                color: #fff;
+                font-size: 10px;
+                font-weight: 800;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 2px solid #fff;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+              ">${badge.count}</span>`
+          : '';
 
         const icon = L.divIcon({
           className: 'custom-leaflet-marker',
@@ -186,6 +216,7 @@ export default function LockerMap({
                 border-top: 6px solid ${isSelected ? '#2563eb' : '#ffffff'};
                 margin-top: -1px;
               "></div>
+              ${badgeHtml}
             </div>
           `,
           iconSize: [168, 42],
@@ -251,6 +282,15 @@ export default function LockerMap({
           }
         });
 
+        // GĐ8 — báo cho màn ADMIN biết popup vừa mở, để nó TẢI CHI TIẾT theo nhu cầu
+        // (ngăn tủ, 20 lệnh gần nhất). Không truyền `onPopupOpen` → không làm gì, nhánh
+        // CUSTOMER giữ nguyên hành vi.
+        // Nghe `popupopen` của Leaflet chứ không phải sự kiện `click`, vì popup cũng mở được
+        // bằng bàn phím / lập trình — lắng nghe đúng sự kiện sẽ không bỏ sót.
+        if (typeof onPopupOpen === 'function') {
+          marker.on('popupopen', () => onPopupOpen(locker));
+        }
+
         markersRef.current.set(locker.lockerId, marker);
 
         if (isSelected) {
@@ -275,7 +315,10 @@ export default function LockerMap({
         resizeObserver.disconnect();
       }
     };
-  }, [lockers, selectedLockerId, onSelectLocker, onActionClick, actionButtonLabel]);
+    // GĐ8 — `getMarkerBadge` phải nằm trong dependency: badge (số đơn quá hạn) đổi thì marker
+    // phải vẽ lại. `onPopupOpen` thì KHÔNG cần: nó chỉ là callback gắn sự kiện, đổi tham chiếu
+    // không làm thay đổi nội dung marker.
+  }, [lockers, selectedLockerId, onSelectLocker, onActionClick, actionButtonLabel, getMarkerBadge]);
 
   useEffect(() => {
     return () => {

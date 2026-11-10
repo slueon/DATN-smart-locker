@@ -1,19 +1,36 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import LockerMap, { getLockerStatusInfo } from './LockerMap';
 import { store } from '../services/store';
-import { lockerApi } from '../services/api';
+import { lockerApi, adminApi, mqttApi } from '../services/api';
+import { getLockerHealth, TONE_HEX, formatRelativeTime } from '../utils/lockerHealth';
 import {
   MapPin, Search, Filter, RefreshCw, Cpu, Activity,
   Layers, CheckCircle2, AlertTriangle, ArrowRight,
-  Package, Radio, Sparkles
+  Package, Radio, Sparkles, X, Unlock, Clock, ShieldAlert,
+  Check, AlertCircle
 } from 'lucide-react';
 
 export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, onNavigateToShipper }) {
   const [lockers, setLockers] = useState(() => store.getLockers());
   const [selectedLockerId, setSelectedLockerId] = useState('LOCKER_HN_01');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('ALL'); // 'ALL', 'AVAILABLE', 'FULL', 'OFFLINE'
+  const [filterStatus, setFilterStatus] = useState('ALL'); // ADMIN: tone sức khoẻ; khác: statusKey
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  /**
+   * GĐ8 — dữ liệu riêng cho màn ADMIN.
+   *
+   * <p>`overdueByLocker`: số đơn quá hạn theo tủ, từ `adminApi.getOrders('OVERDUE')` (API mới của
+   * GĐ7). Đây là thứ admin thật sự cần thấy trên bản đồ: chỗ nào đang có hàng tồn.
+   *
+   * <p>`detail`: chi tiết trạm đang mở (ngăn tủ + 20 lệnh mở gần nhất). Cố ý tải theo nhu cầu —
+   * nếu tải sẵn cho 10 tủ thì mở tab là 10 request, trong khi admin chỉ xem 1–2 trạm.
+   */
+  const [overdueByLocker, setOverdueByLocker] = useState({});
+  const [detail, setDetail] = useState(null); // { locker, compartments, logs, loadingCompartments, loadingLogs, error }
+  const [unlockTarget, setUnlockTarget] = useState(null); // ngăn đang chờ xác nhận mở khẩn cấp
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const [unlockMsg, setUnlockMsg] = useState(null);
 
   const loadLockerData = async () => {
     setIsRefreshing(true);
@@ -76,11 +93,22 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
     };
   }, []);
 
-  // Lọc dữ liệu trạm tủ theo tìm kiếm và trạng thái
+  // GĐ8 — nhánh ADMIN và nhánh CUSTOMER/SHIPPER có hành vi KHÁC nhau.
+  // Nhánh không phải ADMIN phải giữ nguyên 100% hành vi cũ (lọc theo sức chứa, nút điều hướng).
+  const isAdmin = currentUser?.role === 'ADMIN';
+
+  // Lọc dữ liệu trạm tủ theo tìm kiếm và trạng thái.
+  // ADMIN lọc theo SỨC KHOẺ (suy từ lastHeartbeat); vai trò khác giữ lọc theo sức chứa như cũ.
   const filteredLockers = lockers.filter((l) => {
-    const statusInfo = getLockerStatusInfo(l);
-    if (filterStatus !== 'ALL' && statusInfo.statusKey !== filterStatus) {
-      return false;
+    if (isAdmin) {
+      if (filterStatus !== 'ALL' && getLockerHealth(l).tone !== filterStatus) {
+        return false;
+      }
+    } else {
+      const statusInfo = getLockerStatusInfo(l);
+      if (filterStatus !== 'ALL' && statusInfo.statusKey !== filterStatus) {
+        return false;
+      }
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -97,9 +125,21 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
   const totalLockers = lockers.length;
   const totalSlots = lockers.reduce((acc, cur) => acc + (cur.totalCompartments ?? (Array.isArray(cur.compartments) ? cur.compartments.length : 3)), 0);
   const totalAvailableSlots = lockers.reduce((acc, cur) => acc + (cur.availableCompartments ?? (Array.isArray(cur.compartments) ? cur.compartments.filter(c => c.status === 'EMPTY').length : 0)), 0);
-  const onlineCount = lockers.filter((l) => l.status !== 'OFFLINE' && l.connectionStatus !== 'OFFLINE' && l.connection_status !== 'OFFLINE').length;
+
+  // GĐ8 — ĐẾM ONLINE TỪ `lastHeartbeat`, KHÔNG dùng `connectionStatus`.
+  // Lý do: DB ghi `ONLINE` cho cả 10 tủ dù có tủ im 3 ngày (backend không có scheduler chuyển
+  // OFFLINE). Code cũ đếm theo `connectionStatus` nên luôn ra 10/10 — con số vô nghĩa.
+  const onlineCount = lockers.filter((l) => getLockerHealth(l).tone === 'emerald').length;
+  // Số trạm KHÔNG online (vàng + đỏ) — dùng thay KPI "100% WGS84" cứng.
+  const offlineCount = totalLockers - onlineCount;
 
   const handleAction = (locker) => {
+    if (isAdmin) {
+      // GĐ8 — ADMIN không có tab `customer` (App.jsx chặn), nên nút cũ `onNavigateToPickup`
+      // là NÚT CHẾT. Đổi thành mở popup chi tiết trạm (ngăn tủ + lịch sử mở tủ).
+      openLockerDetail(locker);
+      return;
+    }
     if (currentUser?.role === 'SHIPPER' && onNavigateToShipper) {
       onNavigateToShipper(locker.lockerId);
     } else if (onNavigateToPickup) {
@@ -107,9 +147,119 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
     }
   };
 
-  const actionBtnLabel = currentUser?.role === 'SHIPPER'
+  const actionBtnLabel = isAdmin
+    ? 'Xem chi tiết trạm'
+    : currentUser?.role === 'SHIPPER'
     ? 'Đến nạp hàng tại tủ này'
     : 'Xem bưu kiện của tôi';
+
+  /**
+   * GĐ8 ý 2 — số đơn QUÁ HẠN theo tủ, để hiện badge đỏ trên marker.
+   *
+   * Chỉ ADMIN gọi: `/api/admin/orders` khoá `hasRole("ADMIN")`; vai trò khác gọi sẽ 403.
+   * Lỗi API → giữ `{}` (không badge) chứ không hiện số sai — badge tồn kho sai còn tệ hơn
+   * không có badge, vì admin sẽ đi kiểm tra một trạm không có việc gì.
+   */
+  useEffect(() => {
+    if (!isAdmin) {
+      setOverdueByLocker({});
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await adminApi.getOrders('OVERDUE');
+        if (cancelled) return;
+        const map = {};
+        (res?.data?.data || []).forEach((o) => {
+          if (!o.lockerId) return;
+          map[o.lockerId] = (map[o.lockerId] || 0) + 1;
+        });
+        setOverdueByLocker(map);
+      } catch {
+        if (!cancelled) setOverdueByLocker({});
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  /**
+   * GĐ8 ý 3+4 — mở chi tiết một trạm: ngăn tủ + 20 lệnh mở tủ gần nhất.
+   *
+   * Tải **song song** hai nguồn khi mở (không tải sẵn cho mọi tủ). Mỗi nguồn có cờ loading
+   * riêng để phần này hiện được dù phần kia chậm/lỗi.
+   */
+  const openLockerDetail = async (locker) => {
+    if (!locker) return;
+    setSelectedLockerId(locker.lockerId);
+    setUnlockTarget(null);
+    setUnlockMsg(null);
+    setDetail({
+      locker,
+      compartments: [],
+      logs: [],
+      loadingCompartments: true,
+      loadingLogs: true,
+      error: null,
+    });
+
+    const [compResult, logResult] = await Promise.allSettled([
+      lockerApi.getCompartments(locker.lockerId),
+      mqttApi.getCommandLogs(locker.lockerId, 20),
+    ]);
+
+    setDetail((prev) => {
+      // Người dùng có thể đã đóng popup hoặc mở trạm khác trong lúc chờ.
+      if (!prev || prev.locker.lockerId !== locker.lockerId) return prev;
+      return {
+        ...prev,
+        compartments: compResult.status === 'fulfilled' ? (compResult.value?.data?.data || []) : [],
+        logs: logResult.status === 'fulfilled' ? (logResult.value?.data?.data || []) : [],
+        loadingCompartments: false,
+        loadingLogs: false,
+        error: compResult.status === 'rejected' || logResult.status === 'rejected'
+          ? 'Một phần dữ liệu không tải được (kiểm tra quyền ADMIN hoặc backend).'
+          : null,
+      };
+    });
+  };
+
+  /**
+   * GĐ8 ý 4 — mở khoá khẩn cấp, BẮT BUỘC xác nhận 2 bước.
+   *
+   * <p><b>Vì sao 2 bước:</b> `lockerApi.forceUnlock` là hành động **phá huỷ dữ liệu** — backend
+   * đặt ngăn về `EMPTY` và giải phóng liên kết đơn. Bấm nhầm một lần là mất dấu kiện hàng đang
+   * có thật trong tủ. Vì vậy lần bấm đầu chỉ đặt `unlockTarget` (hiện hộp xác nhận), lần bấm
+   * thứ hai mới thật sự gọi API.
+   */
+  const requestUnlock = (compIndex) => {
+    setUnlockMsg(null);
+    setUnlockTarget(compIndex);
+  };
+
+  const confirmUnlock = async () => {
+    if (!detail?.locker || unlockTarget == null) return;
+    setUnlockBusy(true);
+    setUnlockMsg(null);
+    try {
+      await lockerApi.forceUnlock(detail.locker.lockerId, unlockTarget);
+      setUnlockMsg({ type: 'success', text: `Đã mở khẩn cấp ngăn #${unlockTarget}.` });
+      // Đọc lại ngăn để UI phản ánh trạng thái mới thay vì đoán.
+      const res = await lockerApi.getCompartments(detail.locker.lockerId);
+      setDetail((prev) => prev && prev.locker.lockerId === detail.locker.lockerId
+        ? { ...prev, compartments: res?.data?.data || [] }
+        : prev);
+      setUnlockTarget(null);
+    } catch (err) {
+      setUnlockMsg({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không mở được ngăn. Lệnh đã bị từ chối.',
+      });
+    } finally {
+      setUnlockBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -182,13 +332,20 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
 
         <div className="liquid-glass-card rounded-3xl p-5 border border-white/90 shadow-md">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Độ Phủ Bản Đồ</span>
-            <div className="w-7 h-7 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-              <Layers className="w-4 h-4" />
+            {/* GĐ8 — KPI cũ "100% WGS84 / Bán kính 7km" là SỐ CỨNG, không tính từ gì.
+                Nay thay bằng số trạm KHÔNG online, suy thật từ `lastHeartbeat`: con số admin
+                cần để biết có trạm nào đang chết. */}
+            <span>Trạm mất kết nối</span>
+            <div className="w-7 h-7 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+              <ShieldAlert className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-extrabold font-mono text-slate-900">100% WGS84</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">Bán kính 7km</div>
+          <div className={`text-2xl font-extrabold font-mono ${offlineCount > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+            {offlineCount} / {totalLockers}
+          </div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            {offlineCount > 0 ? 'Cần kiểm tra — suy từ nhịp tim' : 'Tất cả trạm đều phản hồi'}
+          </div>
         </div>
       </div>
 
@@ -206,14 +363,22 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           />
         </div>
 
-        {/* 3-Color Status Filter Pills */}
+        {/* 3-Color Status Filter Pills — GĐ8: ADMIN lọc theo SỨC KHOẺ, vai trò khác theo sức chứa */}
         <div className="ios-segmented-tray flex items-center gap-1 overflow-x-auto p-1">
-          {[
-            { key: 'ALL', label: 'Tất cả' },
-            { key: 'AVAILABLE', label: '🟢 Rỗi' },
-            { key: 'FULL', label: '🔴 Bận' },
-            { key: 'OFFLINE', label: '⚪ Mất kết nối' },
-          ].map((item) => (
+          {(isAdmin
+            ? [
+                { key: 'ALL', label: 'Tất cả' },
+                { key: 'emerald', label: '🟢 Online' },
+                { key: 'amber', label: '🟡 Không rõ' },
+                { key: 'rose', label: '🔴 Mất kết nối' },
+              ]
+            : [
+                { key: 'ALL', label: 'Tất cả' },
+                { key: 'AVAILABLE', label: '🟢 Rỗi' },
+                { key: 'FULL', label: '🔴 Bận' },
+                { key: 'OFFLINE', label: '⚪ Mất kết nối' },
+              ]
+          ).map((item) => (
             <button
               key={item.key}
               onClick={() => setFilterStatus(item.key)}
@@ -239,6 +404,15 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
             minHeight="580px"
             onActionClick={handleAction}
             actionButtonLabel={actionBtnLabel}
+            // GĐ8 — hai prop CHỈ truyền ở nhánh ADMIN. Nhánh CUSTOMER/SHIPPER để `undefined`
+            // nên `LockerMap` chạy y hệt như trước: không badge, popup không phát sự kiện.
+            getMarkerBadge={isAdmin
+              ? (locker) => {
+                  const count = overdueByLocker[locker.lockerId] || 0;
+                  return count > 0 ? { count, tone: 'rose' } : null;
+                }
+              : undefined}
+            onPopupOpen={isAdmin ? openLockerDetail : undefined}
           />
         </div>
 
@@ -335,7 +509,15 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                         }}
                         className="ios-btn px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1 transition shadow-md shadow-blue-600/20 cursor-pointer active:scale-95"
                       >
-                        <span>{currentUser?.role === 'SHIPPER' ? 'Nạp hàng' : 'Bưu kiện'}</span>
+                        {/* GĐ8 — ADMIN: nhãn phải nói đúng việc nút làm (mở chi tiết trạm),
+                            không phải "Bưu kiện" như trước khi nút đó là nút chết. */}
+                        <span>
+                          {isAdmin
+                            ? 'Chi tiết trạm'
+                            : currentUser?.role === 'SHIPPER'
+                            ? 'Nạp hàng'
+                            : 'Bưu kiện'}
+                        </span>
                         <ArrowRight className="w-3 h-3" />
                       </button>
                     </div>
@@ -347,6 +529,181 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           </div>
         </div>
       </div>
+
+      {/* GĐ8 Ý 3+4 — CHI TIẾT TRẠM (chỉ ADMIN): ngăn tủ + lịch sử mở tủ + mở khoá khẩn cấp.
+          Dữ liệu chỉ tải khi bấm "Xem chi tiết trạm" hoặc mở popup marker, không tải sẵn. */}
+      {isAdmin && detail && (
+        <div className="liquid-glass-card rounded-3xl border border-white/90 p-5 shadow-lg space-y-4">
+          <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <Radio className="w-4 h-4 text-blue-600" />
+                {detail.locker.name} <span className="text-[10px] font-mono text-slate-500">({detail.locker.lockerId})</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {(() => {
+                  const h = getLockerHealth(detail.locker);
+                  return (
+                    <span style={{ color: TONE_HEX[h.tone] }} className="font-semibold">
+                      ● {h.label} · {h.rel}
+                    </span>
+                  );
+                })()}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setDetail(null); setUnlockTarget(null); setUnlockMsg(null); }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              title="Đóng chi tiết"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {detail.error && (
+            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" /> {detail.error}
+            </div>
+          )}
+
+          {unlockMsg && (
+            <div
+              className={`p-2.5 rounded-xl text-[11px] ${
+                unlockMsg.type === 'success'
+                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border border-rose-200 text-rose-800'
+              }`}
+            >
+              {unlockMsg.text}
+            </div>
+          )}
+
+          {/* Ý 4 — grid ngăn tủ */}
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+              Ngăn tủ {detail.loadingCompartments ? '(đang tải…)' : `(${detail.compartments.length})`}
+            </span>
+            {!detail.loadingCompartments && detail.compartments.length === 0 && (
+              <p className="text-[11px] text-slate-500 italic">Không có dữ liệu ngăn.</p>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {detail.compartments.map((c) => {
+                const st = String(c.status || '').toUpperCase();
+                const toneClass =
+                  st === 'EMPTY' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : st === 'OCCUPIED' ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : st === 'RESERVED' ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-slate-100 text-slate-600 border-slate-300';
+                // BẪY #1 của MAP.md: DB lưu GRAM, hiển thị kg → chia 1000.
+                const kg = Number(c.currentWeight || 0) / 1000;
+                return (
+                  <div key={c.compartmentId ?? c.compIndex} className={`p-2.5 rounded-xl border ${toneClass}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold">#{c.compIndex}</span>
+                      <span className="text-[9px] font-mono">{c.size}</span>
+                    </div>
+                    <div className="text-[10px] font-semibold mt-0.5">{st || 'N/A'}</div>
+                    <div className="text-[10px] mt-0.5">
+                      {kg.toFixed(2)} kg · {c.isDoorClosed ? 'cửa đóng' : 'cửa MỞ'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => requestUnlock(c.compIndex)}
+                      disabled={unlockBusy}
+                      className="mt-1.5 w-full text-[9px] font-bold py-1 rounded-md border border-rose-300 bg-white text-rose-700 hover:bg-rose-50 cursor-pointer disabled:opacity-60 flex items-center justify-center gap-1"
+                    >
+                      <Unlock className="w-2.5 h-2.5" /> Mở khẩn cấp
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Xác nhận 2 bước: bấm "Mở khẩn cấp" chỉ đặt `unlockTarget`, chưa gọi API. */}
+            {unlockTarget != null && (
+              <div className="mt-3 p-3 rounded-xl bg-rose-50 border-2 border-rose-300 space-y-2">
+                <p className="text-[11px] font-bold text-rose-800 flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4" />
+                  Xác nhận mở khẩn cấp ngăn #{unlockTarget} của {detail.locker.lockerId}?
+                </p>
+                <p className="text-[10px] text-rose-700">
+                  Thao tác này <strong>giải phóng ngăn về EMPTY</strong> và gỡ liên kết đơn hàng
+                  đang trỏ tới ngăn. Nếu bên trong còn kiện hàng thật thì dấu vết sẽ mất.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={confirmUnlock}
+                    disabled={unlockBusy}
+                    className="flex-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold py-2 rounded-lg cursor-pointer disabled:opacity-60 flex items-center justify-center gap-1"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    {unlockBusy ? 'Đang gửi…' : 'Xác nhận mở'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUnlockTarget(null)}
+                    disabled={unlockBusy}
+                    className="flex-1 bg-white border border-slate-300 text-slate-700 text-[11px] font-bold py-2 rounded-lg cursor-pointer disabled:opacity-60"
+                  >
+                    Huỷ
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Ý 3 — 20 lệnh mở tủ gần nhất */}
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+              <Clock className="w-3 h-3 inline mr-1" />
+              Lịch sử mở tủ {detail.loadingLogs ? '(đang tải…)' : `(${detail.logs.length} lệnh gần nhất)`}
+            </span>
+            {!detail.loadingLogs && detail.logs.length === 0 && (
+              <p className="text-[11px] text-slate-500 italic">Chưa có lệnh mở tủ nào cho trạm này.</p>
+            )}
+            {detail.logs.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-left text-slate-500 border-b border-slate-200">
+                      <th className="py-1.5 pr-3 font-semibold">Thời gian</th>
+                      <th className="py-1.5 pr-3 font-semibold">Ngăn</th>
+                      <th className="py-1.5 pr-3 font-semibold">Loại</th>
+                      <th className="py-1.5 font-semibold">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.logs.map((log) => (
+                      <tr key={log.commandId} className="border-b border-slate-100 last:border-0">
+                        <td className="py-1.5 pr-3 font-mono text-slate-700">
+                          {log.sentAt ? new Date(log.sentAt).toLocaleString('vi-VN') : '—'}
+                        </td>
+                        <td className="py-1.5 pr-3 text-slate-700">#{log.compartmentId ?? '—'}</td>
+                        <td className="py-1.5 pr-3 text-slate-700">{log.commandType || '—'}</td>
+                        <td className="py-1.5">
+                          <span
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                              String(log.status).toUpperCase() === 'SUCCESS'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : String(log.status).toUpperCase() === 'TIMEOUT'
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}
+                          >
+                            {log.status || '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { authApi, lockerApi, adminApi, mqttApi } from '../services/api';
 import { store } from '../services/store';
+import { getLockerHealth } from '../utils/lockerHealth';
 import {
   Shield, BarChart3, Radio, AlertTriangle, Users, UserPlus,
   RefreshCw, CheckCircle2, AlertCircle, Key, Lock, Unlock,
@@ -185,61 +186,10 @@ export default function AdminTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAdminSubTab]);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // GĐ5-B2 — TRẠNG THÁI KẾT NỐI THẬT của tủ, suy ra từ `lastHeartbeat`.
-  //
-  // Vì sao phải tự suy: backend chỉ cập nhật `connection_status` khi có bản tin MQTT,
-  // KHÔNG có scheduler chuyển OFFLINE khi tủ im lặng. Đo thật trong DB ngày 10/11:
-  // cả 10 tủ đều ghi `ONLINE` nhưng `lastHeartbeat` cách đây từ 9 phút đến 4637 phút
-  // (gần 3,2 ngày). Nếu chỉ tin `connectionStatus` thì dashboard báo "Đang kết nối"
-  // cho tủ đã tắt gần 3 ngày — sai hoàn toàn với thực tế.
-  //
-  // Ngưỡng theo chỉ đạo: < 5 phút = xanh, 5–60 phút = vàng, > 60 phút = đỏ.
-  // Lý do 5 phút: firmware gửi heartbeat mỗi 30 giây → 5 phút là ~10 chu kỳ liên tiếp
-  // mất tín hiệu, đủ chắc để coi là có vấn đề mà không báo động giả khi mạng chập chờn.
-  const HEARTBEAT_FRESH_MS = 5 * 60 * 1000;    // dưới mức này: Online
-  const HEARTBEAT_STALE_MS = 60 * 60 * 1000;   // trên mức này: Mất kết nối
-
-  /** "vừa xong" / "12 phút trước" / "2 ngày trước" — thời gian tương đối. */
-  const formatRelativeTime = (iso) => {
-    if (!iso) return 'chưa từng gửi';
-    const t = new Date(iso).getTime();
-    if (Number.isNaN(t)) return 'không rõ';
-    const diffSec = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (diffSec < 60) return 'vừa xong';
-    const diffMin = Math.round(diffSec / 60);
-    if (diffMin < 60) return `${diffMin} phút trước`;
-    const diffHour = Math.round(diffMin / 60);
-    if (diffHour < 24) return `${diffHour} giờ trước`;
-    return `${Math.round(diffHour / 24)} ngày trước`;
-  };
-
-  /**
-   * Trạng thái hiển thị của một tủ — CHỈ suy từ `lastHeartbeat`.
-   *
-   * <p>KHÔNG dùng `connectionStatus` để quyết định màu: DB lưu cờ đó nhưng backend **không có
-   * scheduler** chuyển sang OFFLINE khi tủ im lặng. Đo thật ngày 10/11: cả 10 tủ ghi `ONLINE`,
-   * trong khi HN_02 im 17 giờ, HN_03 im 42 giờ, HN_04–10 im 3 ngày. Tin cờ đó là dashboard báo
-   * "Đang kết nối" cho tủ đã tắt 3 ngày.
-   */
-  const getLockerHealth = (locker) => {
-    const hb = locker?.lastHeartbeat ? new Date(locker.lastHeartbeat).getTime() : null;
-    const ageMs = hb != null && !Number.isNaN(hb) ? Date.now() - hb : null;
-    const rel = formatRelativeTime(locker?.lastHeartbeat);
-
-    if (ageMs == null) {
-      return { key: 'NEVER', label: 'Chưa có tín hiệu', tone: 'rose', rel, ageMs };
-    }
-    if (ageMs > HEARTBEAT_STALE_MS) {
-      return { key: 'STALE', label: 'Mất kết nối', tone: 'rose', rel, ageMs };
-    }
-    if (ageMs > HEARTBEAT_FRESH_MS) {
-      return { key: 'UNKNOWN', label: 'Không rõ', tone: 'amber', rel, ageMs };
-    }
-    return { key: 'ONLINE', label: 'Online', tone: 'emerald', rel, ageMs };
-  };
-
-  /** Class Tailwind theo tone — giữ đúng phong cách badge đang dùng trong file. */
+  // GĐ8 — logic sức khoẻ trạm đã tách ra utils/lockerHealth.js để LockerNetworkMapTab
+  // dùng CHUNG. Giữ hai bản copy là hai màn hình sẽ hiển thị mâu thuẫn ngay khi ai đó sửa
+  // ngưỡng ở một nơi. Chỉ còn healthBadgeClass/healthDotClass ở đây vì đó là class
+  // Tailwind riêng của màn admin (bản đồ dùng mã màu hex, không dùng class).
   const healthBadgeClass = (tone) => {
     if (tone === 'emerald') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
     if (tone === 'amber') return 'bg-amber-50 text-amber-800 border-amber-300';

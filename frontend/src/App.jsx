@@ -141,7 +141,11 @@ export default function App() {
             ) : (
               <LockerNetworkMapTab
                 currentUser={currentUser}
-                onNavigateToPickup={() => setActiveTab('customer')}
+                // GĐ8 — ADMIN KHÔNG truyền `onNavigateToPickup`: App.jsx chặn ADMIN khỏi tab
+                // `customer` (xem effect kiểm `activeTab` ở trên), nên truyền vào chỉ tạo ra
+                // nút bấm không có tác dụng. Nhánh ADMIN trong component đã đổi nút đó thành
+                // "Xem chi tiết trạm". CUSTOMER vẫn nhận đủ prop và chạy y như cũ.
+                onNavigateToPickup={currentUser?.role === 'ADMIN' ? undefined : () => setActiveTab('customer')}
                 onNavigateToShipper={() => setActiveTab('shipper')}
               />
             )
