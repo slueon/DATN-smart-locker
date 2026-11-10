@@ -28,6 +28,9 @@ public class LockerDataSeeder implements CommandLineRunner {
     private final LockerSlotScheduleRepository scheduleRepository;
     private final OrderRepository orderRepository;
 
+    @org.springframework.beans.factory.annotation.Value("${app.seed.sample-orders:false}")
+    private boolean seedSampleOrders;
+
     public LockerDataSeeder(LockerRepository lockerRepository,
                             CompartmentRepository compartmentRepository,
                             LockerSlotScheduleRepository scheduleRepository,
@@ -124,8 +127,8 @@ public class LockerDataSeeder implements CommandLineRunner {
             }
         }
 
-        // Tự động khởi tạo các đơn hàng PENDING mẫu trong DB cho Shipper nếu chưa có
-        if (orderRepository.findByStatus("PENDING").isEmpty()) {
+        // Tự động khởi tạo các đơn hàng PENDING mẫu trong DB cho Shipper nếu bật cấu hình app.seed.sample-orders
+        if (seedSampleOrders && orderRepository.findByStatus("PENDING").isEmpty()) {
             Locker locker1 = lockerRepository.findById("LOCKER_HN_01").orElse(null);
             Locker locker2 = lockerRepository.findById("LOCKER_HN_02").orElse(null);
             Locker locker3 = lockerRepository.findById("LOCKER_HN_03").orElse(null);

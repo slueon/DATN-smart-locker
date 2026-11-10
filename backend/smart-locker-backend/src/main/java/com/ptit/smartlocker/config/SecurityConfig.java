@@ -150,8 +150,8 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/orders/**").authenticated()
                 .requestMatchers(HttpMethod.GET, "/api/mqtt/recent-logs", "/api/mqtt/security-status").authenticated()
 
-                // --- Nghiệp vụ khách hàng ---
-                .requestMatchers(HttpMethod.POST, "/api/orders/checkout").hasRole("CUSTOMER")
+                // --- Nghiệp vụ khách hàng & tạo đơn ---
+                .requestMatchers(HttpMethod.POST, "/api/orders/checkout").hasAnyRole("CUSTOMER", "SHIPPER", "ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/pickup/**").hasRole("CUSTOMER")
 
                 // --- Nghiệp vụ shipper ---

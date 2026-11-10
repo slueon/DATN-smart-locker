@@ -1,6 +1,6 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
-import { authApi } from '../services/api';
+import { authApi, lockerApi } from '../services/api';
 import { store } from '../services/store';
 import {
   Shield, BarChart3, Radio, AlertTriangle, Users, UserPlus,
@@ -10,9 +10,9 @@ import {
 } from 'lucide-react';
 
 const INITIAL_USERS = [
-  { id: 1, username: 'admin', fullName: 'Quáº£n Trá»‹ ViÃªn Há»‡ Thá»‘ng', phone: '0900000001', role: 'ADMIN' },
-  { id: 2, username: 'shipper', fullName: 'Nguyá»…n VÄƒn Shipper PTIT', phone: '0900000002', role: 'SHIPPER' },
-  { id: 3, username: 'khachhang', fullName: 'ÄoÃ n Viáº¿t HoÃ ng', phone: '0988123456', role: 'CUSTOMER' },
+  { id: 1, username: 'admin', fullName: 'Quản Trị Viên Hệ Thống', phone: '0900000001', role: 'ADMIN' },
+  { id: 2, username: 'shipper', fullName: 'Nguyễn Văn Shipper PTIT', phone: '0900000002', role: 'SHIPPER' },
+  { id: 3, username: 'khachhang', fullName: 'Đoàn Viết Hoàng', phone: '0988123456', role: 'CUSTOMER' },
 ];
 
 export default function AdminTab() {
@@ -20,12 +20,12 @@ export default function AdminTab() {
 
   // KPI Data
   const [kpi, setKpi] = useState({
-    occupancyRate: 67,
-    totalLockers: 2,
-    totalSlots: 4,
-    deliveredCount: 3,
-    overdueCount: 1,
-    totalRevenue: 1400000,
+    occupancyRate: 0,
+    totalLockers: 10,
+    totalSlots: 20,
+    deliveredCount: 0,
+    overdueCount: 0,
+    totalRevenue: 0,
   });
 
   const [lockers, setLockers] = useState([]);
@@ -34,7 +34,7 @@ export default function AdminTab() {
   const [filterRole, setFilterRole] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Form cáº¥p tÃ i khoáº£n má»›i
+  // Form cấp tài khoản mới
   const [newRole, setNewRole] = useState('SHIPPER');
   const [newFullName, setNewFullName] = useState('');
   const [newPhone, setNewPhone] = useState('');
@@ -46,22 +46,165 @@ export default function AdminTab() {
   const [cronRunning, setCronRunning] = useState(false);
   const [cronMsg, setCronMsg] = useState('');
 
-  const refreshAllData = () => {
-    setKpi(store.calculateKpi());
-    setLockers(store.getLockers());
-    setOrders(store.getOrders());
+  /**
+   * GĐ5-B1 — KPI Admin lấy từ API THẬT thay vì localStorage.
+   *
+   * <p><b>Phần tủ/ngăn dùng API:</b> `lockerApi.getAll()` rồi `lockerApi.getCompartments(id)`
+   * cho từng tủ, gọi **song song bằng `Promise.all`** — 10 request tuần tự sẽ chậm gấp 10.
+   *
+   * <p><b>Công thức giữ đúng logic gốc `store.calculateKpi()`</b> (Chief chốt):
+   * <ul>
+   *   <li>{@code totalSlots} = MỌI ngăn của mọi tủ — {@code OUT_OF_SERVICE} vẫn tính vì
+   *       ngăn đó có thật, chỉ đang bảo trì.</li>
+   *   <li>{@code occupiedSlots} = ngăn {@code OCCUPIED} hoặc {@code OVERDUE}.</li>
+   *   <li><b>{@code RESERVED} KHÔNG tính vào lấp đầy</b> — shipper đặt trước nhưng chưa có
+   *       hàng thật trong ngăn, tính vào sẽ thổi phồng mức sử dụng.</li>
+   *   <li>{@code occupancyRate = Math.round(occupied / total * 100)}.</li>
+   * </ul>
+   * Mốc kiểm với dữ liệu thật hiện tại (19 EMPTY + 1 OCCUPIED trên 20 ngăn): **5%**.
+   *
+   * <p><b>3 chỉ số đơn hàng VẪN đọc localStorage</b> ({@code deliveredCount},
+   * {@code overdueCount}, {@code totalRevenue}) — backend chưa có endpoint trả danh sách đơn
+   * cho ADMIN (không có `/api/orders` all), và {`orderApi.getByPhone`} chỉ trả đơn của một
+   * SĐT. Ghi vào tồn đọng thay vì tự thêm endpoint ngoài phạm vi thẻ.
+   */
+  const refreshAllData = async () => {
+    // Phần đơn hàng: giữ nguồn cũ (xem lý do ở Javadoc trên).
+    const localOrders = store.getOrders();
+    setOrders(localOrders);
+
+    try {
+      const lockerRes = await lockerApi.getAll();
+      const apiLockers = lockerRes?.data?.data || [];
+
+      // Gọi SONG SONG compartments của từng tủ.
+      const compLists = await Promise.all(
+        apiLockers.map(async (locker) => {
+          try {
+            const res = await lockerApi.getCompartments(locker.lockerId);
+            return { locker, compartments: res?.data?.data || [] };
+          } catch {
+            // Một tủ lỗi không được làm sập cả dashboard: coi như không có ngăn.
+            return { locker, compartments: [] };
+          }
+        })
+      );
+
+      // Gắn `compartments` vào từng tủ để phần hiển thị ma trận phía dưới dùng lại được.
+      const mergedLockers = compLists.map(({ locker, compartments }) => ({
+        ...locker,
+        compartments,
+      }));
+      setLockers(mergedLockers);
+
+      let totalSlots = 0;
+      let occupiedSlots = 0;
+      mergedLockers.forEach((l) => {
+        l.compartments.forEach((c) => {
+          totalSlots++;
+          const st = String(c.status || '').toUpperCase();
+          if (st === 'OCCUPIED' || st === 'OVERDUE') occupiedSlots++;
+        });
+      });
+
+      const deliveredCount = localOrders.filter(
+        (o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED'
+      ).length;
+      const overdueCount = localOrders.filter((o) => o.status === 'OVERDUE').length;
+      const totalRevenue = localOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0);
+
+      setKpi({
+        occupancyRate: totalSlots > 0 ? Math.round((occupiedSlots / totalSlots) * 100) : 0,
+        totalLockers: mergedLockers.length,
+        totalSlots,
+        deliveredCount,
+        overdueCount,
+        totalRevenue,
+      });
+    } catch (err) {
+      // Mất mạng / 401: giữ số liệu cũ trên màn hình thay vì xoá trắng dashboard.
+      console.warn('[AdminTab] Không tải được danh sách tủ từ API:', err?.message);
+    }
   };
 
-  const getDisplayName = (u) => {
-    if (u.username === 'admin') return 'Quáº£n Trá»‹ ViÃªn Há»‡ Thá»‘ng';
-    if (u.username === 'shipper') return 'Nguyá»…n VÄƒn Shipper PTIT';
-    if (u.username === 'khachhang') return 'ÄoÃ n Viáº¿t HoÃ ng';
-    if (u.fullName && (u.fullName.includes('|') || u.fullName.includes('Â¬') || u.fullName.includes('Â¡') || u.fullName.includes('â€”') || u.fullName.includes('Â¿'))) {
-      if (u.username === 'admin') return 'Quáº£n Trá»‹ ViÃªn Há»‡ Thá»‘ng';
-      if (u.username === 'shipper') return 'Nguyá»…n VÄƒn Shipper PTIT';
-      if (u.username === 'khachhang') return 'ÄoÃ n Viáº¿t HoÃ ng';
+  // ─────────────────────────────────────────────────────────────────────────
+  // GĐ5-B2 — TRẠNG THÁI KẾT NỐI THẬT của tủ, suy ra từ `lastHeartbeat`.
+  //
+  // Vì sao phải tự suy: backend chỉ cập nhật `connection_status` khi có bản tin MQTT,
+  // KHÔNG có scheduler chuyển OFFLINE khi tủ im lặng. Đo thật trong DB ngày 10/11:
+  // cả 10 tủ đều ghi `ONLINE` nhưng `lastHeartbeat` cách đây từ 9 phút đến 4637 phút
+  // (gần 3,2 ngày). Nếu chỉ tin `connectionStatus` thì dashboard báo "Đang kết nối"
+  // cho tủ đã tắt gần 3 ngày — sai hoàn toàn với thực tế.
+  //
+  // Ngưỡng theo chỉ đạo: < 5 phút = xanh, 5–60 phút = vàng, > 60 phút = đỏ.
+  // Lý do 5 phút: firmware gửi heartbeat mỗi 30 giây → 5 phút là ~10 chu kỳ liên tiếp
+  // mất tín hiệu, đủ chắc để coi là có vấn đề mà không báo động giả khi mạng chập chờn.
+  const HEARTBEAT_FRESH_MS = 5 * 60 * 1000;    // dưới mức này: Online
+  const HEARTBEAT_STALE_MS = 60 * 60 * 1000;   // trên mức này: Mất kết nối
+
+  /** "vừa xong" / "12 phút trước" / "2 ngày trước" — thời gian tương đối. */
+  const formatRelativeTime = (iso) => {
+    if (!iso) return 'chưa từng gửi';
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return 'không rõ';
+    const diffSec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (diffSec < 60) return 'vừa xong';
+    const diffMin = Math.round(diffSec / 60);
+    if (diffMin < 60) return `${diffMin} phút trước`;
+    const diffHour = Math.round(diffMin / 60);
+    if (diffHour < 24) return `${diffHour} giờ trước`;
+    return `${Math.round(diffHour / 24)} ngày trước`;
+  };
+
+  /**
+   * Trạng thái hiển thị của một tủ — CHỈ suy từ `lastHeartbeat`.
+   *
+   * <p>KHÔNG dùng `connectionStatus` để quyết định màu: DB lưu cờ đó nhưng backend **không có
+   * scheduler** chuyển sang OFFLINE khi tủ im lặng. Đo thật ngày 10/11: cả 10 tủ ghi `ONLINE`,
+   * trong khi HN_02 im 17 giờ, HN_03 im 42 giờ, HN_04–10 im 3 ngày. Tin cờ đó là dashboard báo
+   * "Đang kết nối" cho tủ đã tắt 3 ngày.
+   */
+  const getLockerHealth = (locker) => {
+    const hb = locker?.lastHeartbeat ? new Date(locker.lastHeartbeat).getTime() : null;
+    const ageMs = hb != null && !Number.isNaN(hb) ? Date.now() - hb : null;
+    const rel = formatRelativeTime(locker?.lastHeartbeat);
+
+    if (ageMs == null) {
+      return { key: 'NEVER', label: 'Chưa có tín hiệu', tone: 'rose', rel, ageMs };
     }
-    return u.fullName || 'NgÆ°á»i dÃ¹ng';
+    if (ageMs > HEARTBEAT_STALE_MS) {
+      return { key: 'STALE', label: 'Mất kết nối', tone: 'rose', rel, ageMs };
+    }
+    if (ageMs > HEARTBEAT_FRESH_MS) {
+      return { key: 'UNKNOWN', label: 'Không rõ', tone: 'amber', rel, ageMs };
+    }
+    return { key: 'ONLINE', label: 'Online', tone: 'emerald', rel, ageMs };
+  };
+
+  /** Class Tailwind theo tone — giữ đúng phong cách badge đang dùng trong file. */
+  const healthBadgeClass = (tone) => {
+    if (tone === 'emerald') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    if (tone === 'amber') return 'bg-amber-50 text-amber-800 border-amber-300';
+    if (tone === 'rose') return 'bg-rose-50 text-rose-700 border-rose-200';
+    return 'bg-slate-100 text-slate-600 border-slate-300';
+  };
+
+  const healthDotClass = (tone) => {
+    if (tone === 'emerald') return 'bg-emerald-500 animate-pulse';
+    if (tone === 'amber') return 'bg-amber-500';
+    if (tone === 'rose') return 'bg-rose-500';
+    return 'bg-slate-400';
+  };
+
+  const getDisplayName = (u) => {    if (u.username === 'admin') return 'Quản Trị Viên Hệ Thống';
+    if (u.username === 'shipper') return 'Nguyễn Văn Shipper PTIT';
+    if (u.username === 'khachhang') return 'Đoàn Viết Hoàng';
+    if (u.fullName && (u.fullName.includes('|') || u.fullName.includes('¬') || u.fullName.includes('¡') || u.fullName.includes('—') || u.fullName.includes('¿'))) {
+      if (u.username === 'admin') return 'Quản Trị Viên Hệ Thống';
+      if (u.username === 'shipper') return 'Nguyễn Văn Shipper PTIT';
+      if (u.username === 'khachhang') return 'Đoàn Viết Hoàng';
+    }
+    return u.fullName || 'Người dùng';
   };
 
   const fetchUsers = async () => {
@@ -114,7 +257,7 @@ export default function AdminTab() {
       });
 
       if (res.data?.success) {
-        setUserMsg({ text: `Cáº¥p tÃ i khoáº£n ${newRole} cho '${newFullName}' thÃ nh cÃ´ng!`, type: 'success' });
+        setUserMsg({ text: `Cấp tài khoản ${newRole} cho '${newFullName}' thành công!`, type: 'success' });
         setNewFullName('');
         setNewPhone('');
         setNewUsername('');
@@ -131,7 +274,7 @@ export default function AdminTab() {
         role: newRole,
       };
       setUsers([newUser, ...users]);
-      setUserMsg({ text: `ÄÃ£ cáº¥p tÃ i khoáº£n ${newRole} cho '${newFullName}' thÃ nh cÃ´ng!`, type: 'success' });
+      setUserMsg({ text: `Đã cấp tài khoản ${newRole} cho '${newFullName}' thành công!`, type: 'success' });
       setNewFullName('');
       setNewPhone('');
       setNewUsername('');
@@ -140,20 +283,20 @@ export default function AdminTab() {
   };
 
   const handleForceUnlock = async (lockerId, compIndex) => {
-    if (!window.confirm(`XÃC NHáº¬N: Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n má»Ÿ cÆ°á»¡ng bá»©c NgÄƒn #${compIndex} cá»§a ${lockerId} tá»« xa qua lá»‡nh kháº©n cáº¥p?`)) {
+    if (!window.confirm(`XÁC NHẬN: Bạn có chắc chắn muốn mở cưỡng bức Ngăn #${compIndex} của ${lockerId} từ xa qua lệnh khẩn cấp?`)) {
       return;
     }
 
-    // W5: chá»‰ bÃ¡o thÃ nh cÃ´ng khi server thá»±c sá»± nháº­n lá»‡nh (khÃ´ng cÃ²n "bÃ¡o má»Ÿ giáº£").
+    // W5: chỉ báo thành công khi server thực sự nhận lệnh (không còn "báo mở giả").
     const ok = await store.forceUnlockCompartment(lockerId, compIndex);
 
     if (ok) {
-      alert(`ÄÃ£ gá»­i lá»‡nh má»Ÿ khÃ³a Solenoid NgÄƒn #${compIndex} thÃ nh cÃ´ng!`);
+      alert(`Đã gửi lệnh mở khóa Solenoid Ngăn #${compIndex} thành công!`);
     } else {
       alert(
-        `KHÃ”NG má»Ÿ Ä‘Æ°á»£c NgÄƒn #${compIndex}.\n\n` +
-        `Lá»‡nh Ä‘Ã£ bá»‹ server tá»« chá»‘i hoáº·c khÃ´ng gá»­i Ä‘Æ°á»£c (kiá»ƒm tra Ä‘Ã£ Ä‘Äƒng nháº­p ADMIN vÃ  backend Ä‘ang cháº¡y).\n` +
-        `Cá»­a tá»§ VáºªN ÄANG ÄÃ“NG.`
+        `KHÔNG mở được Ngăn #${compIndex}.\n\n` +
+        `Lệnh đã bị server từ chối hoặc không gửi được (kiểm tra đã đăng nhập ADMIN và backend đang chạy).\n` +
+        `Cửa tủ VẪN ĐANG ĐÓNG.`
       );
     }
   };
@@ -164,7 +307,7 @@ export default function AdminTab() {
     setTimeout(() => {
       const result = store.checkAndScanOverdueOrders();
       setCronRunning(false);
-      setCronMsg(`ÄÃ£ quÃ©t thá»§ cÃ´ng lÃºc ${new Date().toLocaleTimeString('vi-VN')}! PhÃ¡t hiá»‡n ${result.sweptCount} Ä‘Æ¡n quÃ¡ háº¡n má»›i (Há»‡ thá»‘ng cÅ©ng Ä‘ang tá»± Ä‘á»™ng cháº¡y ngáº§m má»—i 30s vÃ  báº¯n Push Alert tá»›i Shipper).`);
+      setCronMsg(`Đã quét thủ công lúc ${new Date().toLocaleTimeString('vi-VN')}! Phát hiện ${result.sweptCount} đơn quá hạn mới (Hệ thống cũng đang tự động chạy ngầm mỗi 30s và bắn Push Alert tới Shipper).`);
       refreshAllData();
     }, 700);
   };
@@ -172,13 +315,13 @@ export default function AdminTab() {
   const getCompartmentBadge = (status) => {
     switch (status) {
       case 'EMPTY':
-        return <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">TRá»NG</span>;
+        return <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">TRỐNG</span>;
       case 'RESERVED':
-        return <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">ÄÃƒ GIá»® CHá»–</span>;
+        return <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">ĐÃ GIỮ CHỖ</span>;
       case 'OCCUPIED':
-        return <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">CÃ“ BÆ¯U KIá»†N</span>;
+        return <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">CÓ BƯU KIỆN</span>;
       case 'OVERDUE':
-        return <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded text-[10px] font-bold">QUÃ Háº N</span>;
+        return <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded text-[10px] font-bold">QUÁ HẠN</span>;
       default:
         return <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-medium">{status}</span>;
     }
@@ -187,11 +330,11 @@ export default function AdminTab() {
   const getRoleBadge = (role) => {
     switch (role) {
       case 'ADMIN':
-        return <span className="bg-purple-50 text-purple-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-purple-200">Quáº£n trá»‹ viÃªn</span>;
+        return <span className="bg-purple-50 text-purple-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-purple-200">Quản trị viên</span>;
       case 'SHIPPER':
         return <span className="bg-amber-50 text-amber-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-amber-200">Shipper</span>;
       case 'CUSTOMER':
-        return <span className="bg-blue-50 text-blue-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-blue-200">KhÃ¡ch hÃ ng</span>;
+        return <span className="bg-blue-50 text-blue-700 text-[11px] font-bold px-2.5 py-0.5 rounded-lg border border-blue-200">Khách hàng</span>;
       default:
         return <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded">{role}</span>;
     }
@@ -206,10 +349,10 @@ export default function AdminTab() {
         <div>
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
             <Shield className="w-6 h-6 text-purple-600" />
-            Báº£ng Äiá»u Khiá»ƒn KPI & GiÃ¡m SÃ¡t Váº­n HÃ nh
+            Bảng Điều Khiển KPI & Giám Sát Vận Hành
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Trung tÃ¢m kiá»ƒm soÃ¡t hiá»‡u suáº¥t tá»§, ma tráº­n ngÄƒn váº­t lÃ½ thá»i gian thá»±c vÃ  tá»± Ä‘á»™ng hÃ³a tÃ¡c vá»¥ DevSecOps.
+            Trung tâm kiểm soát hiệu suất tủ, ma trận ngăn vật lý thời gian thực và tự động hóa tác vụ DevSecOps.
           </p>
         </div>
       </div>
@@ -217,10 +360,10 @@ export default function AdminTab() {
       {/* Admin Subtabs (Apple iOS Segmented Control) */}
       <div className="ios-segmented-tray flex max-w-xl mx-auto gap-1 shadow-sm">
         {[
-          { id: 'kpi', label: 'Tá»•ng quan KPI', icon: BarChart3 },
-          { id: 'matrix', label: 'SÆ¡ Ä‘á»“ ngÄƒn tá»§', icon: Radio },
-          { id: 'overdue', label: 'ÄÆ¡n quÃ¡ háº¡n', icon: AlertTriangle },
-          { id: 'users', label: 'NgÆ°á»i dÃ¹ng & RBAC', icon: Users },
+          { id: 'kpi', label: 'Tổng quan KPI', icon: BarChart3 },
+          { id: 'matrix', label: 'Sơ đồ ngăn tủ', icon: Radio },
+          { id: 'overdue', label: 'Đơn quá hạn', icon: AlertTriangle },
+          { id: 'users', label: 'Người dùng & RBAC', icon: Users },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeAdminSubTab === tab.id;
@@ -247,7 +390,7 @@ export default function AdminTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md relative overflow-hidden">
               <div className="flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
-                <span>Tá»· lá»‡ láº¥p Ä‘áº§y tá»§</span>
+                <span>Tỷ lệ lấp đầy tủ</span>
                 <span className="text-blue-600 font-mono text-[10px] bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 font-bold">Real-time</span>
               </div>
               <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
@@ -263,38 +406,38 @@ export default function AdminTab() {
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                Háº¡ táº§ng Tá»§ & NgÄƒn
+                Hạ tầng Tủ & Ngăn
               </div>
               <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
-                {kpi.totalLockers} <span className="text-base text-slate-400 font-normal">Tráº¡m</span> / {kpi.totalSlots} <span className="text-base text-slate-400 font-normal">NgÄƒn</span>
+                {kpi.totalLockers} <span className="text-base text-slate-400 font-normal">Trạm</span> / {kpi.totalSlots} <span className="text-base text-slate-400 font-normal">Ngăn</span>
               </div>
               <div className="text-xs text-emerald-600 mt-2.5 flex items-center gap-1.5 font-bold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                <span>100% Cáº£m biáº¿n káº¿t ná»‘i á»•n Ä‘á»‹nh</span>
+                <span>100% Cảm biến kết nối ổn định</span>
               </div>
             </div>
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                LÆ°á»£t giao hoÃ n táº¥t
+                Lượt giao hoàn tất
               </div>
               <div className="text-3xl font-extrabold text-emerald-600 mt-2 font-mono">
-                {kpi.deliveredCount} <span className="text-base text-slate-400 font-normal">ÄÆ¡n</span>
+                {kpi.deliveredCount} <span className="text-base text-slate-400 font-normal">Đơn</span>
               </div>
               <div className="text-xs text-slate-500 mt-2.5 font-medium">
-                Tá»· lá»‡ má»Ÿ khÃ³a Ä‘Ãºng háº¡n: <strong className="text-slate-800 font-mono">98.5%</strong>
+                Tỷ lệ mở khóa đúng hạn: <strong className="text-slate-800 font-mono">98.5%</strong>
               </div>
             </div>
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                Tá»•ng giÃ¡ trá»‹ Ä‘Æ¡n hÃ ng
+                Tổng giá trị đơn hàng
               </div>
               <div className="text-2xl font-extrabold text-slate-900 mt-2 font-mono">
                 {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(kpi.totalRevenue)}
               </div>
               <div className="text-xs text-slate-500 mt-2.5 font-medium">
-                Tá»« cÃ¡c giao dá»‹ch qua tráº¡m tá»§ PTIT
+                Từ các giao dịch qua trạm tủ PTIT
               </div>
             </div>
           </div>
@@ -302,24 +445,37 @@ export default function AdminTab() {
           {/* Station Occupancy Overview */}
           <div className="liquid-glass-card rounded-3xl border border-white/80 p-6 sm:p-7 shadow-lg space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm">Tá»· lá»‡ láº¥p Ä‘áº§y tá»«ng tráº¡m tá»§ PTIT</h3>
-              <span className="text-xs text-slate-400 font-mono">Cáº­p nháº­t thá»i gian thá»±c</span>
+              <h3 className="font-bold text-slate-900 text-sm">Tỷ lệ lấp đầy từng trạm tủ PTIT</h3>
+              <span className="text-xs text-slate-400 font-mono">Cập nhật thời gian thực</span>
             </div>
             <div className="space-y-4">
               {lockers.map((locker) => {
                 const total = locker.compartments.length;
                 const occ = locker.compartments.filter((c) => c.status === 'OCCUPIED' || c.status === 'OVERDUE').length;
-                const percent = Math.round((occ / total) * 100);
+                // Chống chia cho 0: tủ lỗi API (compartments rỗng) sẽ cho percent = NaN → thanh bar vỡ.
+                const percent = total > 0 ? Math.round((occ / total) * 100) : 0;
+                const health = getLockerHealth(locker);
 
                 return (
                   <div key={locker.lockerId} className="space-y-2">
                     <div className="flex justify-between items-center text-xs">
                       <span className="font-bold text-slate-800 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-blue-600 inline-block" />
+                        {/* GĐ5-B2 — chấm màu theo trạng thái kết nối thật, không còn luôn xanh. */}
+                        <span
+                          className={`w-2 h-2 rounded-full inline-block ${healthDotClass(health.tone)}`}
+                          title={`${health.label} — ${health.rel}`}
+                        />
                         {locker.name} ({locker.lockerId})
+                        {health.key !== 'ONLINE' && (
+                          <span
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${healthBadgeClass(health.tone)}`}
+                          >
+                            {health.label} · {health.rel}
+                          </span>
+                        )}
                       </span>
                       <span className="font-mono text-slate-700 font-bold">
-                        {occ}/{total} ngÄƒn ({percent}%)
+                        {occ}/{total} ngăn ({percent}%)
                       </span>
                     </div>
                     <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
@@ -336,22 +492,22 @@ export default function AdminTab() {
         </div>
       )}
 
-      {/* TAB 2: LOCKER MATRIX (SÆ  Äá»’ MA TRáº¬N Tá»¦) */}
+      {/* TAB 2: LOCKER MATRIX (SƠ ĐỒ MA TRẬN TỦ) */}
       {activeAdminSubTab === 'matrix' && (
         <div className="space-y-5">
           <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                <Radio className="w-4 h-4 text-blue-600" /> SÆ¡ Ä‘á»“ ngÄƒn tá»§ váº­t lÃ½
+                <Radio className="w-4 h-4 text-blue-600" /> Sơ đồ ngăn tủ vật lý
               </h3>
               <p className="text-xs text-slate-500">
-                Theo dÃµi cáº£m biáº¿n cá»­a, trá»ng lÆ°á»£ng vÃ  Ä‘iá»u khiá»ƒn má»Ÿ khÃ³a kháº©n cáº¥p.
+                Theo dõi cảm biến cửa, trọng lượng và điều khiển mở khóa khẩn cấp.
               </p>
             </div>
             <button
               onClick={refreshAllData}
               className="p-2.5 bg-white hover:bg-slate-50 rounded-xl text-slate-600 transition border border-slate-200 cursor-pointer shadow-2xs"
-              title="LÃ m má»›i ma tráº­n"
+              title="Làm mới ma trận"
             >
               <RefreshCw className="w-4 h-4" />
             </button>
@@ -371,29 +527,54 @@ export default function AdminTab() {
                     <p className="text-xs text-slate-500 mt-0.5">{locker.address}</p>
                     <div className="flex items-center gap-2 mt-1.5 text-[11px] font-mono text-slate-500">
                       <span>IP: {locker.ipAddress}</span>
-                      <span>â€¢</span>
-                      <span>ESP32 NodeMCU â€¢ Port 1883</span>
+                      <span>•</span>
+                      <span>ESP32 NodeMCU • Port 1883</span>
                     </div>
                   </div>
-                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
-                    Äang káº¿t ná»‘i
-                  </span>
+                  {/* GĐ5-B2 — badge này TRƯỚC ĐÂY ghi cứng "Đang kết nối" màu xanh cho mọi tủ,
+                      kể cả tủ im lặng 3 ngày (đo thật: HN_04–10 heartbeat cách 4638 phút).
+                      Nay suy từ `lastHeartbeat`: xanh < 5 phút, vàng 5–60 phút, đỏ > 60 phút. */}
+                  <div className="flex flex-col items-end gap-1">
+                    <span
+                      className={`border text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 ${healthBadgeClass(getLockerHealth(locker).tone)}`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full inline-block ${healthDotClass(getLockerHealth(locker).tone)}`}
+                      />
+                      {getLockerHealth(locker).label}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {getLockerHealth(locker).rel}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Integrated Physical Visual Rack */}
                 <LockerCabinetVisualizer
                   lockerName={locker.name}
                   lockerId={locker.lockerId}
-                  activeSlotId={1}
+                  compartments={locker.compartments?.map((comp) => ({
+                    id: comp.compIndex,
+                    name: `Ngăn #${comp.compIndex} (${comp.size === 'S' ? 'Size S - Nhỏ' : 'Size L - Lớn'})`,
+                    size: comp.size,
+                    status: (comp.status === 'EMPTY' || !comp.status) ? 'AVAILABLE' : comp.status,
+                    // GĐ5 — DB lưu GRAM (`MqttService:1069` ghi thẳng payload loadcell),
+                    // còn `LockerCabinetVisualizer` hiểu `weight`/`sensorWeight` là KG.
+                    // Đây là chỗ ĐANG SAI SẴN (đưa gram vào chỗ hiểu kg → hiện 109.80 kg cho
+                    // kiện 109.8 g). Quy đổi tại chỗ truyền, giữ nguyên contract của component.
+                    weight: (Number(comp.currentWeight) || Number(comp.weight) || 0) / 1000,
+                    door: comp.doorOpen ? 'OPEN' : 'CLOSED',
+                    orderCode: comp.orderId || null,
+                  }))}
+                  activeSlotId={null}
                   doorState="CLOSED"
-                  sensorWeight={0.85}
+                  sensorWeight={0.0}
                   compact={true}
                 />
 
                 <div className="space-y-2.5 pt-2">
                   <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                    Báº£ng Äiá»u Khiá»ƒn NgÄƒn & Má»Ÿ Kháº©n Cáº¥p ({locker.compartments.length} ngÄƒn)
+                    Bảng Điều Khiển Ngăn & Mở Khẩn Cấp ({locker.compartments.length} ngăn)
                   </span>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -434,11 +615,11 @@ export default function AdminTab() {
                           <div className="text-[11px] text-slate-500 flex items-center justify-center gap-1 py-0.5">
                             {isDoorOpen ? (
                               <span className="text-amber-700 flex items-center gap-1 font-bold">
-                                <DoorOpen className="w-3.5 h-3.5" /> Äang má»Ÿ chá»‘t
+                                <DoorOpen className="w-3.5 h-3.5" /> Đang mở chốt
                               </span>
                             ) : (
                               <span className="text-slate-500 flex items-center gap-1">
-                                <Lock className="w-3.5 h-3.5 text-slate-400" /> ÄÃ£ chá»‘t Solenoid
+                                <Lock className="w-3.5 h-3.5 text-slate-400" /> Đã chốt Solenoid
                               </span>
                             )}
                           </div>
@@ -446,9 +627,9 @@ export default function AdminTab() {
                           <button
                             onClick={() => handleForceUnlock(locker.lockerId, comp.compIndex)}
                             className="ios-btn w-full bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-[11px] font-bold py-1.5 px-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer border border-slate-200/80 shadow-2xs"
-                            title="Má»Ÿ khÃ³a kháº©n cáº¥p tá»« xa"
+                            title="Mở khóa khẩn cấp từ xa"
                           >
-                            <Unlock className="w-3 h-3 text-rose-500" /> Má»Ÿ kháº©n cáº¥p
+                            <Unlock className="w-3 h-3 text-rose-500" /> Mở khẩn cấp
                           </button>
                         </div>
                       );
@@ -467,10 +648,10 @@ export default function AdminTab() {
           <div className="liquid-glass-card rounded-3xl border border-white/90 p-5 sm:p-7 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600" /> Quáº£n LÃ½ ÄÆ¡n QuÃ¡ Háº¡n (24h)
+                <AlertTriangle className="w-4 h-4 text-rose-600" /> Quản Lý Đơn Quá Hạn (24h)
               </h3>
               <p className="text-xs text-slate-500">
-                QuÃ©t vÃ  Ä‘iá»u phá»‘i thu há»“i bÆ°u kiá»‡n quÃ¡ háº¡n lÆ°u kho 24h.
+                Quét và điều phối thu hồi bưu kiện quá hạn lưu kho 24h.
               </p>
             </div>
 
@@ -480,7 +661,7 @@ export default function AdminTab() {
               className="ios-btn bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs py-3 px-5 rounded-2xl shadow-md flex items-center gap-2 transition shrink-0 cursor-pointer"
             >
               <Zap className="w-4 h-4 text-amber-400" />
-              <span>{cronRunning ? 'Äang quÃ©t dá»¯ liá»‡u...' : 'QuÃ©t ÄÆ¡n QuÃ¡ Háº¡n'}</span>
+              <span>{cronRunning ? 'Đang quét dữ liệu...' : 'Quét Đơn Quá Hạn'}</span>
             </button>
           </div>
 
@@ -494,17 +675,17 @@ export default function AdminTab() {
           {overdueList.length === 0 ? (
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-12 text-center shadow-md">
               <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
-              <h4 className="font-bold text-slate-900 text-sm">Hiá»‡n khÃ´ng cÃ³ bÆ°u kiá»‡n nÃ o quÃ¡ háº¡n</h4>
-              <p className="text-xs text-slate-500 mt-1">Táº¥t cáº£ khÃ¡ch hÃ ng Ä‘Ã£ nháº­n Ä‘á»“ Ä‘Ãºng thá»i háº¡n quy Ä‘á»‹nh.</p>
+              <h4 className="font-bold text-slate-900 text-sm">Hiện không có bưu kiện nào quá hạn</h4>
+              <p className="text-xs text-slate-500 mt-1">Tất cả khách hàng đã nhận đồ đúng thời hạn quy định.</p>
             </div>
           ) : (
             <div className="liquid-glass-card rounded-3xl border border-white/90 overflow-hidden shadow-md">
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                 <span className="font-bold text-slate-900 text-xs">
-                  ÄÆ¡n HÃ ng Cáº§n Thu Há»“i ({overdueList.length})
+                  Đơn Hàng Cần Thu Hồi ({overdueList.length})
                 </span>
                 <span className="text-[11px] bg-rose-50 text-rose-700 font-bold px-2.5 py-0.5 rounded-full border border-rose-200">
-                  Cáº§n giáº£i phÃ³ng ngÄƒn
+                  Cần giải phóng ngăn
                 </span>
               </div>
 
@@ -517,10 +698,10 @@ export default function AdminTab() {
                         <span className="text-xs font-bold text-slate-900">{ord.productName}</span>
                       </div>
                       <p className="text-xs text-slate-500 mt-1">
-                        KhÃ¡ch: <strong className="text-slate-800">{ord.customerName}</strong> (<span className="font-mono">{ord.customerPhone}</span>) â€¢ Tráº¡m: <strong>{ord.lockerName} (NgÄƒn #{ord.compartmentIndex})</strong>
+                        Khách: <strong className="text-slate-800">{ord.customerName}</strong> (<span className="font-mono">{ord.customerPhone}</span>) • Trạm: <strong>{ord.lockerName} (Ngăn #{ord.compartmentIndex})</strong>
                       </p>
                       <p className="text-[11px] text-rose-600 font-mono mt-0.5">
-                        Háº¡n chÃ³t: {new Date(ord.expiryDeadline).toLocaleString('vi-VN')}
+                        Hạn chót: {new Date(ord.expiryDeadline).toLocaleString('vi-VN')}
                       </p>
                     </div>
 
@@ -528,13 +709,13 @@ export default function AdminTab() {
                       onClick={() => {
                         store.updateOrderStatus(ord.orderId, 'COMPLETED', {
                           returnedAt: new Date().toISOString(),
-                          note: 'Admin thu há»“i cÆ°á»¡ng bá»©c',
+                          note: 'Admin thu hồi cưỡng bức',
                         });
-                        alert(`ÄÃ£ thu há»“i bÆ°u kiá»‡n ${ord.orderId} vÃ  giáº£i phÃ³ng NgÄƒn #${ord.compartmentIndex}!`);
+                        alert(`Đã thu hồi bưu kiện ${ord.orderId} và giải phóng Ngăn #${ord.compartmentIndex}!`);
                       }}
                       className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs py-2 px-4 rounded-xl transition cursor-pointer shadow-xs whitespace-nowrap"
                     >
-                      Thu há»“i & Giáº£i phÃ³ng ngÄƒn
+                      Thu hồi & Giải phóng ngăn
                     </button>
                   </div>
                 ))}
@@ -550,7 +731,7 @@ export default function AdminTab() {
           {/* Create Account Card */}
           <div className="liquid-glass-card rounded-3xl border border-white/90 p-5 sm:p-7 shadow-md space-y-4">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
-              <UserPlus className="w-4 h-4 text-blue-600" /> Cáº¥p TÃ i Khoáº£n NgÆ°á»i DÃ¹ng Má»›i
+              <UserPlus className="w-4 h-4 text-blue-600" /> Cấp Tài Khoản Người Dùng Mới
             </h3>
 
             {userMsg.text && (
@@ -564,24 +745,24 @@ export default function AdminTab() {
 
             <form onSubmit={handleCreateAccount} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Vai trÃ²</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Vai trò</label>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
                   className="w-full text-xs px-3 py-2 bg-slate-50/70 border border-slate-200/80 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 font-bold text-slate-800"
                 >
                   <option value="SHIPPER">Shipper</option>
-                  <option value="CUSTOMER">KhÃ¡ch hÃ ng</option>
-                  <option value="ADMIN">Quáº£n trá»‹ viÃªn</option>
+                  <option value="CUSTOMER">Khách hàng</option>
+                  <option value="ADMIN">Quản trị viên</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Há» vÃ  tÃªn</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Họ và tên</label>
                 <input
                   type="text"
                   required
-                  placeholder="VD: LÃª VÄƒn Nam"
+                  placeholder="VD: Lê Văn Nam"
                   value={newFullName}
                   onChange={(e) => setNewFullName(e.target.value)}
                   className="w-full text-xs px-3 py-2 bg-slate-50/70 border border-slate-200/80 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 text-slate-900 font-medium"
@@ -589,7 +770,7 @@ export default function AdminTab() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Sá»‘ Ä‘iá»‡n thoáº¡i</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Số điện thoại</label>
                 <input
                   type="tel"
                   required
@@ -601,7 +782,7 @@ export default function AdminTab() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">TÃªn Ä‘Äƒng nháº­p</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Tên đăng nhập</label>
                 <input
                   type="text"
                   required
@@ -613,11 +794,11 @@ export default function AdminTab() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Máº­t kháº©u</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Mật khẩu</label>
                 <input
                   type="password"
                   required
-                  placeholder="Ãt nháº¥t 6 kÃ½ tá»±"
+                  placeholder="Ít nhất 6 ký tự"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="w-full text-xs px-3 py-2 bg-slate-50/70 border border-slate-200/80 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 text-slate-900 font-medium"
@@ -630,7 +811,7 @@ export default function AdminTab() {
                   className="ios-btn bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs py-2.5 px-5 rounded-xl transition shadow-md shadow-blue-500/25 flex items-center gap-1.5 cursor-pointer border border-white/20"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>XÃ¡c nháº­n cáº¥p tÃ i khoáº£n</span>
+                  <span>Xác nhận cấp tài khoản</span>
                 </button>
               </div>
             </form>
@@ -640,7 +821,7 @@ export default function AdminTab() {
           <div className="liquid-glass-card rounded-3xl border border-white/90 overflow-hidden shadow-md">
             <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <span className="font-bold text-slate-900 text-xs uppercase tracking-wider">
-                Danh SÃ¡ch NgÆ°á»i DÃ¹ng Trong Há»‡ Thá»‘ng ({users.length})
+                Danh Sách Người Dùng Trong Hệ Thống ({users.length})
               </span>
 
               <div className="flex items-center gap-2">
@@ -649,10 +830,10 @@ export default function AdminTab() {
                   onChange={(e) => setFilterRole(e.target.value)}
                   className="text-xs bg-slate-50/80 border border-slate-200/80 rounded-xl px-3 py-1.5 font-bold text-slate-700 focus:outline-none shadow-2xs"
                 >
-                  <option value="">Táº¥t cáº£ vai trÃ²</option>
-                  <option value="ADMIN">Quáº£n trá»‹ viÃªn</option>
+                  <option value="">Tất cả vai trò</option>
+                  <option value="ADMIN">Quản trị viên</option>
                   <option value="SHIPPER">Shipper</option>
-                  <option value="CUSTOMER">KhÃ¡ch hÃ ng</option>
+                  <option value="CUSTOMER">Khách hàng</option>
                 </select>
               </div>
             </div>
@@ -662,10 +843,10 @@ export default function AdminTab() {
                 <thead className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   <tr>
                     <th className="py-3 px-4">ID</th>
-                    <th className="py-3 px-4">Há» vÃ  tÃªn</th>
-                    <th className="py-3 px-4">Sá»‘ Ä‘iá»‡n thoáº¡i</th>
-                    <th className="py-3 px-4">TÃªn Ä‘Äƒng nháº­p</th>
-                    <th className="py-3 px-4">Vai trÃ²</th>
+                    <th className="py-3 px-4">Họ và tên</th>
+                    <th className="py-3 px-4">Số điện thoại</th>
+                    <th className="py-3 px-4">Tên đăng nhập</th>
+                    <th className="py-3 px-4">Vai trò</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

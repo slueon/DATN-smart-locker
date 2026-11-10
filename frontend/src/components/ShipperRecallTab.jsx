@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import CircularTimer from './CircularTimer';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
-import { shipperApi } from '../services/api';
+import { shipperApi, lockerApi } from '../services/api';
 import {
   AlertTriangle, CheckCircle2, DoorOpen, Weight,
   Check, MapPin, User, Timer, PackageX, Truck, RefreshCw,
@@ -28,7 +28,15 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   // ===== BƯỚC 2 -> 4: QUY TRÌNH THU HỒI 1 CHẠM & CẢM BIẾN TỰ ĐỘNG =====
   const [recallPhase, setRecallPhase] = useState('IDLE'); // 'IDLE' | 'DOOR_OPEN' | 'PROCESSING' | 'SUCCESS' | 'FAILSAFE_ERROR'
   const [doorSensorState, setDoorSensorState] = useState('CLOSED'); // 'CLOSED' | 'OPEN'
-  const [loadcellWeight, setLoadcellWeight] = useState(0.85); // KG
+  const [loadcellWeight, setLoadcellWeight] = useState(0); // KG
+  // GĐ5 — khối lượng THẬT đọc từ cảm biến HX711, dùng làm mốc khi vào quy trình thu hồi.
+  //
+  // Vì sao KHÔNG dùng `activeRecallOrder.weight` nữa: `OrderDTO.OrderResponse` **không có**
+  // trường `weight` (xem `ShipperService.getOverdueOrders` — chỉ set orderId/customer/locker/
+  // compartment/status/…), nên `activeRecallOrder.weight` LUÔN `undefined` và code cũ rơi
+  // vào số bịa `0.85`. Nay đọc `compartments.current_weight` qua `lockerApi.getCompartments`
+  // và quy đổi gram → kg (DB lưu gram theo `MqttService:1069`).
+  const [sensorWeightKg, setSensorWeightKg] = useState(null);
   const [failsafeMessage, setFailsafeMessage] = useState(null);
   const [successRecallInfo, setSuccessRecallInfo] = useState(null);
 
@@ -96,17 +104,45 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     } catch (e) {}
   };
 
-  const loadOrders = () => {
-    const all = store.getOrders();
-    setOrders(all);
+  /**
+   * GĐ5-C2 — danh sách đơn quá hạn lấy từ API THẬT thay vì localStorage.
+   *
+   * <p>`GET /api/shipper/overdue-orders` trả **đúng** các đơn `OVERDUE`
+   * (`ShipperService.getOverdueOrders` lọc `findByStatus("OVERDUE")`), nên KHÔNG cần filter lại
+   * theo status như code cũ. Bộ lọc theo TỦ ở dưới (`filteredOverdue`, theo `selectedLockerFilter`)
+   * vẫn giữ nguyên — đó là lọc phía UI, độc lập với nguồn dữ liệu.
+   *
+   * <p>Tham số `lockerId`: truyền `null` khi đang chọn "Tất cả trạm" để backend trả đơn quá hạn
+   * của MỌI tủ; truyền mã tủ khi đã chọn một trạm cụ thể.
+   */
+  const loadOrders = async () => {
+    const lockerId = selectedLockerFilter !== 'ALL' ? selectedLockerFilter : null;
+    try {
+      const res = await shipperApi.getOverdueOrders(lockerId);
+      const overdue = res?.data?.data || [];
+      // Vẫn giữ toàn bộ `orders` = danh sách quá hạn, vì `overdueOrders` phía dưới tính từ đây.
+      setOrders(overdue);
 
-    const overdue = all.filter((o) => o.status === 'OVERDUE');
-    if (overdue.length > 0) {
-      if (!selectedRecallOrderId || !overdue.some((o) => o.orderId === selectedRecallOrderId)) {
-        setSelectedRecallOrderId(overdue[0].orderId);
+      if (overdue.length > 0) {
+        if (!selectedRecallOrderId || !overdue.some((o) => o.orderId === selectedRecallOrderId)) {
+          setSelectedRecallOrderId(overdue[0].orderId);
+        }
+      } else {
+        setSelectedRecallOrderId(null);
       }
-    } else {
-      setSelectedRecallOrderId(null);
+    } catch (err) {
+      // Mất mạng / 401: fallback localStorage để trang không trắng.
+      console.warn('[ShipperRecallTab] Không tải được đơn quá hạn từ API, dùng mô phỏng:', err?.message);
+      const all = store.getOrders();
+      setOrders(all);
+      const overdue = all.filter((o) => o.status === 'OVERDUE');
+      if (overdue.length > 0) {
+        if (!selectedRecallOrderId || !overdue.some((o) => o.orderId === selectedRecallOrderId)) {
+          setSelectedRecallOrderId(overdue[0].orderId);
+        }
+      } else {
+        setSelectedRecallOrderId(null);
+      }
     }
   };
 
@@ -146,7 +182,10 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
       window.removeEventListener('smart_locker_store_updated', handleUpdate);
       window.removeEventListener('smart_locker_overdue_detected', handleOverdueDetected);
     };
-  }, []);
+    // GĐ5-C2 — thêm `selectedLockerFilter` vào dependency: khi shipper đổi trạm, danh sách quá
+    // hạn phải gọi lại API với `lockerId` mới (backend lọc theo tủ), không dùng lại kết quả cũ.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLockerFilter]);
 
   useEffect(() => {
     if (timeLeft <= 0) return;
@@ -179,14 +218,43 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     orders.find((o) => o.orderId === selectedRecallOrderId) || filteredOverdue[0] || null;
 
   useEffect(() => {
-    if (activeRecallOrder) {
-      const weight = activeRecallOrder.weight ? parseFloat(activeRecallOrder.weight) : 0.85;
-      setLoadcellWeight(weight);
-      setDoorSensorState('CLOSED');
-      setRecallPhase('IDLE');
-      setFailsafeMessage(null);
+    if (!activeRecallOrder) {
+      setSensorWeightKg(null);
+      setLoadcellWeight(0);
+      return undefined;
     }
-  }, [selectedRecallOrderId]);
+    setDoorSensorState('CLOSED');
+    setRecallPhase('IDLE');
+    setFailsafeMessage(null);
+
+    const lockerId = activeRecallOrder.lockerId;
+    const compIndex = activeRecallOrder.compartmentIndex;
+    if (!lockerId || compIndex == null) {
+      setSensorWeightKg(null);
+      setLoadcellWeight(0);
+      return undefined;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await lockerApi.getCompartments(lockerId);
+        if (cancelled) return;
+        const comp = (res?.data?.data || []).find((c) => c.compIndex === compIndex);
+        // DB gram → UI kg.
+        const kg = comp?.currentWeight != null ? Number(comp.currentWeight) / 1000 : 0;
+        setSensorWeightKg(kg);
+        setLoadcellWeight(kg);
+      } catch {
+        if (cancelled) return;
+        // Mất mạng: không bịa số, để 0 và UI hiện "—".
+        setSensorWeightKg(null);
+        setLoadcellWeight(0);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRecallOrderId, activeRecallOrder?.lockerId, activeRecallOrder?.compartmentIndex]);
 
   // BƯỚC 2: CHẠM 1 NÚT MỞ SOLENOID
   const handleOneTouchUnlockSolenoid = () => {
@@ -195,8 +263,8 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     setDoorSensorState('OPEN');
     setRecallPhase('DOOR_OPEN');
     setFailsafeMessage(null);
-    const initialWeight = activeRecallOrder.weight ? parseFloat(activeRecallOrder.weight) : 0.85;
-    setLoadcellWeight(initialWeight);
+    // Mốc khối lượng để so sánh ở bước fail-safe: lấy đúng số cân đã đọc được.
+    setLoadcellWeight(sensorWeightKg != null ? sensorWeightKg : 0);
   };
 
   // BƯỚC 3 & 4: CẢM BIẾN KÉP TỰ ĐỘNG (ZERO-TOUCH)
@@ -259,7 +327,10 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   const handleSimulateForgetPackageAndClose = () => {
     if (!activeRecallOrder) return;
 
-    const currentWeight = activeRecallOrder.weight ? parseFloat(activeRecallOrder.weight) : 0.85;
+    // Mô phỏng: hàng vẫn còn trong ngăn → khối lượng giữ nguyên số cân THẬT đã đọc được
+    // (trước đây là `0.85` bịa). Nếu chưa đọc được cảm biến thì 0 — khi đó fail-safe sẽ
+    // không kích hoạt, đúng hơn là kích hoạt dựa trên số bịa.
+    const currentWeight = sensorWeightKg != null ? sensorWeightKg : 0;
     setDoorSensorState('CLOSED');
     setLoadcellWeight(currentWeight);
     setRecallPhase('PROCESSING');

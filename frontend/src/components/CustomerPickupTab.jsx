@@ -4,7 +4,7 @@ import LockerMap from './LockerMap';
 import CircularTimer from './CircularTimer';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
-import { pickupApi, orderApi } from '../services/api';
+import { pickupApi, orderApi, lockerApi } from '../services/api';
 import {
   Package, Clock, CheckCircle2, AlertTriangle, QrCode,
   Search, MapPin, X, AlertCircle, Timer,
@@ -29,6 +29,11 @@ export default function CustomerPickupTab({ currentUser }) {
   const [copiedOtp, setCopiedOtp] = useState(false);
   const [otpToast, setOtpToast] = useState(null);
   const [nowTime, setNowTime] = useState(Date.now());
+
+  // GĐ5 — cảm biến THẬT của ngăn chứa đơn đang xem: cân nặng + trạng thái cửa.
+  // Trước đây là số cứng `0.85` nên khách nào cũng thấy cùng một con số dù kiện nặng nhẹ khác nhau.
+  // DB lưu GRAM (`MqttService:1069`), `LockerCabinetVisualizer` hiểu KG → chia 1000 tại chỗ truyền.
+  const [compartmentSensor, setCompartmentSensor] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -56,16 +61,39 @@ export default function CustomerPickupTab({ currentUser }) {
     return () => window.removeEventListener('smart_locker_store_updated', handleUpdate);
   }, [currentUser]);
 
-  const loadOrders = () => {
-    const all = store.getOrders();
-    const userOrders = currentUser?.phone
-      ? all.filter((o) => !o.customerPhone || o.customerPhone === currentUser.phone)
-      : all;
-    setOrders(userOrders);
-
-    // Mặc định chọn đơn đầu tiên nếu chưa chọn
-    if (userOrders.length > 0 && !selectedOrderId) {
-      setSelectedOrderId(userOrders[0].orderId);
+  /**
+   * GĐ5-C1 — danh sách đơn lấy từ API THẬT thay vì localStorage.
+   *
+   * <p>Dùng `orderApi.getByPhone(currentUser.phone)`: endpoint đã lọc theo SĐT của chính khách
+   * (controller kiểm thêm principal, xem `OrderController.getOrdersByPhone` — không phải chủ
+   * đơn thì 403), nên client không tự lọc lại được nữa.
+   *
+   * <p>⚠️ Endpoint trả **MỌI** đơn của SĐT đó, gồm cả `CANCELLED`/`COMPLETED`, trong khi code cũ
+   * đọc localStorage chỉ có đơn đang hoạt động. Vì vậy KHÔNG bỏ bộ lọc `filterStatus` ở dưới —
+   * nó vẫn là thứ quyết định tab nào hiện đơn nào.
+   *
+   * <p>`currentUser.phone` lấy từ `UserResponse.phone` của backend khi login, đã lưu trong
+   * `localStorage.smart_locker_user`. Không có SĐT (dữ liệu đăng nhập hỏng) thì GIỮ NGUYÊN danh
+   * sách hiện có thay vì xoá trắng màn hình.
+   */
+  const loadOrders = async () => {
+    const phone = currentUser?.phone;
+    if (!phone) {
+      // Không có SĐT → không gọi API (sẽ 403/400). Fallback localStorage để trang không trắng.
+      setOrders(store.getOrders());
+      return;
+    }
+    try {
+      const res = await orderApi.getByPhone(phone);
+      const apiOrders = res?.data?.data || [];
+      setOrders(apiOrders);
+      if (apiOrders.length > 0 && !selectedOrderId) {
+        setSelectedOrderId(apiOrders[0].orderId);
+      }
+    } catch (err) {
+      // Mất mạng / 401 / 403: giữ dữ liệu mô phỏng để khách vẫn thao tác được.
+      console.warn('[CustomerPickupTab] Không tải được đơn từ API, dùng dữ liệu mô phỏng:', err?.message);
+      setOrders(store.getOrders());
     }
   };
 
@@ -235,6 +263,30 @@ export default function CustomerPickupTab({ currentUser }) {
   });
 
   const selectedOrder = orders.find((o) => o.orderId === selectedOrderId) || filteredOrders[0] || null;
+
+  // GĐ5 — đọc cảm biến của ngăn chứa đơn đang xem, để hiển thị đúng cân nặng thật.
+  // Chỉ đọc khi đơn đã có ngăn; đơn chưa nạp tủ thì không có gì để đọc.
+  useEffect(() => {
+    const lockerId = selectedOrder?.lockerId;
+    const compIndex = selectedOrder?.compartmentIndex;
+    if (!lockerId || compIndex == null) {
+      setCompartmentSensor(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await lockerApi.getCompartments(lockerId);
+        if (cancelled) return;
+        const comp = (res?.data?.data || []).find((c) => c.compIndex === compIndex);
+        setCompartmentSensor(comp || null);
+      } catch {
+        if (!cancelled) setCompartmentSensor(null); // mất mạng thì để trống, không bịa số
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrder?.lockerId, selectedOrder?.compartmentIndex]);
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -640,8 +692,13 @@ export default function CustomerPickupTab({ currentUser }) {
                   lockerName={selectedOrder.lockerName || 'Trạm Tủ KTX A1'}
                   lockerId={selectedOrder.lockerId || 'LOCKER_HN_01'}
                   activeSlotId={selectedOrder.compartmentIndex || 2}
-                  doorState="CLOSED"
-                  sensorWeight={selectedOrder.status === 'DEPOSITED' ? 0.85 : 0.0}
+                  doorState={compartmentSensor?.isDoorClosed != null
+                    ? (compartmentSensor.isDoorClosed ? 'CLOSED' : 'OPEN')
+                    : 'CLOSED'}
+                  // GĐ5 — cân nặng THẬT thay số cứng 0.85. DB lưu gram, component hiểu kg.
+                  sensorWeight={compartmentSensor?.currentWeight != null
+                    ? Number(compartmentSensor.currentWeight) / 1000
+                    : 0}
                   compact={true}
                 />
               </div>

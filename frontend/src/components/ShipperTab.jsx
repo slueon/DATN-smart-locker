@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import CircularTimer from './CircularTimer';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
-import { shipperApi, lockerApi } from '../services/api';
+import { shipperApi, lockerApi, orderApi } from '../services/api';
 import {
   Truck, QrCode, Timer, ShieldCheck, CheckCircle2, AlertTriangle,
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
@@ -46,6 +46,28 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   // việc `reserve` có bị 400 "đã được đặt trước" hay không, hoặc từ lần reserve thành công.
   const [reservedOrderIds, setReservedOrderIds] = useState({});
   const [usingMockData, setUsingMockData] = useState(false);
+
+  // GĐ5-A — CẢM BIẾN THẬT của ngăn đang thao tác.
+  //
+  // Nguồn dữ liệu: `GET /api/lockers/{id}/compartments` → `currentWeight`, `isDoorClosed`.
+  // Hai trường này do thiết bị ghi qua `MqttService.handleCompartmentStatus` (HX711 + MC-38),
+  // KHÔNG phải do UI tự suy ra như code cũ (`0.85` cứng và `doorState` theo bước).
+  //
+  // ⚠️ ĐƠN VỊ — ĐÃ TRUY TẬN GỐC, KHÔNG ĐOÁN:
+  //   • `MQTT_GUIDE.md` dòng 90: "`weight`: trọng lượng do loadcell đo, đơn vị **gram**".
+  //   • `MqttService:1067-1069` ghi THẲNG `payload.weight` vào `current_weight` (**không chia**)
+  //     ⇒ DB lưu **gram**.
+  //   • `LockerCabinetVisualizer` L17/L184 hiểu `sensorWeight` là **KG**.
+  //   ⇒ Phải chia 1000 tại chỗ truyền, nếu không web hiện sai 1000 lần (109.8 g → "109.80 kg").
+  //
+  //   Ngoại lệ đang thấy trong DB: `LOCKER_HN_02` ngăn 1 có `current_weight = 0.85`. Đây là
+  //   **dữ liệu rác** do bug cũ `weightGrams: 0.85` (kg) bị ghi vào cột gram qua
+  //   `ShipperService:168`. Không được lấy giá trị đó làm chuẩn để suy ra đơn vị.
+  const [sensor, setSensor] = useState({
+    weight: null,       // kg — null = chưa đọc được
+    doorClosed: null,   // true/false — null = chưa có bản tin
+    updatedAt: null,    // thời điểm đọc được lần cuối
+  });
 
   // Âm thanh Bíp nhận diện mã vạch của đầu đọc GM65
   const playBeep = () => {
@@ -106,8 +128,18 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       setOrders(apiOrders);
       setUsingMockData(false);
 
-      if (apiOrders.length > 0 && !selectedOrderId) {
-        setSelectedOrderId(apiOrders[0].orderId);
+      if (apiOrders.length > 0) {
+        const reservedMap = {};
+        apiOrders.forEach((o) => {
+          if (o.isShipperReserved) {
+            reservedMap[o.orderId] = o.compartmentIndex || true;
+          }
+        });
+        setReservedOrderIds((prev) => ({ ...reservedMap, ...prev }));
+
+        if (!selectedOrderId) {
+          setSelectedOrderId(apiOrders[0].orderId);
+        }
       }
     } catch (err) {
       console.warn('[ShipperTab] Không gọi được API đơn chờ nạp, dùng dữ liệu mô phỏng:', err?.message);
@@ -121,11 +153,75 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     }
   };
 
-  const handleCreateSampleOrder = () => {
-    const newOrd = store.generateSamplePendingOrder(selectedLockerFilter !== 'ALL' ? selectedLockerFilter : null);
-    loadOrders();
+  const handleCreateSampleOrder = async () => {
+    const sampleProducts = [
+      { name: 'Áo Hoodie PTIT Sinh Viên 2026', price: 280000, size: 'S' },
+      { name: 'Tai nghe Bluetooth True Wireless Pro', price: 450000, size: 'S' },
+      { name: 'Balo Laptop Chống Nước PTIT', price: 520000, size: 'L' },
+      { name: 'Chuột Công Thái Học Không Dây Logitech MX Master', price: 650000, size: 'S' },
+      { name: 'Pin Sạc Dự Phòng Polymer 20.000mAh 22.5W', price: 380000, size: 'S' },
+      { name: 'Bình Giữ Nhiệt Thông Minh LED 500ml', price: 195000, size: 'S' },
+      { name: 'Bàn Phím Cơ Không Dây RGB Low-Profile', price: 850000, size: 'L' },
+    ];
+    const randProd = sampleProducts[Math.floor(Math.random() * sampleProducts.length)];
+
+    try {
+      // 1. Gửi request tạo đơn hàng thật vào Backend CSDL
+      const today = new Date().toISOString().split('T')[0];
+      const res = await orderApi.checkout({
+        customerName: 'Đoàn Viết Hoàng',
+        customerPhone: '0988123456',
+        deliveryType: 'LOCKER',
+        lockerId: 'LOCKER_HN_01',
+        deliveryDate: today,
+        productName: randProd.name,
+        requiredSize: randProd.size,
+        totalAmount: randProd.price,
+        paymentMethod: 'ONLINE_VIETQR',
+        paymentStatus: 'PAID',
+      });
+
+      if (res?.data?.success && res.data.data) {
+        const ord = res.data.data;
+        // Đồng bộ lưu vào store cục bộ
+        store.createOrder({
+          orderId: ord.orderId,
+          customerName: ord.customerName || 'Đoàn Viết Hoàng',
+          customerPhone: ord.customerPhone || '0988123456',
+          productName: ord.productName || randProd.name,
+          productPrice: ord.totalAmount || randProd.price,
+          deliveryType: 'LOCKER',
+          lockerId: 'LOCKER_HN_01',
+          lockerName: ord.lockerName || 'Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)',
+          lockerAddress: ord.lockerAddress || 'Sảnh Tầng 1, KTX A1, Học viện CNBCVT, Km10 Nguyễn Trãi, Q. Hà Đông',
+          compartmentIndex: ord.compartmentIndex || (randProd.size === 'S' ? 1 : 2),
+          compartmentSize: ord.compartmentSize || randProd.size,
+          orderDate: today,
+          expectedDate: ord.expectedDate || today,
+          status: 'PENDING',
+          totalAmount: ord.totalAmount || randProd.price,
+          paymentMethod: 'ONLINE_VIETQR',
+          paymentStatus: 'PAID',
+          qrToken: ord.qrToken,
+          otpCode: null,
+          otpExpiresAt: null,
+        });
+
+        await loadOrders();
+        setSelectedOrderId(ord.orderId);
+        setSampleToast(`Đã thêm đơn ${ord.orderId} cho Đoàn Viết Hoàng (0988123456) gửi về Tủ KTX A1!`);
+        setTimeout(() => setSampleToast(null), 3500);
+        return;
+      }
+    } catch (err) {
+      console.warn('[ShipperTab] Gọi API checkout thất bại, dùng fallback store:', err?.message);
+    }
+
+    // 2. Fallback store nếu API gặp sự cố
+    const newOrd = store.generateSamplePendingOrder('LOCKER_HN_01');
+    await loadOrders();
     setSelectedOrderId(newOrd.orderId);
-    setSampleToast(`Đã thêm đơn hàng ${newOrd.orderId} (${newOrd.productName}) chờ nạp!`);
+    setSampleToast(`Đã thêm đơn ${newOrd.orderId} cho Đoàn Viết Hoàng (0988123456) gửi về Tủ KTX A1!`);
     setTimeout(() => setSampleToast(null), 3500);
   };
 
@@ -238,8 +334,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     }
   };
 
-  /** T3 — nạp danh sách ngăn của tủ để shipper chọn (chỉ hiện ngăn EMPTY). */
-  const loadReserveCompartments = async (lockerId) => {
+  /** T3 — nạp danh sách ngăn của tủ để shipper chọn (gồm ngăn EMPTY và ngăn đang gán cho chính đơn này). */
+  const loadReserveCompartments = async (lockerId, currentCompIndex = null) => {
     if (!lockerId) {
       setReserveCompartments([]);
       return;
@@ -248,7 +344,13 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     try {
       const res = await lockerApi.getCompartments(lockerId);
       const list = res?.data?.data || [];
-      setReserveCompartments(list.filter((c) => String(c.status).toUpperCase() === 'EMPTY'));
+      const assignedIdx = currentCompIndex ?? activeOrder?.compartmentIndex;
+      setReserveCompartments(
+        list.filter((c) => {
+          const isSelf = assignedIdx != null && c.compIndex === assignedIdx;
+          return String(c.status).toUpperCase() === 'EMPTY' || (isSelf && String(c.status).toUpperCase() === 'RESERVED');
+        })
+      );
     } catch (err) {
       setReserveCompartments([]);
       setReserveMessage({
@@ -257,6 +359,37 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       });
     } finally {
       setIsLoadingCompartments(false);
+    }
+  };
+
+  /**
+   * GĐ5-A — đọc cảm biến THẬT của đúng ngăn đang thao tác.
+   *
+   * <p>Không dùng giá trị cứng: `currentWeight` là số cân HX711 đọc được, `isDoorClosed` là
+   * công tắc từ MC-38, cả hai do thiết bị publish lên và backend ghi vào DB. Gọi lại mỗi 2 giây
+   * khi shipper đang ở bước nạp hàng nên UI bám theo phần cứng thật.
+   */
+  const loadCompartmentSensor = async (lockerId, compIndex) => {
+    if (!lockerId || compIndex == null) return null;
+    try {
+      const res = await lockerApi.getCompartments(lockerId);
+      const list = res?.data?.data || [];
+      const comp = list.find((c) => c.compIndex === compIndex);
+      if (!comp) {
+        setSensor({ weight: null, doorClosed: null, updatedAt: null });
+        return null;
+      }
+      const data = {
+        // DB lưu GRAM (xem ghi chú đơn vị ở khối state `sensor`), component hiểu KG → chia 1000.
+        weight: comp.currentWeight != null ? Number(comp.currentWeight) / 1000 : 0,
+        doorClosed: comp.isDoorClosed != null ? Boolean(comp.isDoorClosed) : null,
+        updatedAt: new Date(),
+      };
+      setSensor(data);
+      return data;
+    } catch {
+      // Mất mạng / 401: giữ giá trị cũ, không xoá trắng để UI không nhảy về 0.
+      return null;
     }
   };
 
@@ -341,13 +474,33 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     setIsReserving(true);
     setReserveMessage(null);
     try {
-      const res = await shipperApi.depositPackage({
+      // GĐ5-A3 — BỎ số cứng `weightGrams: 0.85`.
+      //
+      // Trước đây client tự gửi 0.85 cho MỌI kiện hàng, nên `ShipperService:168` ghi số bịa đó
+      // vào `current_weight` (cột GRAM) → DB có 0.85 gram cho một kiện thật, và điều kiện
+      // "cảm biến phát hiện hàng" (`> 0.05`) lại được kiểm bằng chính số bịa. Bước kiểm cảm
+      // biến kép trở nên vô nghĩa.
+      //
+      // Nay đọc lại cảm biến HX711 ngay trước khi gửi. `sensor.weight` đang là **kg** (đã chia
+      // 1000 khi đọc), còn API nhận **gram** → phải NHÂN 1000 để trả về đúng đơn vị gốc của DB.
+      // Nếu chưa đọc được thì bỏ hẳn tham số, để backend giữ nguyên giá trị phần cứng đã báo.
+      let liveWeightKg = sensor.weight;
+      if (liveWeightKg == null) {
+        const fresh = await loadCompartmentSensor(order.lockerId, order.compartmentIndex);
+        liveWeightKg = fresh?.weight ?? null;
+      }
+
+      const payload = {
         lockerId: order.lockerId,
         dynamicToken,
         orderId: order.orderId,
-        weightGrams: 0.85,
         isDoorClosed: true,
-      });
+      };
+      if (liveWeightKg != null) {
+        payload.weightGrams = liveWeightKg * 1000; // kg → gram
+      }
+
+      const res = await shipperApi.depositPackage(payload);
       setReserveMessage({
         type: 'success',
         text: res?.data?.message || `Đã gửi kiện hàng ${order.orderId} vào ngăn.`,
@@ -381,11 +534,33 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       return;
     }
     setReserveTrackingCode(activeOrder.trackingCode || activeOrder.orderId || '');
-    setReserveCompIndex(null);
+    setReserveCompIndex(activeOrder.compartmentIndex || null);
     setReserveMessage(null);
-    loadReserveCompartments(activeOrder.lockerId);
+    loadReserveCompartments(activeOrder.lockerId, activeOrder.compartmentIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrder?.orderId, activeOrder?.lockerId]);
+  }, [activeOrder?.orderId, activeOrder?.lockerId, activeOrder?.compartmentIndex]);
+
+  // GĐ5-A1/A2 — POLL cảm biến thật mỗi 2 giây trong lúc shipper đang nạp hàng.
+  //
+  // Chỉ poll khi đang ở bước 2..4 (đã mở cửa → đặt hàng → kiểm cảm biến), vì đó là lúc số cân
+  // và trạng thái cửa thực sự thay đổi. Tắt poll ở bước khác để không gọi API vô ích.
+  // Có cleanup `clearInterval` — thiếu nó thì chuyển tab xong vẫn tiếp tục gọi API mãi.
+  useEffect(() => {
+    const compIndex = activeOrder?.compartmentIndex;
+    if (!activeOrder?.lockerId || compIndex == null) return undefined;
+
+    const shouldPoll = isDepositing && depositStep >= 2 && depositStep <= 4;
+    if (!shouldPoll) return undefined;
+
+    // Đọc ngay 1 lần rồi mới hẹn chu kỳ, để UI không trống 2 giây đầu.
+    loadCompartmentSensor(activeOrder.lockerId, compIndex);
+    const timer = setInterval(() => {
+      loadCompartmentSensor(activeOrder.lockerId, compIndex);
+    }, 2000);
+
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrder?.lockerId, activeOrder?.compartmentIndex, isDepositing, depositStep]);
 
   return (
     <div className="space-y-5 notranslate select-none">
@@ -595,7 +770,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                 <div className="text-right">
                   <span className="text-[10px] text-slate-400 block font-semibold">Vị trí ngăn chỉ định</span>
                   <span className="text-blue-600 font-extrabold text-sm">
-                    Ngăn #{activeOrder.compartmentIndex} (Size {activeOrder.compartmentSize})
+                    Ngăn #{activeOrder.compartmentIndex} (Size {activeOrder.compartmentSize || (activeOrder.compartmentIndex === 1 ? 'S' : 'L')})
                   </span>
                 </div>
               </div>
@@ -853,15 +1028,37 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="p-3 bg-white rounded-xl border border-emerald-200">
                       <span className="text-[10px] text-slate-500 uppercase block font-semibold">Cảm biến cửa</span>
-                      <span className="font-bold text-emerald-600 flex items-center gap-1 mt-1">
-                        <Check className="w-3.5 h-3.5" /> Đã đóng kín cửa
-                      </span>
+                      {/* GĐ5 — ô này trước đây ghi cứng "Đã đóng kín cửa" cho MỌI trường hợp,
+                          nên nó luôn báo xanh kể cả khi cửa đang mở. Nay bám `sensor.doorClosed`
+                          (MC-38). Chưa có bản tin thì hiện "—" chứ không khẳng định bừa. */}
+                      {sensor.doorClosed == null ? (
+                        <span className="font-bold text-slate-500 flex items-center gap-1 mt-1">
+                          <AlertCircle className="w-3.5 h-3.5" /> Chưa có dữ liệu cảm biến
+                        </span>
+                      ) : sensor.doorClosed ? (
+                        <span className="font-bold text-emerald-600 flex items-center gap-1 mt-1">
+                          <Check className="w-3.5 h-3.5" /> Đã đóng kín cửa
+                        </span>
+                      ) : (
+                        <span className="font-bold text-rose-600 flex items-center gap-1 mt-1">
+                          <AlertTriangle className="w-3.5 h-3.5" /> Cửa đang MỞ
+                        </span>
+                      )}
                     </div>
 
                     <div className="p-3 bg-white rounded-xl border border-emerald-200">
                       <span className="text-[10px] text-slate-500 uppercase block font-semibold">Trọng lượng</span>
-                      <span className="font-bold text-emerald-600 flex items-center gap-1 mt-1">
-                        <Weight className="w-3.5 h-3.5" /> 0.85 kg (Đã có hàng)
+                      {/* GĐ5 — bỏ số cứng "0.85 kg (Đã có hàng)": trước đây kiện nào cũng hiện
+                          0.85 kg nên bước "kiểm tra cảm biến kép" chỉ là trang trí. Nay đọc
+                          `sensor.weight` (kg, đã chia 1000 từ gram). Chưa có dữ liệu thì "—". */}
+                      <span
+                        className={`font-bold flex items-center gap-1 mt-1 ${
+                          sensor.weight != null && sensor.weight > 0 ? 'text-emerald-600' : 'text-slate-500'
+                        }`}
+                      >
+                        <Weight className="w-3.5 h-3.5" />
+                        {sensor.weight != null ? `${sensor.weight.toFixed(2)} kg` : '— kg'}
+                        {sensor.weight != null && sensor.weight > 0 ? ' (Đã có hàng)' : ''}
                       </span>
                     </div>
                   </div>
@@ -882,8 +1079,23 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   lockerName={activeOrder.lockerName}
                   lockerId={activeOrder.lockerId}
                   activeSlotId={activeOrder.compartmentIndex}
-                  doorState={depositStep === 2 || depositStep === 3 ? 'OPEN' : 'CLOSED'}
-                  sensorWeight={depositStep >= 3 ? 0.85 : 0.0}
+                  // GĐ5-A2 — CẢM BIẾN CỬA THẬT (MC-38) từ `isDoorClosed`.
+                  //
+                  // Chọn phương án (b) của thẻ: dùng dữ liệu thật, FALLBACK theo bước UI khi
+                  // CHƯA có bản tin. Lý do bắt buộc phải fallback: thiết bị chỉ publish trạng
+                  // thái khi có thay đổi; nếu shipper bấm "Mở cửa" mà MQTT im lặng (mất mạng,
+                  // tủ chưa gửi), `isDoorClosed` vẫn là `true` từ lần đọc trước → UI hiện CLOSED
+                  // trong khi cửa vừa được lệnh mở, nhìn như nút bấm không tác dụng.
+                  // Vì vậy: có dữ liệu thật thì tin dữ liệu thật; chưa có thì mới tạm bám theo
+                  // bước nghiệp vụ (2–3 = đang mở). Cả hai trường hợp đều KHÔNG bịa số cân.
+                  doorState={
+                    sensor.doorClosed != null
+                      ? (sensor.doorClosed ? 'CLOSED' : 'OPEN')
+                      : (depositStep === 2 || depositStep === 3 ? 'OPEN' : 'CLOSED')
+                  }
+                  // GĐ5-A1 — TRỌNG LƯỢNG THẬT (HX711). Đơn vị kg, khớp `sensorWeight` của
+                  // component. Không còn số cứng 0.85. Chưa đọc được thì 0 (không bịa).
+                  sensorWeight={sensor.weight != null ? sensor.weight : 0}
                   compact={true}
                 />
               </div>

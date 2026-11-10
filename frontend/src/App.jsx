@@ -7,6 +7,7 @@ import ShipperTab from './components/ShipperTab';
 import ShipperRecallTab from './components/ShipperRecallTab';
 import AdminTab from './components/AdminTab';
 import LockerNetworkMapTab from './components/LockerNetworkMapTab';
+import ShipperRouteMap from './components/ShipperRouteMap';
 import IoTDock from './components/IoTDock';
 
 export default function App() {
@@ -129,11 +130,21 @@ export default function App() {
           )}
 
           {activeTab === 'gis-map' && (
-            <LockerNetworkMapTab
-              currentUser={currentUser}
-              onNavigateToPickup={() => setActiveTab('customer')}
-              onNavigateToShipper={() => setActiveTab('shipper')}
-            />
+            // GĐ6 — tab `gis-map` phục vụ HAI vai trò với hai mục đích khác nhau:
+            //  • SHIPPER: bản đồ LỘ TRÌNH đi giao (thứ tự tủ, cảnh báo tủ mất kết nối,
+            //    xem sức chứa ngăn để biết tủ còn chỗ hay không).
+            //  • ADMIN / CUSTOMER: giữ nguyên bản đồ mạng lưới tủ như trước.
+            // Tách component thay vì nhồi cờ `role` vào LockerNetworkMapTab để không làm
+            // rối màn quản trị đang chạy ổn.
+            currentUser?.role === 'SHIPPER' ? (
+              <ShipperRouteMap currentUser={currentUser} />
+            ) : (
+              <LockerNetworkMapTab
+                currentUser={currentUser}
+                onNavigateToPickup={() => setActiveTab('customer')}
+                onNavigateToShipper={() => setActiveTab('shipper')}
+              />
+            )
           )}
         </main>
       </div>

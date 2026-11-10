@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Package, Truck, Shield,
   ChevronLeft, ChevronRight, LogOut, PackageX,
-  MapPin
+  MapPin,
+  Navigation
 } from 'lucide-react';
 import { store } from '../services/store';
 
@@ -14,6 +15,14 @@ export default function Sidebar({
   setCollapsed,
   onLogout
 }) {
+  // GĐ5-C3 — badge "quá hạn" VẪN đọc localStorage, CỐ Ý giữ nguyên.
+  //
+  // Lý do: backend chưa có endpoint trả "số đơn đang chờ/quá hạn" cho sidebar.
+  // `GET /api/shipper/overdue-orders` chỉ SHIPPER gọi được và trả cả danh sách đơn (nặng hơn
+  // nhiều so với nhu cầu chỉ cần con số), còn ADMIN không có endpoint danh sách đơn nào.
+  // Thẻ GĐ5 cấm thêm endpoint mới, nên giữ nguồn cũ và ghi vào tồn đọng.
+  // Hệ quả đã biết: nếu đơn quá hạn chỉ tồn tại trong DB mà chưa đồng bộ xuống localStorage
+  // thì badge có thể lệch — admin vẫn xem được số thật trong tab "Quá hạn" (đọc API).
   const [overdueCount, setOverdueCount] = useState(() => {
     return store.getOrders().filter((o) => o.status === 'OVERDUE').length;
   });
@@ -52,7 +61,9 @@ export default function Sidebar({
           badge: overdueCount > 0 ? overdueCount : null,
           badgeColor: 'rose'
         },
-        { id: 'gis-map', label: 'Bản đồ trạm tủ GIS', icon: MapPin, desc: 'Bản đồ số WGS84' },
+        // GĐ6 — shipper có bản đồ RIÊNG (lộ trình giao hàng), khác bản đồ mạng lưới của Admin.
+        // Label đổi để shipper hiểu đây là công cụ đi giao, không phải bản đồ quản trị.
+        { id: 'gis-map', label: 'Lộ trình giao hàng', icon: Navigation, desc: 'Thứ tự tủ cần giao hôm nay' },
       ]
     },
     {

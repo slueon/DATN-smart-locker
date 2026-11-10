@@ -238,6 +238,8 @@ public class ShipperService {
                         .lockerId(o.getLocker() != null ? o.getLocker().getLockerId() : null)
                         .lockerName(o.getLocker() != null ? o.getLocker().getName() : null)
                         .compartmentIndex(o.getCompartment() != null ? o.getCompartment().getCompIndex() : null)
+                        .compartmentSize(o.getCompartment() != null ? o.getCompartment().getSize() : null)
+                        .isShipperReserved(o.getShipperReservedAt() != null)
                         .expectedDate(o.getExpectedDate())
                         .status(o.getStatus())
                         .productName(o.getProductName())
@@ -311,31 +313,38 @@ public class ShipperService {
             }
         });
 
-        // Khoá bi quan toàn bộ ngăn EMPTY của tủ → chống 2 shipper giành cùng ngăn.
-        List<Compartment> empties = compartmentRepository
-                .findWithLockByLockerIdAndStatus(lockerId, "EMPTY");
-        Compartment target = empties.stream()
-                .filter(c -> compartmentIndex.equals(c.getCompIndex()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Ngăn " + compartmentIndex + " của tủ " + lockerId
-                                + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác."));
-
-        // Đổi ngăn: nhả ngăn CŨ trước — nhưng CHỈ khi ngăn cũ đang RESERVED (ngăn do checkout
-        // gán giữ chỗ). Nếu ngăn cũ đang OCCUPIED thì có hàng thật trong đó: KHÔNG được đá
-        // hàng của người khác ra, phải từ chối để shipper chọn ngăn khác.
         Compartment old = order.getCompartment();
-        if (old != null && !old.getCompIndex().equals(compartmentIndex)) {
-            if ("OCCUPIED".equalsIgnoreCase(old.getStatus())) {
-                throw new IllegalArgumentException(
-                        "Ngăn " + old.getCompIndex() + " mà đơn đang trỏ tới đang CHỨA HÀNG (OCCUPIED). "
-                                + "Không thể đổi sang ngăn " + compartmentIndex
-                                + " vì sẽ mất dấu kiện hàng. Vui lòng liên hệ admin.");
+        Compartment target;
+
+        if (old != null && old.getCompIndex().equals(compartmentIndex)) {
+            // Shipper xác nhận đặt trước chính ngăn hiện tại mà đơn đang được chỉ định
+            target = old;
+        } else {
+            // Đổi ngăn: nhả ngăn CŨ trước — nhưng CHỈ khi ngăn cũ đang RESERVED (ngăn do checkout
+            // gán giữ chỗ). Nếu ngăn cũ đang OCCUPIED thì có hàng thật trong đó: KHÔNG được đá
+            // hàng của người khác ra, phải từ chối để shipper chọn ngăn khác.
+            if (old != null) {
+                if ("OCCUPIED".equalsIgnoreCase(old.getStatus())) {
+                    throw new IllegalArgumentException(
+                            "Ngăn " + old.getCompIndex() + " mà đơn đang trỏ tới đang CHỨA HÀNG (OCCUPIED). "
+                                    + "Không thể đổi sang ngăn " + compartmentIndex
+                                    + " vì sẽ mất dấu kiện hàng. Vui lòng liên hệ admin.");
+                }
+                if ("RESERVED".equalsIgnoreCase(old.getStatus())) {
+                    old.setStatus("EMPTY");
+                    compartmentRepository.save(old);
+                }
             }
-            if ("RESERVED".equalsIgnoreCase(old.getStatus())) {
-                old.setStatus("EMPTY");
-                compartmentRepository.save(old);
-            }
+
+            // Khoá bi quan toàn bộ ngăn EMPTY của tủ → chống 2 shipper giành cùng ngăn.
+            List<Compartment> empties = compartmentRepository
+                    .findWithLockByLockerIdAndStatus(lockerId, "EMPTY");
+            target = empties.stream()
+                    .filter(c -> compartmentIndex.equals(c.getCompIndex()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Ngăn " + compartmentIndex + " của tủ " + lockerId
+                                    + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác."));
         }
 
         target.setStatus("RESERVED");
@@ -368,6 +377,8 @@ public class ShipperService {
                 .lockerId(lockerId)
                 .lockerName(order.getLocker().getName())
                 .compartmentIndex(target.getCompIndex())
+                .compartmentSize(target.getSize())
+                .isShipperReserved(order.getShipperReservedAt() != null)
                 .expectedDate(order.getExpectedDate())
                 .status(order.getStatus())
                 .productName(order.getProductName())
@@ -475,6 +486,8 @@ public class ShipperService {
                         .lockerId(o.getLocker() != null ? o.getLocker().getLockerId() : null)
                         .lockerName(o.getLocker() != null ? o.getLocker().getName() : null)
                         .compartmentIndex(o.getCompartment() != null ? o.getCompartment().getCompIndex() : null)
+                        .compartmentSize(o.getCompartment() != null ? o.getCompartment().getSize() : null)
+                        .isShipperReserved(o.getShipperReservedAt() != null)
                         .expectedDate(o.getExpectedDate())
                         .depositedAt(o.getDepositedAt())
                         .expiryDeadline(o.getExpiryDeadline())

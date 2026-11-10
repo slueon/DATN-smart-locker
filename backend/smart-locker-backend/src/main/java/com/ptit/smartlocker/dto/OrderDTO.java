@@ -1,7 +1,9 @@
 package com.ptit.smartlocker.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.math.BigDecimal;
@@ -45,6 +47,8 @@ public class OrderDTO {
     @Getter
     @Setter
     @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class OrderResponse {
         private String orderId;
         private String customerName;
@@ -53,6 +57,8 @@ public class OrderDTO {
         private String lockerId;
         private String lockerName;
         private Integer compartmentIndex;
+        private String compartmentSize;
+        private Boolean isShipperReserved;
         private LocalDate expectedDate;
         private LocalDateTime depositedAt;
         private LocalDateTime expiryDeadline;
@@ -66,9 +72,6 @@ public class OrderDTO {
         private LocalDateTime createdAt;
         /** T3: mã vận đơn in trên nhãn; null thì coi như bằng orderId. */
         private String trackingCode;
-
-        public OrderResponse() {
-        }
 
         public OrderResponse(String orderId, String customerName, String customerPhone, String deliveryType, String lockerId, String lockerName, Integer compartmentIndex, LocalDate expectedDate, LocalDateTime depositedAt, LocalDateTime expiryDeadline, String status, String productName, BigDecimal totalAmount, String paymentMethod, String paymentStatus, String qrToken, String otpCode, LocalDateTime createdAt) {
             this.orderId = orderId;

@@ -17,11 +17,11 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
 
   const loadLockerData = async () => {
     setIsRefreshing(true);
-    // 1. Láº¥y dá»¯ liá»‡u tá»« local store trÆ°á»›c
+    // 1. Lấy dữ liệu từ local store trước
     const local = store.getLockers();
     setLockers(local);
 
-    // 2. Thá»­ Ä‘á»“ng bá»™ tá»« Backend API náº¿u mÃ¡y chá»§ online
+    // 2. Thử đồng bộ từ Backend API nếu máy chủ online
     try {
       const res = await lockerApi.getAll();
       if (res.data?.data && res.data.data.length > 0) {
@@ -51,7 +51,7 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
             }
           })
         );
-        // Äáº£m báº£o khÃ´ng bao giá» bá»‹ rá»›t tráº¡m náº¿u backend chá»‰ tráº£ vá» má»™t pháº§n
+        // Đảm bảo không bao giờ bị rớt trạm nếu backend chỉ trả về một phần
         const loadedIds = new Set(fullLockers.map((l) => l.lockerId));
         const missing = store.getLockers().filter((l) => !loadedIds.has(l.lockerId));
         const finalAllLockers = [...fullLockers, ...missing];
@@ -59,7 +59,7 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
         localStorage.setItem('smart_locker_lockers_data', JSON.stringify(finalAllLockers));
       }
     } catch {
-      // Backend offline: Giá»¯ nguyÃªn dá»¯ liá»‡u local
+      // Backend offline: Giữ nguyên dữ liệu local
     } finally {
       setIsRefreshing(false);
     }
@@ -76,7 +76,7 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
     };
   }, []);
 
-  // Lá»c dá»¯ liá»‡u tráº¡m tá»§ theo tÃ¬m kiáº¿m vÃ  tráº¡ng thÃ¡i
+  // Lọc dữ liệu trạm tủ theo tìm kiếm và trạng thái
   const filteredLockers = lockers.filter((l) => {
     const statusInfo = getLockerStatusInfo(l);
     if (filterStatus !== 'ALL' && statusInfo.statusKey !== filterStatus) {
@@ -108,8 +108,8 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
   };
 
   const actionBtnLabel = currentUser?.role === 'SHIPPER'
-    ? 'Äáº¿n náº¡p hÃ ng táº¡i tá»§ nÃ y'
-    : 'Xem bÆ°u kiá»‡n cá»§a tÃ´i';
+    ? 'Đến nạp hàng tại tủ này'
+    : 'Xem bưu kiện của tôi';
 
   return (
     <div className="space-y-6">
@@ -120,14 +120,14 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
             <div className="flex items-center gap-2 mb-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
               <span className="text-xs font-mono font-bold text-blue-600 tracking-wider uppercase bg-blue-50/80 px-2.5 py-0.5 rounded-md border border-blue-200/60">
-                Báº£n Äá»“ Sá»‘ â€¢ Leaflet GIS
+                Bản Đồ Số • Leaflet GIS
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              Báº£n Äá»“ Máº¡ng LÆ°á»›i Tráº¡m Tá»§
+              Bản Đồ Mạng Lưới Trạm Tủ
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 mt-1.5 max-w-2xl leading-relaxed">
-              Vá»‹ trÃ­ Ä‘á»‹a lÃ½, sá»©c chá»©a thá»±c táº¿ vÃ  tráº¡ng thÃ¡i káº¿t ná»‘i cá»§a máº¡ng lÆ°á»›i tráº¡m tá»§ thá»i gian thá»±c.
+              Vị trí địa lý, sức chứa thực tế và trạng thái kết nối của mạng lưới trạm tủ thời gian thực.
             </p>
           </div>
 
@@ -137,7 +137,7 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
             className="ios-btn self-start lg:self-center px-5 py-3 rounded-2xl bg-white/80 hover:bg-white text-slate-800 text-xs font-bold border border-white/90 transition flex items-center gap-2 shadow-md cursor-pointer shrink-0 disabled:opacity-50 active:scale-95"
           >
             <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing ? 'Äang Ä‘á»“ng bá»™...' : 'LÃ m má»›i tráº¡m tá»§'}</span>
+            <span>{isRefreshing ? 'Đang đồng bộ...' : 'Làm mới trạm tủ'}</span>
           </button>
         </div>
 
@@ -149,46 +149,46 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="liquid-glass-card rounded-3xl p-5 border border-white/90 shadow-md">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Tá»•ng Tráº¡m Tá»§</span>
+            <span>Tổng Trạm Tủ</span>
             <div className="w-7 h-7 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
               <MapPin className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-extrabold font-mono text-slate-900">{totalLockers} Tráº¡m</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">PhÃ¢n tÃ¡n Ä‘Ã´ thá»‹</div>
+          <div className="text-2xl font-extrabold font-mono text-slate-900">{totalLockers} Trạm</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">Phân tán đô thị</div>
         </div>
 
         <div className="liquid-glass-card rounded-3xl p-5 border border-white/90 shadow-md">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>NgÄƒn Trá»‘ng Kháº£ Dá»¥ng</span>
+            <span>Ngăn Trống Khả Dụng</span>
             <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
               <Package className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-extrabold font-mono text-emerald-600">{totalAvailableSlots} / {totalSlots}</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">Sáºµn sÃ ng nháº­n hÃ ng</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">Sẵn sàng nhận hàng</div>
         </div>
 
         <div className="liquid-glass-card rounded-3xl p-5 border border-white/90 shadow-md">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Tráº¡ng ThÃ¡i Káº¿t Ná»‘i</span>
+            <span>Trạng Thái Kết Nối</span>
             <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
               <Radio className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-extrabold font-mono text-slate-900">{onlineCount} / {totalLockers} Online</div>
-          <div className="text-[11px] text-emerald-600 font-medium mt-0.5">Káº¿t ná»‘i trá»±c tuyáº¿n</div>
+          <div className="text-[11px] text-emerald-600 font-medium mt-0.5">Kết nối trực tuyến</div>
         </div>
 
         <div className="liquid-glass-card rounded-3xl p-5 border border-white/90 shadow-md">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Äá»™ Phá»§ Báº£n Äá»“</span>
+            <span>Độ Phủ Bản Đồ</span>
             <div className="w-7 h-7 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
               <Layers className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-extrabold font-mono text-slate-900">100% WGS84</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">BÃ¡n kÃ­nh 7km</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">Bán kính 7km</div>
         </div>
       </div>
 
@@ -199,7 +199,7 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="TÃ¬m kiáº¿m tráº¡m tá»§ (KTX A1, ThÆ° Viá»‡n)..."
+            placeholder="Tìm kiếm trạm tủ (KTX A1, Thư Viện)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-white/80 border border-white/90 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs transition"
@@ -209,10 +209,10 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
         {/* 3-Color Status Filter Pills */}
         <div className="ios-segmented-tray flex items-center gap-1 overflow-x-auto p-1">
           {[
-            { key: 'ALL', label: 'Táº¥t cáº£' },
-            { key: 'AVAILABLE', label: 'ðŸŸ¢ Rá»—i' },
-            { key: 'FULL', label: 'ðŸ”´ Báº­n' },
-            { key: 'OFFLINE', label: 'âšª Máº¥t káº¿t ná»‘i' },
+            { key: 'ALL', label: 'Tất cả' },
+            { key: 'AVAILABLE', label: '🟢 Rỗi' },
+            { key: 'FULL', label: '🔴 Bận' },
+            { key: 'OFFLINE', label: '⚪ Mất kết nối' },
           ].map((item) => (
             <button
               key={item.key}
@@ -247,15 +247,15 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           <div className="space-y-3">
             <div className="flex items-center justify-between px-1">
               <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Danh sÃ¡ch tráº¡m tá»§ ({filteredLockers.length})
+                Danh sách trạm tủ ({filteredLockers.length})
               </span>
-              <span className="text-[11px] text-slate-400">Nháº¥p tháº» Ä‘á»ƒ Ä‘á»‹nh vá»‹</span>
+              <span className="text-[11px] text-slate-400">Nhấp thẻ để định vị</span>
             </div>
 
             <div className="max-h-[580px] overflow-y-auto pr-1 space-y-3 custom-scrollbar">
             {filteredLockers.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500 liquid-glass-card rounded-3xl border border-white/90 shadow-sm">
-                KhÃ´ng tÃ¬m tháº¥y tráº¡m tá»§ phÃ¹ há»£p vá»›i bá»™ lá»c hiá»‡n táº¡i.
+                Không tìm thấy trạm tủ phù hợp với bộ lọc hiện tại.
               </div>
             ) : (
               filteredLockers.map((locker) => {
@@ -308,8 +308,8 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                     {/* Capacity Progress Bar */}
                     <div className="space-y-1.5 mb-3">
                       <div className="flex justify-between text-[11px] font-medium text-slate-500">
-                        <span>NgÄƒn kháº£ dá»¥ng:</span>
-                        <span className="font-mono text-slate-900"><b>{avail}</b> / {total} ngÄƒn</span>
+                        <span>Ngăn khả dụng:</span>
+                        <span className="font-mono text-slate-900"><b>{avail}</b> / {total} ngăn</span>
                       </div>
                       <div className="w-full bg-slate-200/60 rounded-full h-1.5 overflow-hidden">
                         <div
@@ -335,7 +335,7 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                         }}
                         className="ios-btn px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1 transition shadow-md shadow-blue-600/20 cursor-pointer active:scale-95"
                       >
-                        <span>{currentUser?.role === 'SHIPPER' ? 'Náº¡p hÃ ng' : 'BÆ°u kiá»‡n'}</span>
+                        <span>{currentUser?.role === 'SHIPPER' ? 'Nạp hàng' : 'Bưu kiện'}</span>
                         <ArrowRight className="w-3 h-3" />
                       </button>
                     </div>

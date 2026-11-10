@@ -12,9 +12,9 @@ export default function LockerCabinetVisualizer({
   lockerName = 'Trạm Tủ KTX A1',
   lockerId = 'LOCKER_HN_01',
   compartments = null,
-  activeSlotId = 2, // Ngăn đang thao tác (1, 2, 3)
+  activeSlotId = null, // Ngăn đang thao tác (1, 2)
   doorState = 'CLOSED', // 'CLOSED' | 'OPEN'
-  sensorWeight = 0.85, // KG
+  sensorWeight = 0.0, // KG
   onSelectSlot = null,
   highlightOrder = null,
   compact = false
@@ -36,10 +36,10 @@ export default function LockerCabinetVisualizer({
       name: 'Ngăn 2 (Size L - Lớn)',
       size: 'L',
       dimensions: '40 x 45 x 55 cm',
-      status: 'DEPOSITED',
-      weight: 0.85,
+      status: 'AVAILABLE',
+      weight: 0.0,
       door: 'CLOSED',
-      orderCode: 'ORD-2026-002'
+      orderCode: null
     }
   ];
 
@@ -87,8 +87,10 @@ export default function LockerCabinetVisualizer({
           let statusBadge = { label: 'Ngăn Trống', color: 'emerald', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200/80' };
           if (slot.status === 'OVERDUE') {
             statusBadge = { label: 'Quá Hạn Lưu', color: 'rose', bg: 'bg-rose-50 text-rose-700 border-rose-200/80' };
-          } else if (slot.status === 'DEPOSITED' || slot.status === 'BUSY') {
+          } else if (slot.status === 'DEPOSITED' || slot.status === 'OCCUPIED' || slot.status === 'BUSY') {
             statusBadge = { label: 'Đang Có Hàng', color: 'blue', bg: 'bg-blue-50 text-blue-700 border-blue-200/80' };
+          } else if (slot.status === 'RESERVED') {
+            statusBadge = { label: 'Đã Đặt Trước', color: 'amber', bg: 'bg-amber-50 text-amber-700 border-amber-200/80' };
           }
 
           return (
@@ -149,8 +151,8 @@ export default function LockerCabinetVisualizer({
                       </div>
                     </div>
 
-                    {/* Inside Package Tag */}
-                    {(slot.status === 'DEPOSITED' || slot.status === 'OVERDUE' || (isTarget && currentWeight > 0.05)) && (
+                    {/* Inside Package Tag: Chỉ hiện khi thực tế có kiện và trọng lượng > 0.05kg */}
+                    {((slot.status === 'DEPOSITED' || slot.status === 'OCCUPIED' || slot.status === 'OVERDUE' || isTarget) && currentWeight > 0.05) && (
                       <div className="flex items-center gap-1 bg-blue-50/90 border border-blue-200/80 px-2 py-0.5 rounded-full text-[10px] text-blue-700 font-bold shadow-2xs">
                         <Box className="w-3 h-3" />
                         <span>Có kiện</span>
