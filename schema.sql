@@ -121,6 +121,13 @@ CREATE TABLE IF NOT EXISTS command_logs (
     sent_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ack_received_at DATETIME DEFAULT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'SENT', -- SENT, SUCCESS, TIMEOUT
+    -- GĐ9: AI đã ra lệnh mở tủ. NULLABLE có chủ đích — bảng đã có 31 dòng từ trước khi cột này
+    -- tồn tại, thêm NOT NULL sẽ làm `ddl-auto=update` không ALTER được ⇒ app không khởi động.
+    -- 31 dòng cũ sẽ mãi NULL: dữ liệu đó chưa từng được ghi, không khôi phục được.
+    triggered_by VARCHAR(30) DEFAULT NULL,
+    -- GĐ9: mã đơn liên quan. Cố ý là chuỗi trần, KHÔNG phải khoá ngoại sang `orders` —
+    -- nhật ký phải ghi được cả khi đơn đã bị xoá/đổi mã, và FK chỉ thêm một đường N+1 khi tra.
+    order_id VARCHAR(50) DEFAULT NULL,
     FOREIGN KEY (locker_id) REFERENCES lockers(locker_id)
 ) ENGINE=InnoDB;
 

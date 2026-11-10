@@ -3,6 +3,7 @@ import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { authApi, lockerApi, adminApi, mqttApi } from '../services/api';
 import { store } from '../services/store';
 import { getLockerHealth } from '../utils/lockerHealth';
+import { describeActor, actorBadgeClass } from '../utils/commandLogActor';
 import {
   Shield, BarChart3, Radio, AlertTriangle, Users, UserPlus,
   RefreshCw, CheckCircle2, AlertCircle, Key, Lock, Unlock,
@@ -922,6 +923,7 @@ export default function AdminTab() {
                 <thead>
                   <tr className="text-left text-slate-500 border-b border-slate-200">
                     <th className="py-2 pr-3 font-semibold">Thời gian</th>
+                    <th className="py-2 pr-3 font-semibold">Người mở</th>
                     <th className="py-2 pr-3 font-semibold">Tủ</th>
                     <th className="py-2 pr-3 font-semibold">Ngăn</th>
                     <th className="py-2 pr-3 font-semibold">Loại lệnh</th>
@@ -931,15 +933,30 @@ export default function AdminTab() {
                 <tbody>
                   {loadingLogs && commandLogs.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="py-6 text-center text-slate-500 italic">
+                      <td colSpan={6} className="py-6 text-center text-slate-500 italic">
                         Đang tải lịch sử…
                       </td>
                     </tr>
                   )}
-                  {commandLogs.map((log) => (
+                  {commandLogs.map((log) => {
+                    // GĐ9 — cột "Người mở": logic hiển thị nằm ở `utils/commandLogActor.js`
+                    // (dùng chung với panel bản đồ) để hai màn không mô tả khác nhau.
+                    const actor = describeActor(log);
+                    return (
                     <tr key={log.commandId} className="border-b border-slate-100 last:border-0">
                       <td className="py-2 pr-3 font-mono text-slate-700">
                         {log.sentAt ? new Date(log.sentAt).toLocaleString('vi-VN') : '—'}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${actorBadgeClass(actor.tone)}`}
+                          title={actor.detail || undefined}
+                        >
+                          {actor.label}
+                        </span>
+                        {actor.detail && (
+                          <div className="text-[10px] text-slate-500 mt-0.5 font-mono">{actor.detail}</div>
+                        )}
                       </td>
                       <td className="py-2 pr-3 font-mono text-slate-700">{log.lockerId || '—'}</td>
                       <td className="py-2 pr-3 text-slate-700">#{log.compartmentId ?? '—'}</td>
@@ -958,7 +975,8 @@ export default function AdminTab() {
                         </span>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * T2 — Tầng MQTT theo nguyên tắc topic đã chốt:
@@ -491,6 +492,12 @@ public class MqttService implements MqttCallbackExtended {
                         .commandType(action != null ? action : "OPEN_DOOR")
                         .sentAt(LocalDateTime.now())
                         .status("SENT")
+                        // GĐ9 — TRƯỚC ĐÂY hai giá trị này chỉ dùng trong bộ nhớ để chọn mode
+                        // `deposit|pickup` rồi bị vứt đi, nên nhật ký không biết ai đã mở tủ.
+                        // Nay ghi thẳng xuống để tab "Lịch sử mở tủ" trả lời được câu đó.
+                        // KHÔNG đổi chữ ký hàm: 8 chỗ gọi đã truyền đủ 2 tham số.
+                        .triggeredBy(triggeredBy)
+                        .orderId(orderId)
                         .build();
                 commandLogRepository.save(cmdLog);
             }
@@ -628,18 +635,43 @@ public class MqttService implements MqttCallbackExtended {
                 ? null
                 : lockerId.trim();
 
-        return commandLogRepository
-                .findRecentWithLocker(filter, org.springframework.data.domain.PageRequest.of(0, safeLimit))
-                .stream()
-                .map(c -> com.ptit.smartlocker.dto.CommandLogDTO.builder()
-                        .commandId(c.getCommandId())
-                        .lockerId(c.getLocker() != null ? c.getLocker().getLockerId() : null)
-                        .compartmentId(c.getCompartmentId())
-                        .commandType(c.getCommandType())
-                        .status(c.getStatus())
-                        .sentAt(c.getSentAt())
-                        .ackReceivedAt(c.getAckReceivedAt())
-                        .build())
+        List<CommandLog> logs = commandLogRepository
+                .findRecentWithLocker(filter, org.springframework.data.domain.PageRequest.of(0, safeLimit));
+
+        // GĐ9 — tra tên khách cho các lệnh có gắn đơn, bằng ĐÚNG MỘT query.
+        //
+        // Vì sao gom id rồi `findAllById` thay vì tra từng dòng: 20 dòng × 1 query = 20 query
+        // cho một lần mở tab — đúng lỗi N+1 đã sửa nhiều lần trong dự án này. Gom lại còn 1.
+        //
+        // Chỉ lấy đơn của những `orderId` khác null và KHÔNG trùng (Set) để câu IN không phình.
+        Set<String> orderIds = logs.stream()
+                .map(CommandLog::getOrderId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<String, Order> orderById = new HashMap<>();
+        if (!orderIds.isEmpty()) {
+            orderRepository.findAllById(orderIds).forEach(o -> orderById.put(o.getOrderId(), o));
+        }
+
+        return logs.stream()
+                .map(c -> {
+                    Order related = c.getOrderId() != null ? orderById.get(c.getOrderId()) : null;
+                    return com.ptit.smartlocker.dto.CommandLogDTO.builder()
+                            .commandId(c.getCommandId())
+                            .lockerId(c.getLocker() != null ? c.getLocker().getLockerId() : null)
+                            .compartmentId(c.getCompartmentId())
+                            .commandType(c.getCommandType())
+                            .status(c.getStatus())
+                            .sentAt(c.getSentAt())
+                            .ackReceivedAt(c.getAckReceivedAt())
+                            .triggeredBy(c.getTriggeredBy())
+                            .orderId(c.getOrderId())
+                            // Đơn đã bị xoá → vẫn giữ `orderId`, chỉ thiếu tên/SĐT. Không bịa.
+                            .customerName(related != null ? related.getCustomerName() : null)
+                            .customerPhone(related != null ? related.getCustomerPhone() : null)
+                            .build();
+                })
                 .toList();
     }
 

@@ -3,6 +3,7 @@ import LockerMap, { getLockerStatusInfo } from './LockerMap';
 import { store } from '../services/store';
 import { lockerApi, adminApi, mqttApi } from '../services/api';
 import { getLockerHealth, TONE_HEX, formatRelativeTime } from '../utils/lockerHealth';
+import { describeActor, actorBadgeClass } from '../utils/commandLogActor';
 import {
   MapPin, Search, Filter, RefreshCw, Cpu, Activity,
   Layers, CheckCircle2, AlertTriangle, ArrowRight,
@@ -669,16 +670,28 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                   <thead>
                     <tr className="text-left text-slate-500 border-b border-slate-200">
                       <th className="py-1.5 pr-3 font-semibold">Thời gian</th>
+                      <th className="py-1.5 pr-3 font-semibold">Người mở</th>
                       <th className="py-1.5 pr-3 font-semibold">Ngăn</th>
                       <th className="py-1.5 pr-3 font-semibold">Loại</th>
                       <th className="py-1.5 font-semibold">Trạng thái</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.logs.map((log) => (
+                    {detail.logs.map((log) => {
+                      // GĐ9 — cùng logic hiển thị với tab Lịch sử mở tủ của AdminTab.
+                      const actor = describeActor(log);
+                      return (
                       <tr key={log.commandId} className="border-b border-slate-100 last:border-0">
                         <td className="py-1.5 pr-3 font-mono text-slate-700">
                           {log.sentAt ? new Date(log.sentAt).toLocaleString('vi-VN') : '—'}
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          <span
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${actorBadgeClass(actor.tone)}`}
+                            title={actor.detail || undefined}
+                          >
+                            {actor.label}
+                          </span>
                         </td>
                         <td className="py-1.5 pr-3 text-slate-700">#{log.compartmentId ?? '—'}</td>
                         <td className="py-1.5 pr-3 text-slate-700">{log.commandType || '—'}</td>
@@ -696,7 +709,8 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                           </span>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
