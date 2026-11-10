@@ -88,6 +88,20 @@ public class OrderService {
                     .orElseThrow(() -> new RuntimeException("Tủ không tồn tại: " + request.getLockerId()));
             order.setLocker(locker);
 
+            // GĐ10 ý 3 — CHẶN ĐẶT HÀNG VÀO TỦ ĐANG BẢO TRÌ.
+            //
+            // Vị trí quan trọng: phải nằm NGAY SAU `findById(lockerId)` và TRƯỚC
+            // `getOrCreateScheduleWithLock`. Nếu đặt sau, slot lịch biểu đã bị trừ cho một đơn
+            // rồi mới ném lỗi ⇒ slot mất oan, và sau vài lần thử tủ báo "hết chỗ" dù không ai
+            // đặt được. Chặn trước thì không có gì bị thay đổi.
+            //
+            // Ngăn `OUT_OF_SERVICE` không cần kiểm ở đây: các truy vấn cấp ngăn bên dưới chỉ lấy
+            // `EMPTY`, nên ngăn bảo trì tự động không được cấp.
+            if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
+                throw new com.ptit.smartlocker.exception.BusinessException(
+                        "Tủ " + locker.getName() + " đang bảo trì, vui lòng chọn tủ khác hoặc giao tận nhà.");
+            }
+
             // 1. Áp dụng PESSIMISTIC LOCKING để khóa và lấy lịch biểu an toàn (Atomic Lock)
             LockerSlotSchedule schedule = getOrCreateScheduleWithLock(locker, deliveryDate);
 

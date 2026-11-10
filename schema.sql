@@ -172,3 +172,23 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+
+-- 13. BẢNG NHẬT KÝ BẢO TRÌ TỦ/NGĂN (LOCKER_MAINTENANCE_LOGS)
+-- GĐ10: bảng riêng, KHÔNG dùng chung `command_logs` — hai thứ khác bản chất.
+-- `command_logs` ghi lệnh kỹ thuật (phần lớn KHÔNG có ai bấm), còn bảng này ghi hành động
+-- do một admin chủ động làm, kèm lý do và người làm.
+-- compartment_id NULL = bảo trì TOÀN TỦ; có giá trị = bảo trì một ngăn (1-based).
+-- by_username NOT NULL vì mọi lần bảo trì đều đến từ request HTTP đã xác thực ADMIN.
+CREATE TABLE IF NOT EXISTS locker_maintenance_logs (
+    log_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    locker_id VARCHAR(50) NOT NULL,
+    compartment_id INT DEFAULT NULL,
+    action VARCHAR(20) NOT NULL,           -- LOCK / UNLOCK
+    reason_code VARCHAR(30) DEFAULT NULL,  -- GIA_CO, HONG_CAN, VE_SINH, NANG_CAP, KHAC
+    note VARCHAR(255) DEFAULT NULL,
+    by_username VARCHAR(50) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_maintenance_logs_locker (locker_id),
+    KEY idx_maintenance_logs_created (created_at),
+    CONSTRAINT fk_maintenance_logs_locker FOREIGN KEY (locker_id) REFERENCES lockers(locker_id)
+) ENGINE=InnoDB;

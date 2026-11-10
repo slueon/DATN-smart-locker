@@ -30,9 +30,12 @@ import java.util.List;
 public class AdminController {
 
     private final OrderService orderService;
+    private final com.ptit.smartlocker.service.LockerService lockerService;
 
-    public AdminController(OrderService orderService) {
+    public AdminController(OrderService orderService,
+                           com.ptit.smartlocker.service.LockerService lockerService) {
         this.orderService = orderService;
+        this.lockerService = lockerService;
     }
 
     /**
@@ -52,5 +55,24 @@ public class AdminController {
         List<OrderDTO.OrderResponse> orders = orderService.getOrdersForAdmin(status, lockerId);
         return ResponseEntity.ok(ApiResponse.ok(
                 "Lấy danh sách đơn hàng thành công (" + orders.size() + " đơn)", orders));
+    }
+
+    /**
+     * GĐ10 ý 4 — nhật ký bảo trì tủ/ngăn.
+     *
+     * <p>Trả lời "ai đã khoá tủ này, vì sao, lúc nào" — thứ {@code command_logs} không làm được
+     * vì bảng đó ghi lệnh kỹ thuật chứ không ghi ý định của người vận hành.
+     *
+     * @param lockerId bỏ trống = mọi tủ
+     * @param limit    số dòng tối đa (mặc định 50, chặn 1..200)
+     */
+    @GetMapping("/maintenance-logs")
+    public ResponseEntity<ApiResponse<List<com.ptit.smartlocker.dto.MaintenanceLogDTO>>> getMaintenanceLogs(
+            @RequestParam(required = false) String lockerId,
+            @RequestParam(required = false, defaultValue = "50") Integer limit) {
+        List<com.ptit.smartlocker.dto.MaintenanceLogDTO> logs =
+                lockerService.getMaintenanceLogs(lockerId, limit);
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Lấy nhật ký bảo trì thành công (" + logs.size() + " bản ghi)", logs));
     }
 }

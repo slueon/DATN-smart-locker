@@ -8,7 +8,7 @@ import {
   MapPin, Search, Filter, RefreshCw, Cpu, Activity,
   Layers, CheckCircle2, AlertTriangle, ArrowRight,
   Package, Radio, Sparkles, X, Unlock, Clock, ShieldAlert,
-  Check, AlertCircle
+  Check, AlertCircle, Wrench
 } from 'lucide-react';
 
 export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, onNavigateToShipper }) {
@@ -30,6 +30,19 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
   const [overdueByLocker, setOverdueByLocker] = useState({});
   const [detail, setDetail] = useState(null); // { locker, compartments, logs, loadingCompartments, loadingLogs, error }
   const [unlockTarget, setUnlockTarget] = useState(null); // ngăn đang chờ xác nhận mở khẩn cấp
+  /**
+   * GĐ10 — state bảo trì.
+   *
+   * `maintenanceTarget` là lý do tồn tại của "xác nhận 2 bước": bấm nút lần đầu CHỈ đặt state này
+   * (0 request), hộp thoại hiện ra cho admin chọn lý do + ghi chú; bấm "Xác nhận" mới gọi API.
+   * Hình dạng: `{ scope: 'compartment' | 'locker', compIndex: number|null, lock: boolean }`.
+   */
+  const [maintenanceTarget, setMaintenanceTarget] = useState(null);
+  const [maintenanceForm, setMaintenanceForm] = useState({ reasonCode: 'GIA_CO', note: '' });
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [maintenanceMsg, setMaintenanceMsg] = useState(null);
+  const [maintenanceLogs, setMaintenanceLogs] = useState([]);
+  const [loadingMaintenanceLogs, setLoadingMaintenanceLogs] = useState(false);
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockMsg, setUnlockMsg] = useState(null);
 
@@ -196,6 +209,11 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
     setSelectedLockerId(locker.lockerId);
     setUnlockTarget(null);
     setUnlockMsg(null);
+    // GĐ10 — đóng hộp bảo trì cũ khi chuyển trạm: nếu để nguyên, admin mở trạm B mà hộp xác
+    // nhận vẫn ghi "khoá ngăn #1 của trạm A" → bấm nhầm là khoá sai tủ.
+    setMaintenanceTarget(null);
+    setMaintenanceMsg(null);
+    setMaintenanceLogs([]);
     setDetail({
       locker,
       compartments: [],
@@ -204,6 +222,9 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
       loadingLogs: true,
       error: null,
     });
+
+    // Nhật ký bảo trì tải song song, không chờ chung để panel hiện sớm.
+    loadMaintenanceLogs(locker.lockerId);
 
     const [compResult, logResult] = await Promise.allSettled([
       lockerApi.getCompartments(locker.lockerId),
@@ -259,6 +280,87 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
       });
     } finally {
       setUnlockBusy(false);
+    }
+  };
+
+  /* ─────────────────── GĐ10 — BẢO TRÌ ─────────────────── */
+
+  /**
+   * Bấm nút bảo trì lần ĐẦU: chỉ đặt `maintenanceTarget` để hiện hộp xác nhận.
+   *
+   * <p><b>Không gọi API ở đây</b> — đây là yêu cầu xác nhận 2 bước. Khoá một ngăn/tủ sai là
+   * làm gián đoạn dịch vụ thật, nên bước 1 phải là 0 request.
+   */
+  const requestMaintenance = (scope, compIndex, lock) => {
+    setMaintenanceMsg(null);
+    setMaintenanceForm({ reasonCode: 'GIA_CO', note: '' });
+    setMaintenanceTarget({ scope, compIndex, lock });
+  };
+
+  /** Bấm "Xác nhận": lúc này mới thật sự gửi request. */
+  const confirmMaintenance = async () => {
+    if (!detail?.locker || !maintenanceTarget) return;
+    const { scope, compIndex, lock } = maintenanceTarget;
+    setMaintenanceBusy(true);
+    setMaintenanceMsg(null);
+    try {
+      const body = { lock, reasonCode: maintenanceForm.reasonCode, note: maintenanceForm.note || null };
+      if (scope === 'locker') {
+        await lockerApi.setLockerMaintenance(detail.locker.lockerId, body);
+      } else {
+        await lockerApi.setCompartmentMaintenance(detail.locker.lockerId, compIndex, body);
+      }
+      setMaintenanceMsg({
+        type: 'success',
+        text: lock
+          ? `Đã khoá ${scope === 'locker' ? 'toàn tủ' : `ngăn #${compIndex}`} để bảo trì.`
+          : `Đã mở khoá ${scope === 'locker' ? 'toàn tủ' : `ngăn #${compIndex}`}.`,
+      });
+      setMaintenanceTarget(null);
+
+      // Đọc lại dữ liệu thật thay vì tự sửa state: trạng thái ngăn/tủ và nhật ký đều do
+      // backend quyết định (kể cả trường hợp khoá tủ bị chặn vì còn đơn PENDING).
+      const [compRes, logsRes, lockerRes] = await Promise.allSettled([
+        lockerApi.getCompartments(detail.locker.lockerId),
+        adminApi.getMaintenanceLogs(detail.locker.lockerId, 5),
+        lockerApi.getAll(),
+      ]);
+      const fresh = (lockerRes.status === 'fulfilled' ? (lockerRes.value?.data?.data || []) : [])
+        .find((l) => l.lockerId === detail.locker.lockerId);
+      setDetail((prev) => prev && prev.locker.lockerId === detail.locker.lockerId
+        ? {
+            ...prev,
+            locker: fresh ? { ...prev.locker, ...fresh } : prev.locker,
+            compartments: compRes.status === 'fulfilled' ? (compRes.value?.data?.data || []) : prev.compartments,
+          }
+        : prev);
+      if (logsRes.status === 'fulfilled') setMaintenanceLogs(logsRes.value?.data?.data || []);
+      // Cập nhật lại danh sách tủ để marker đổi màu ngay (bảo trì toàn tủ).
+      loadLockerData();
+    } catch (err) {
+      // 409 là ca thường gặp: khoá ngăn OCCUPIED, hoặc khoá tủ còn đơn PENDING (message kèm
+      // danh sách mã đơn). Hiện nguyên văn message backend để admin biết phải làm gì.
+      setMaintenanceMsg({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không thực hiện được bảo trì.',
+      });
+      setMaintenanceTarget(null);
+    } finally {
+      setMaintenanceBusy(false);
+    }
+  };
+
+  /** Tải 5 dòng nhật ký bảo trì gần nhất của trạm đang mở. */
+  const loadMaintenanceLogs = async (lockerId) => {
+    if (!lockerId) return;
+    setLoadingMaintenanceLogs(true);
+    try {
+      const res = await adminApi.getMaintenanceLogs(lockerId, 5);
+      setMaintenanceLogs(res?.data?.data || []);
+    } catch {
+      setMaintenanceLogs([]); // lỗi quyền/mạng: để trống, không bịa
+    } finally {
+      setLoadingMaintenanceLogs(false);
     }
   };
 
@@ -616,6 +718,25 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                     >
                       <Unlock className="w-2.5 h-2.5" /> Mở khẩn cấp
                     </button>
+                    {/* GĐ10 — nút bảo trì ngăn. Ngăn OCCUPIED bị DISABLE kèm tooltip:
+                        khoá ngăn đang có hàng của khách là làm mất hàng người ta, backend
+                        cũng chặn bằng 409 nên đây là lớp bảo vệ thứ hai ở UI. */}
+                    <button
+                      type="button"
+                      onClick={() => requestMaintenance('compartment', c.compIndex, st !== 'OUT_OF_SERVICE')}
+                      disabled={st === 'OCCUPIED' || maintenanceBusy}
+                      title={st === 'OCCUPIED'
+                        ? 'Phải thu hồi kiện hàng trước khi bảo trì ngăn này'
+                        : (st === 'OUT_OF_SERVICE' ? 'Mở khoá bảo trì ngăn này' : 'Khoá ngăn để bảo trì')}
+                      className={`mt-1 w-full text-[9px] font-bold py-1 rounded-md border cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 ${
+                        st === 'OUT_OF_SERVICE'
+                          ? 'border-slate-400 bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Wrench className="w-2.5 h-2.5" />
+                      {st === 'OUT_OF_SERVICE' ? 'Mở lại' : 'Bảo trì'}
+                    </button>
                   </div>
                 );
               })}
@@ -651,6 +772,149 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                     Huỷ
                   </button>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* GĐ10 — KHỐI BẢO TRÌ: công tắc toàn tủ + hộp xác nhận 2 bước + nhật ký gần nhất */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                <Wrench className="w-3 h-3 inline mr-1" />
+                Bảo trì trạm
+              </span>
+              {(() => {
+                const isMaint = String(detail.locker.connectionStatus || '').toUpperCase() === 'MAINTENANCE';
+                return (
+                  <button
+                    type="button"
+                    onClick={() => requestMaintenance('locker', null, !isMaint)}
+                    disabled={maintenanceBusy}
+                    className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer disabled:opacity-60 flex items-center gap-1 ${
+                      isMaint
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Wrench className="w-3 h-3" />
+                    {isMaint ? 'Mở khoá toàn tủ' : 'Bảo trì toàn tủ'}
+                  </button>
+                );
+              })()}
+            </div>
+
+            {maintenanceMsg && (
+              <div
+                className={`p-2.5 rounded-xl text-[11px] mb-2 ${
+                  maintenanceMsg.type === 'success'
+                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50 border border-rose-200 text-rose-800'
+                }`}
+              >
+                {maintenanceMsg.text}
+              </div>
+            )}
+
+            {/* Hộp xác nhận 2 bước — chỉ hiện sau khi bấm nút lần đầu (0 request trước đó). */}
+            {maintenanceTarget && (
+              <div className="p-3 rounded-xl bg-slate-50 border-2 border-slate-300 space-y-2 mb-2">
+                <p className="text-[11px] font-bold text-slate-800">
+                  Xác nhận {maintenanceTarget.lock ? 'KHOÁ' : 'MỞ KHOÁ'}{' '}
+                  {maintenanceTarget.scope === 'locker'
+                    ? `toàn tủ ${detail.locker.lockerId}`
+                    : `ngăn #${maintenanceTarget.compIndex}`} để bảo trì?
+                </p>
+                {maintenanceTarget.scope === 'locker' && maintenanceTarget.lock && (
+                  <p className="text-[10px] text-amber-700">
+                    Nếu tủ còn đơn đang chờ nạp, hệ thống sẽ từ chối và liệt kê mã đơn —
+                    cần chuyển các đơn đó sang tủ khác trước.
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <select
+                    value={maintenanceForm.reasonCode}
+                    onChange={(e) => setMaintenanceForm((f) => ({ ...f, reasonCode: e.target.value }))}
+                    className="text-[11px] bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-slate-700 cursor-pointer"
+                  >
+                    <option value="GIA_CO">Giá cơ</option>
+                    <option value="HONG_CAN">Hỏng cân</option>
+                    <option value="VE_SINH">Vệ sinh</option>
+                    <option value="NANG_CAP">Nâng cấp</option>
+                    <option value="KHAC">Khác</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={maintenanceForm.note}
+                    onChange={(e) => setMaintenanceForm((f) => ({ ...f, note: e.target.value }))}
+                    placeholder="Ghi chú (không bắt buộc)"
+                    className="flex-1 text-[11px] bg-white border border-slate-300 rounded-lg px-2 py-1.5"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={confirmMaintenance}
+                    disabled={maintenanceBusy}
+                    className="flex-1 bg-slate-800 hover:bg-slate-900 text-white text-[11px] font-bold py-1.5 rounded-lg cursor-pointer disabled:opacity-60"
+                  >
+                    {maintenanceBusy ? 'Đang gửi…' : 'Xác nhận'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMaintenanceTarget(null)}
+                    disabled={maintenanceBusy}
+                    className="flex-1 bg-white border border-slate-300 text-slate-700 text-[11px] font-bold py-1.5 rounded-lg cursor-pointer disabled:opacity-60"
+                  >
+                    Huỷ
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Nhật ký bảo trì gần nhất */}
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+              Nhật ký bảo trì {loadingMaintenanceLogs ? '(đang tải…)' : `(${maintenanceLogs.length})`}
+            </span>
+            {!loadingMaintenanceLogs && maintenanceLogs.length === 0 && (
+              <p className="text-[11px] text-slate-500 italic">Chưa có lần bảo trì nào cho trạm này.</p>
+            )}
+            {maintenanceLogs.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-left text-slate-500 border-b border-slate-200">
+                      <th className="py-1.5 pr-3 font-semibold">Thời gian</th>
+                      <th className="py-1.5 pr-3 font-semibold">Phạm vi</th>
+                      <th className="py-1.5 pr-3 font-semibold">Lý do</th>
+                      <th className="py-1.5 font-semibold">Ai làm</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {maintenanceLogs.map((m) => (
+                      <tr key={m.logId} className="border-b border-slate-100 last:border-0">
+                        <td className="py-1.5 pr-3 font-mono text-slate-700">
+                          {m.createdAt ? new Date(m.createdAt).toLocaleString('vi-VN') : '—'}
+                        </td>
+                        <td className="py-1.5 pr-3 text-slate-700">
+                          {m.compartmentId != null ? `Ngăn #${m.compartmentId}` : 'Toàn tủ'}
+                        </td>
+                        <td className="py-1.5 pr-3 text-slate-700">
+                          <span
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                              m.action === 'LOCK'
+                                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            }`}
+                          >
+                            {m.action === 'LOCK' ? 'Khoá' : 'Mở'}
+                          </span>{' '}
+                          {m.reasonCode || '—'}
+                        </td>
+                        <td className="py-1.5 font-mono text-slate-700">{m.byUsername || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>

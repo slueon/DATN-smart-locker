@@ -137,6 +137,23 @@ public class MqttService implements MqttCallbackExtended {
     // ─────────────────────────── topic & ánh xạ id ───────────────────────────
 
     /** Dựng topic từ gốc: {@code topic("qr","shipper")} → {@code ptit/qr/shipper}. */
+    /**
+     * GĐ10 — bản public của {@link #topic(String...)} cho các service khác (bảo trì ở
+     * {@code LockerService}) cần dựng đúng topic theo {@code mqtt.topic.base} mà không phải
+     * biết base là gì. Không mở rộng thêm hành vi, chỉ lộ đường dựng topic.
+     */
+    public String buildTopic(String... parts) {
+        return topic(parts);
+    }
+
+    /**
+     * GĐ10 — bản public của {@link #deviceIdOf(String)} để service khác đổi id tủ trong CSDL
+     * ({@code LOCKER_HN_01}) sang id thiết bị dùng trong topic ({@code khuon_vien}).
+     */
+    public String resolveDeviceId(String dbLockerId) {
+        return deviceIdOf(dbLockerId);
+    }
+
     private String topic(String... parts) {
         StringBuilder sb = new StringBuilder(topicBase == null || topicBase.isBlank() ? "ptit" : topicBase.trim());
         for (String part : parts) {

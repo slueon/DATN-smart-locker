@@ -121,6 +121,17 @@ export const lockerApi = {
   getCompartments: (id) => api.get(`/lockers/${id}/compartments`),
   checkCapacity: (lockerId, date) => api.get(`/lockers/${lockerId}/capacity?date=${date}`),
   forceUnlock: (lockerId, compIndex) => api.post(`/lockers/${lockerId}/compartments/${compIndex}/unlock`),
+
+  /**
+   * GĐ10 — bảo trì MỘT NGĂN. `body = { lock, reasonCode, note }`.
+   * Backend tự lấy username từ token (không nhận từ client) để nhật ký không bị khai man.
+   */
+  setCompartmentMaintenance: (lockerId, compIndex, body) =>
+    api.post(`/lockers/${lockerId}/compartments/${compIndex}/maintenance`, body),
+
+  /** GĐ10 — bảo trì TOÀN TỦ. `body = { lock, reasonCode, note }`. */
+  setLockerMaintenance: (lockerId, body) =>
+    api.post(`/lockers/${lockerId}/maintenance`, body),
 };
 
 export const orderApi = {
@@ -178,6 +189,15 @@ export const adminApi = {
     if (lockerId && lockerId !== 'ALL') params.set('lockerId', lockerId);
     const qs = params.toString();
     return api.get(`/admin/orders${qs ? `?${qs}` : ''}`);
+  },
+
+  /** GĐ10 — nhật ký bảo trì tủ/ngăn (ai khoá, vì sao, lúc nào). */
+  getMaintenanceLogs: (lockerId, limit) => {
+    const params = new URLSearchParams();
+    if (lockerId && lockerId !== 'ALL') params.set('lockerId', lockerId);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return api.get(`/admin/maintenance-logs${qs ? `?${qs}` : ''}`);
   },
 };
 

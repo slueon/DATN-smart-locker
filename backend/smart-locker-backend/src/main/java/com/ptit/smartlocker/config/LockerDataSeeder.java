@@ -81,7 +81,17 @@ public class LockerDataSeeder implements CommandLineRunner {
                 locker.setAddress(s.address());
                 locker.setLatitude(s.lat());
                 locker.setLongitude(s.lng());
-                locker.setConnectionStatus(s.status());
+                // GĐ10 — KHÔNG ghi đè trạng thái MAINTENANCE.
+                //
+                // Đây là lỗi thật đã bắt được khi kiểm: seeder chạy MỖI LẦN khởi động và ghi
+                // `s.status()` (mặc định ONLINE) đè lên cột. Hệ quả: admin khoá tủ để bảo trì,
+                // backend restart là tủ TỰ THOÁT bảo trì trong khi nhật ký vẫn ghi "đã khoá" —
+                // lỗi im lặng, không ai phát hiện cho tới khi khách đặt được đơn vào tủ đang sửa.
+                //
+                // Bảo trì là quyết định của con người, seeder dữ liệu mẫu không được xoá nó.
+                if (!"MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
+                    locker.setConnectionStatus(s.status());
+                }
                 locker.setTotalCompartments(2);
                 lockerRepository.save(locker);
             }

@@ -29,15 +29,16 @@ public class OrderController {
 
     /**
      * Đặt hàng E-Commerce (Áp dụng Pessimistic Locking chống Race Condition)
+     *
+     * <p><b>GĐ10 — đã bỏ {@code catch (Exception)} ở đây.</b> Trước đó mọi ngoại lệ bị nuốt và
+     * trả về 400, nên {@code BusinessException} (ví dụ "tủ đang bảo trì") mất đúng mã 409 mà
+     * {@code GlobalExceptionHandler} đã ánh xạ. Controller không còn quyết định status — việc đó
+     * thuộc về advice, một nguồn duy nhất.
      */
     @PostMapping("/checkout")
     public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> checkout(@RequestBody OrderDTO.CheckoutRequest request) {
-        try {
-            OrderDTO.OrderResponse response = orderService.createOrder(request);
-            return ResponseEntity.ok(ApiResponse.ok("Đặt hàng thành công!", response));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        OrderDTO.OrderResponse response = orderService.createOrder(request);
+        return ResponseEntity.ok(ApiResponse.ok("Đặt hàng thành công!", response));
     }
 
     /**

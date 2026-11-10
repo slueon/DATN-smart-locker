@@ -14,6 +14,24 @@ const escapeHtml = (unsafe) => {
 };
 
 export const getLockerStatusInfo = (locker) => {
+  // GĐ10 — BẢO TRÌ phải được nhận diện TRƯỚC "mất kết nối" và trước "rỗi/bận".
+  //
+  // Vì sao cần trạng thái riêng: đây là hai chuyện KHÁC NHAU. `MAINTENANCE` là tủ CỐ TÌNH
+  // ngừng phục vụ (admin đã khoá để sửa) — không có gì hỏng, không ai cần đi cứu. Còn
+  // "mất kết nối" là tủ ĐANG CHẾT (heartbeat cũ). Nếu vẽ chung một màu đỏ thì admin không
+  // phân biệt được "tôi vừa khoá tủ này" với "tủ này vừa hỏng".
+  // Màu chọn: xám-xanh (slate/teal) — trung tính, khác hẳn đỏ cảnh báo.
+  if (locker.connectionStatus === 'MAINTENANCE' || locker.connection_status === 'MAINTENANCE') {
+    return {
+      statusKey: 'MAINTENANCE',
+      dotColor: '#64748b', // xám xanh: đang bảo trì (cố tình tắt)
+      label: 'Bảo trì',
+      badgeBg: '#f1f5f9',
+      badgeText: '#334155',
+      borderColor: '#94a3b8',
+      isMaintenance: true,
+    };
+  }
   const isOffline = locker.status === 'OFFLINE' || locker.connectionStatus === 'OFFLINE' || locker.connection_status === 'OFFLINE';
   if (isOffline) {
     return {
@@ -198,6 +216,7 @@ export default function LockerMap({
                   box-shadow: 0 0 0 2px ${isSelected ? 'rgba(255,255,255,0.6)' : statusInfo.badgeBg};
                 "></span>
                 <span>${escapeHtml(locker.name || 'Trạm Tủ PTIT')}</span>
+                ${statusInfo.isMaintenance ? '<span title="Đang bảo trì" style="font-size:11px;">🔧</span>' : ''}
                 <span style="
                   font-size: 10px;
                   font-weight: 600;

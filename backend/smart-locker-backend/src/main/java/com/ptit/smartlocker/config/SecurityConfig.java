@@ -146,6 +146,13 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/mqtt/command-logs").hasAnyRole("ADMIN", "SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/mqtt/command", "/api/mqtt/retained-state/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/lockers/*/compartments/*/unlock").hasRole("ADMIN")
+                // GĐ10 — bảo trì tủ/ngăn. BẮT BUỘC đặt ở đây, TRƯỚC luật
+                // `.requestMatchers(HttpMethod.GET, "/api/lockers/**").authenticated()` bên dưới:
+                // matcher khớp theo thứ tự khai báo, đặt sau thì CUSTOMER gọi được endpoint
+                // khoá tủ (chỉ cần đăng nhập là đủ) — đúng loại lỗi phân quyền im lặng.
+                .requestMatchers(HttpMethod.POST,
+                        "/api/lockers/*/compartments/*/maintenance").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/lockers/*/maintenance").hasRole("ADMIN")
 
                 // --- by-phone: TÁCH RIÊNG, phải đứng TRƯỚC "/api/orders/**".
                 //     Luật path chỉ chặn mức "đã đăng nhập"; kiểm tra CUSTOMER chỉ xem SĐT của chính mình

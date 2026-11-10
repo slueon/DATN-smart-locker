@@ -67,4 +67,58 @@ public class LockerController {
         Compartment comp = lockerService.forceUnlockCompartment(lockerId, compIndex);
         return ResponseEntity.ok(ApiResponse.ok("Mở khóa khẩn cấp và giải phóng ngăn thành công!", comp));
     }
+
+    /**
+     * GĐ10 ý 1 — khoá / mở khoá MỘT NGĂN để bảo trì.
+     *
+     * <p>{@code byUsername} lấy từ {@link java.security.Principal} (đã xác thực ADMIN ở
+     * {@code SecurityConfig}) chứ KHÔNG nhận từ body — nhận từ body là để client tự khai mình
+     * là ai, làm nhật ký bảo trì mất giá trị.
+     */
+    @PostMapping("/{lockerId}/compartments/{compIndex}/maintenance")
+    public ResponseEntity<ApiResponse<Compartment>> setCompartmentMaintenance(
+            @PathVariable String lockerId,
+            @PathVariable Integer compIndex,
+            @RequestBody(required = false) MaintenanceRequest request,
+            java.security.Principal principal) {
+        boolean lock = request == null || request.getLock() == null || request.getLock();
+        String reasonCode = request != null ? request.getReasonCode() : null;
+        String note = request != null ? request.getNote() : null;
+        String byUsername = principal != null ? principal.getName() : "unknown";
+
+        Compartment comp = lockerService.setCompartmentMaintenance(
+                lockerId, compIndex, lock, reasonCode, note, byUsername);
+        return ResponseEntity.ok(ApiResponse.ok(
+                (lock ? "Đã khoá ngăn #" : "Đã mở khoá ngăn #") + compIndex + " để bảo trì.", comp));
+    }
+
+    /**
+     * GĐ10 ý 2 — khoá / mở khoá TOÀN TỦ.
+     *
+     * <p>Khoá khi còn đơn `PENDING` sẽ bị {@code BusinessException} → 409 kèm danh sách mã đơn.
+     */
+    @PostMapping("/{lockerId}/maintenance")
+    public ResponseEntity<ApiResponse<Locker>> setLockerMaintenance(
+            @PathVariable String lockerId,
+            @RequestBody(required = false) MaintenanceRequest request,
+            java.security.Principal principal) {
+        boolean lock = request == null || request.getLock() == null || request.getLock();
+        String reasonCode = request != null ? request.getReasonCode() : null;
+        String note = request != null ? request.getNote() : null;
+        String byUsername = principal != null ? principal.getName() : "unknown";
+
+        Locker locker = lockerService.setLockerMaintenance(lockerId, lock, reasonCode, note, byUsername);
+        return ResponseEntity.ok(ApiResponse.ok(
+                (lock ? "Đã khoá toàn tủ " : "Đã mở khoá toàn tủ ") + lockerId + ".", locker));
+    }
+
+    /** Body của 2 endpoint bảo trì — gói trong controller cho gọn, chỉ dùng ở đây. */
+    @lombok.Getter
+    @lombok.Setter
+    public static class MaintenanceRequest {
+        /** true = khoá (mặc định khi bỏ trống), false = mở khoá. */
+        private Boolean lock;
+        private String reasonCode;
+        private String note;
+    }
 }
