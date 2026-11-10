@@ -128,4 +128,22 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.locker "
             + "WHERE o.status = 'DEPOSITED' AND o.expiryDeadline < :now")
     List<Order> findOverdueOrdersFetchLocker(@Param("now") LocalDateTime now);
+
+    /**
+     * GĐ7 — danh sách đơn cho ADMIN, lọc tuỳ chọn theo trạng thái và theo tủ.
+     *
+     * <p><b>Nạp sẵn cả {@code compartment} và {@code locker}</b> để {@code mapToOrderResponse}
+     * đọc được {@code getCompartment().getCompIndex()} và {@code getLocker().getLockerId()}
+     * mà không phát thêm SELECT cho từng đơn — đúng bài học N+1 ở GĐ3. Endpoint này trả cả bảng
+     * đơn nên N+1 ở đây sẽ rất đắt.
+     *
+     * <p>{@code status} null hoặc {@code 'ALL'} = mọi trạng thái; {@code lockerId} null = mọi tủ.
+     * Điều kiện viết dạng {@code (:param IS NULL OR ...)} để một câu query phục vụ cả 4 tổ hợp
+     * lọc, thay vì 4 hàm riêng.
+     */
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker l "
+            + "WHERE (:status IS NULL OR o.status = :status) "
+            + "AND (:lockerId IS NULL OR l.lockerId = :lockerId) "
+            + "ORDER BY o.createdAt DESC")
+    List<Order> findForAdmin(@Param("status") String status, @Param("lockerId") String lockerId);
 }

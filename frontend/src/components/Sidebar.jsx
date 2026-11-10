@@ -6,6 +6,7 @@ import {
   Navigation
 } from 'lucide-react';
 import { store } from '../services/store';
+import { adminApi, shipperApi } from '../services/api';
 
 export default function Sidebar({
   activeTab,
@@ -15,29 +16,58 @@ export default function Sidebar({
   setCollapsed,
   onLogout
 }) {
-  // GĐ5-C3 — badge "quá hạn" VẪN đọc localStorage, CỐ Ý giữ nguyên.
-  //
-  // Lý do: backend chưa có endpoint trả "số đơn đang chờ/quá hạn" cho sidebar.
-  // `GET /api/shipper/overdue-orders` chỉ SHIPPER gọi được và trả cả danh sách đơn (nặng hơn
-  // nhiều so với nhu cầu chỉ cần con số), còn ADMIN không có endpoint danh sách đơn nào.
-  // Thẻ GĐ5 cấm thêm endpoint mới, nên giữ nguồn cũ và ghi vào tồn đọng.
-  // Hệ quả đã biết: nếu đơn quá hạn chỉ tồn tại trong DB mà chưa đồng bộ xuống localStorage
-  // thì badge có thể lệch — admin vẫn xem được số thật trong tab "Quá hạn" (đọc API).
-  const [overdueCount, setOverdueCount] = useState(() => {
-    return store.getOrders().filter((o) => o.status === 'OVERDUE').length;
-  });
+  /**
+   * GĐ7 — badge "quá hạn" lấy từ API THẬT, và chọn nguồn theo VAI TRÒ.
+   *
+   * <p><b>Vì sao phải chia vai trò:</b> Sidebar này dùng chung cho cả 3 vai trò, nhưng
+   * {@code /api/admin/orders} chỉ ADMIN gọi được (SHIPPER/CUSTOMER nhận 403). Vậy:
+   * <ul>
+   *   <li><b>ADMIN</b> → {@code adminApi.getOrders('OVERDUE')} (endpoint mới của GĐ7).</li>
+   *   <li><b>SHIPPER</b> → {@code shipperApi.getOverdueOrders()} — endpoint có sẵn, đã trả đúng
+   *       đơn OVERDUE.</li>
+   *   <li><b>CUSTOMER</b> → **không gọi gì**, badge bị ẩn: khách không có tab quá hạn, và
+   *       không có endpoint nào cho khách đếm đơn quá hạn của riêng mình.</li>
+   * </ul>
+   *
+   * <p>Lỗi mạng → giữ `null` (ẩn badge) chứ không hiện số sai. Badge "quá hạn" sai còn tệ hơn
+   * không có badge: admin sẽ tưởng có việc phải xử lý, hoặc tưởng đã xử lý xong.
+   */
+  const [overdueCount, setOverdueCount] = useState(null);
 
   useEffect(() => {
-    const handleUpdate = () => {
-      setOverdueCount(store.getOrders().filter((o) => o.status === 'OVERDUE').length);
+    const role = currentUser?.role;
+    if (role !== 'ADMIN' && role !== 'SHIPPER') {
+      setOverdueCount(null); // CUSTOMER: không có badge
+      return undefined;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = role === 'ADMIN'
+          ? await adminApi.getOrders('OVERDUE')
+          : await shipperApi.getOverdueOrders(null);
+        if (cancelled) return;
+        const list = res?.data?.data || [];
+        setOverdueCount(list.length);
+      } catch {
+        if (!cancelled) setOverdueCount(null); // lỗi mạng: ẩn badge, không hiện số sai
+      }
     };
+    load();
+
+    // Vẫn nghe sự kiện store để badge cập nhật ngay khi có thay đổi cục bộ (ví dụ shipper vừa
+    // thu hồi hàng), nhưng số hiển thị luôn lấy lại từ API.
+    const handleUpdate = () => load();
     window.addEventListener('smart_locker_store_updated', handleUpdate);
     window.addEventListener('smart_locker_overdue_detected', handleUpdate);
     return () => {
+      cancelled = true;
       window.removeEventListener('smart_locker_store_updated', handleUpdate);
       window.removeEventListener('smart_locker_overdue_detected', handleUpdate);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.role]);
 
   const navigationGroups = [
     {

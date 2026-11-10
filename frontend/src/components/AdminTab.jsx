@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
-import { authApi, lockerApi } from '../services/api';
+import { authApi, lockerApi, adminApi, mqttApi } from '../services/api';
 import { store } from '../services/store';
 import {
   Shield, BarChart3, Radio, AlertTriangle, Users, UserPlus,
@@ -16,7 +16,18 @@ const INITIAL_USERS = [
 ];
 
 export default function AdminTab() {
-  const [activeAdminSubTab, setActiveAdminSubTab] = useState('kpi'); // 'kpi', 'matrix', 'overdue', 'users'
+  const [activeAdminSubTab, setActiveAdminSubTab] = useState('kpi'); // 'kpi', 'matrix', 'overdue', 'users', 'logs'
+
+  /**
+   * GĐ7 — lịch sử mở tủ (`command_logs`) cho tab "Lịch sử mở tủ".
+   *
+   * <p>Bảng này trước đây đã ghi mọi lệnh mở tủ nhưng không có cách nào xem lại trên web —
+   * muốn biết "tủ mở lúc nào, ngăn nào" phải gõ SQL tay. Nay đọc qua
+   * `GET /api/mqtt/command-logs` (ADMIN/SHIPPER), tối đa 20 dòng gần nhất cho gọn màn hình.
+   */
+  const [commandLogs, setCommandLogs] = useState([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [logsError, setLogsError] = useState(null);
 
   // KPI Data
   const [kpi, setKpi] = useState({
@@ -69,10 +80,6 @@ export default function AdminTab() {
    * SĐT. Ghi vào tồn đọng thay vì tự thêm endpoint ngoài phạm vi thẻ.
    */
   const refreshAllData = async () => {
-    // Phần đơn hàng: giữ nguồn cũ (xem lý do ở Javadoc trên).
-    const localOrders = store.getOrders();
-    setOrders(localOrders);
-
     try {
       const lockerRes = await lockerApi.getAll();
       const apiLockers = lockerRes?.data?.data || [];
@@ -107,11 +114,30 @@ export default function AdminTab() {
         });
       });
 
-      const deliveredCount = localOrders.filter(
-        (o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED'
-      ).length;
-      const overdueCount = localOrders.filter((o) => o.status === 'OVERDUE').length;
-      const totalRevenue = localOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0);
+      // GĐ7 — 3 chỉ số đơn hàng lấy từ API THẬT (`GET /api/admin/orders`).
+      //
+      // Trước GĐ7 phải đọc `store.getOrders()` vì backend không có endpoint danh sách đơn cho
+      // ADMIN. Hệ quả cũ: `deliveredCount`/`overdueCount`/`totalRevenue` chỉ đúng nếu
+      // localStorage đã đồng bộ — số liệu sai lệch so với DB thật mà không ai biết.
+      //
+      // Lỗi API này KHÔNG được làm hỏng phần tủ/ngăn ở trên (đã tính xong): bọc riêng try/catch,
+      // giữ số cũ nếu lỗi thay vì ghi đè bằng 0.
+      let deliveredCount = 0;
+      let overdueCount = 0;
+      let totalRevenue = 0;
+      try {
+        const ordersRes = await adminApi.getOrders('ALL');
+        const apiOrders = ordersRes?.data?.data || [];
+        setOrders(apiOrders);
+        deliveredCount = apiOrders.filter(
+          (o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED'
+        ).length;
+        overdueCount = apiOrders.filter((o) => o.status === 'OVERDUE').length;
+        totalRevenue = apiOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0);
+      } catch (orderErr) {
+        // 403 (không phải ADMIN) / mất mạng: giữ số 0 thay vì bịa, và nói rõ trong console.
+        console.warn('[AdminTab] Không tải được danh sách đơn:', orderErr?.message);
+      }
 
       setKpi({
         occupancyRate: totalSlots > 0 ? Math.round((occupiedSlots / totalSlots) * 100) : 0,
@@ -126,6 +152,38 @@ export default function AdminTab() {
       console.warn('[AdminTab] Không tải được danh sách tủ từ API:', err?.message);
     }
   };
+
+  /**
+   * GĐ7 — tải 20 lệnh mở tủ gần nhất.
+   *
+   * <p><b>Vì sao đọc theo tab (không tải cùng KPI):</b> bảng `command_logs` là dữ liệu vận hành,
+   * phần lớn lần vào dashboard admin không cần xem. Tải sẵn sẽ làm chậm màn KPI mà không ai
+   * dùng. Hàm này chỉ chạy khi bấm vào tab "Lịch sử mở tủ".
+   */
+  const loadCommandLogs = async () => {
+    setLoadingLogs(true);
+    setLogsError(null);
+    try {
+      const res = await mqttApi.getCommandLogs(null, 20);
+      setCommandLogs(res?.data?.data || []);
+    } catch (err) {
+      setLogsError(
+        err?.response?.data?.message
+          || 'Không tải được lịch sử mở tủ. Kiểm tra quyền ADMIN và backend.'
+      );
+      setCommandLogs([]);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  // GĐ7 — chỉ tải lịch sử mở tủ khi thực sự mở tab đó (xem lý do trong `loadCommandLogs`).
+  useEffect(() => {
+    if (activeAdminSubTab === 'logs') {
+      loadCommandLogs();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAdminSubTab]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // GĐ5-B2 — TRẠNG THÁI KẾT NỐI THẬT của tủ, suy ra từ `lastHeartbeat`.
@@ -364,6 +422,8 @@ export default function AdminTab() {
           { id: 'matrix', label: 'Sơ đồ ngăn tủ', icon: Radio },
           { id: 'overdue', label: 'Đơn quá hạn', icon: AlertTriangle },
           { id: 'users', label: 'Người dùng & RBAC', icon: Users },
+          // GĐ7 — xem lại lịch sử mở tủ: ai mở, tủ nào, ngăn nào, lúc nào.
+          { id: 'logs', label: 'Lịch sử mở tủ', icon: Key },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeAdminSubTab === tab.id;
@@ -863,6 +923,96 @@ export default function AdminTab() {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* TAB 5 (GĐ7): LỊCH SỬ MỞ TỦ */}
+      {activeAdminSubTab === 'logs' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                <Key className="w-4 h-4 text-blue-600" /> Lịch sử mở tủ
+              </h3>
+              <p className="text-xs text-slate-500">
+                20 lệnh gần nhất từ <code className="font-mono">command_logs</code> — mỗi lần
+                Solenoid được lệnh bung đều có một dòng ở đây.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadCommandLogs}
+              disabled={loadingLogs}
+              className="p-2.5 bg-white hover:bg-slate-50 rounded-xl text-slate-600 transition border border-slate-200 cursor-pointer shadow-2xs disabled:opacity-60"
+              title="Tải lại lịch sử"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingLogs ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {logsError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-[11px] text-rose-800">
+              {logsError}
+            </div>
+          )}
+
+          {!logsError && commandLogs.length === 0 && !loadingLogs && (
+            <div className="liquid-glass-card rounded-3xl border border-white/90 p-10 text-center shadow-sm">
+              <Key className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+              <h4 className="font-bold text-slate-800 text-sm">Chưa có lệnh mở tủ nào</h4>
+              <p className="text-xs text-slate-500 mt-1">
+                Bấm nút tải lại ở trên, hoặc lịch sử đang trống trong CSDL.
+              </p>
+            </div>
+          )}
+
+          {(commandLogs.length > 0 || loadingLogs) && (
+            <div className="liquid-glass-card rounded-3xl border border-white/90 p-4 shadow-md overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-slate-500 border-b border-slate-200">
+                    <th className="py-2 pr-3 font-semibold">Thời gian</th>
+                    <th className="py-2 pr-3 font-semibold">Tủ</th>
+                    <th className="py-2 pr-3 font-semibold">Ngăn</th>
+                    <th className="py-2 pr-3 font-semibold">Loại lệnh</th>
+                    <th className="py-2 font-semibold">Trạng thái</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loadingLogs && commandLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-6 text-center text-slate-500 italic">
+                        Đang tải lịch sử…
+                      </td>
+                    </tr>
+                  )}
+                  {commandLogs.map((log) => (
+                    <tr key={log.commandId} className="border-b border-slate-100 last:border-0">
+                      <td className="py-2 pr-3 font-mono text-slate-700">
+                        {log.sentAt ? new Date(log.sentAt).toLocaleString('vi-VN') : '—'}
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-slate-700">{log.lockerId || '—'}</td>
+                      <td className="py-2 pr-3 text-slate-700">#{log.compartmentId ?? '—'}</td>
+                      <td className="py-2 pr-3 text-slate-700">{log.commandType || '—'}</td>
+                      <td className="py-2">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                            String(log.status).toUpperCase() === 'SUCCESS'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : String(log.status).toUpperCase() === 'TIMEOUT'
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-amber-50 text-amber-800 border-amber-200'
+                          }`}
+                        >
+                          {log.status || '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

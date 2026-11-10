@@ -137,6 +137,13 @@ public class SecurityConfig {
                 // --- Chỉ ADMIN ---
                 .requestMatchers("/api/auth/admin/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.GET, "/api/auth/users").hasRole("ADMIN")
+                // GĐ7 — danh sách đơn cho dashboard quản trị. CHỈ ADMIN: endpoint trả đơn của
+                // MỌI khách, nếu mở cho vai trò khác là rò rỉ toàn bộ đơn hàng của hệ thống.
+                .requestMatchers(HttpMethod.GET, "/api/admin/**").hasRole("ADMIN")
+                // GĐ7 — lịch sử mở tủ: ADMIN xem toàn hệ thống, SHIPPER xem lệnh của mình.
+                // Phải đặt TRƯỚC luật "/api/mqtt/recent-logs, security-status" bên dưới để không
+                // bị luật chung `.authenticated()` nuốt mất (matcher khớp theo thứ tự khai báo).
+                .requestMatchers(HttpMethod.GET, "/api/mqtt/command-logs").hasAnyRole("ADMIN", "SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/mqtt/command", "/api/mqtt/retained-state/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/lockers/*/compartments/*/unlock").hasRole("ADMIN")
 

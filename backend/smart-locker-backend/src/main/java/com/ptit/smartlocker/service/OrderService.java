@@ -200,6 +200,32 @@ public class OrderService {
                 .toList();
     }
 
+    /**
+     * GĐ7 — danh sách đơn cho ADMIN (tuỳ chọn lọc theo trạng thái / tủ).
+     *
+     * <p><b>KHÔNG BAO GIỜ lộ {@code qrToken}/{@code otpCode}:</b> luôn gọi
+     * {@code mapToOrderResponse(o, null, null, false)}. Đây là endpoint trả DANH SÁCH — nếu lộ
+     * mã mở tủ trong danh sách thì chỉ cần đọc một API là mở được mọi tủ đã nạp hàng. Quy tắc
+     * này giống {@link #getOrdersByCustomerPhone} (W3).
+     *
+     * <p>{@code status} nhận {@code null}/{@code 'ALL'} = mọi trạng thái. Giá trị không hợp lệ
+     * được coi như {@code null} thay vì ném lỗi — admin gõ sai bộ lọc không nên làm hỏng trang,
+     * và endpoint chỉ đọc nên không có rủi ro dữ liệu.
+     */
+    @Transactional(readOnly = true)
+    public List<OrderDTO.OrderResponse> getOrdersForAdmin(String status, String lockerId) {
+        String statusFilter = (status == null || status.isBlank() || "ALL".equalsIgnoreCase(status.trim()))
+                ? null
+                : status.trim().toUpperCase();
+        String lockerFilter = (lockerId == null || lockerId.isBlank() || "ALL".equalsIgnoreCase(lockerId.trim()))
+                ? null
+                : lockerId.trim();
+
+        return orderRepository.findForAdmin(statusFilter, lockerFilter).stream()
+                .map(o -> mapToOrderResponse(o, null, null, false))
+                .toList();
+    }
+
     public OrderDTO.OrderResponse mapToOrderResponse(Order order, String preloadedQr, String preloadedOtp) {
         return mapToOrderResponse(order, preloadedQr, preloadedOtp, true);
     }

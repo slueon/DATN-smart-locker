@@ -58,4 +58,27 @@ public class MqttController {
         boolean ok = mqttService.publishLockerRetainedState(lockerId);
         return ResponseEntity.ok(ApiResponse.ok("Đã phát bản tin Retained State thành công cho tủ " + lockerId, ok));
     }
+
+    /**
+     * GĐ7 — lịch sử mở tủ, mới nhất trước.
+     *
+     * <p><b>Vì sao cần endpoint này:</b> bảng {@code command_logs} đã ghi mọi lệnh mở tủ từ đầu
+     * dự án nhưng chưa có cách nào xem lại. Khi hội đồng hỏi "làm sao biết tủ đã mở lúc nào, do
+     * ai", câu trả lời phải là một bảng trên web chứ không phải câu SQL gõ tay.
+     *
+     * <p><b>Trần {@code limit}:</b> chặn ở 200 dòng dù client xin bao nhiêu. Bảng này tăng mãi
+     * theo thời gian chạy; cho phép {@code limit=1000000} là tự tạo đường DoS bằng một request.
+     *
+     * @param lockerId bỏ trống = mọi tủ
+     * @param limit    số dòng tối đa (mặc định 50, tối đa 200)
+     */
+    @GetMapping("/command-logs")
+    public ResponseEntity<ApiResponse<java.util.List<com.ptit.smartlocker.dto.CommandLogDTO>>> getCommandLogs(
+            @RequestParam(required = false) String lockerId,
+            @RequestParam(required = false, defaultValue = "50") Integer limit) {
+        java.util.List<com.ptit.smartlocker.dto.CommandLogDTO> logs =
+                mqttService.getCommandHistory(lockerId, limit);
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Lấy lịch sử mở tủ thành công (" + logs.size() + " bản ghi)", logs));
+    }
 }

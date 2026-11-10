@@ -156,6 +156,29 @@ export const pickupApi = {
 export const mqttApi = {
   sendCommand: (data) => api.post('/mqtt/command', data),
   getRecentLogs: () => api.get('/mqtt/recent-logs'),
+  /** GĐ7 — lịch sử mở tủ (ADMIN xem tất cả, SHIPPER xem lệnh của mình). */
+  getCommandLogs: (lockerId, limit) => {
+    const params = new URLSearchParams();
+    if (lockerId) params.set('lockerId', lockerId);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return api.get(`/mqtt/command-logs${qs ? `?${qs}` : ''}`);
+  },
+};
+
+/**
+ * GĐ7 — API quản trị. Chỉ vai trò ADMIN gọi được (backend khoá bằng
+ * `.requestMatchers("/api/admin/**").hasRole("ADMIN")`); SHIPPER/CUSTOMER sẽ nhận 403.
+ */
+export const adminApi = {
+  /** Danh sách đơn, lọc tuỳ chọn theo trạng thái / tủ. */
+  getOrders: (status, lockerId) => {
+    const params = new URLSearchParams();
+    if (status && status !== 'ALL') params.set('status', status);
+    if (lockerId && lockerId !== 'ALL') params.set('lockerId', lockerId);
+    const qs = params.toString();
+    return api.get(`/admin/orders${qs ? `?${qs}` : ''}`);
+  },
 };
 
 export default api;

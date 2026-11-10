@@ -605,6 +605,44 @@ public class MqttService implements MqttCallbackExtended {
         return result;
     }
 
+    /**
+     * GĐ7 — lịch sử mở tủ, mới nhất trước, map sang DTO để không lộ entity.
+     *
+     * <p>Query dùng {@code LEFT JOIN FETCH c.locker} nên đọc {@code getLocker().getLockerId()}
+     * không phát thêm SELECT (tránh N+1 — với 50 dòng thì đó là 50 query thừa mỗi lần mở tab).
+     *
+     * <p><b>Không lấy {@code commandLogRepository.findAll()} như {@link #getRecentLogs}:</b>
+     * hàm đó kéo CẢ bảng và trả entity (kèm quan hệ LAZY) — đúng thứ đã gây
+     * {@code LazyInitializationException} ở tầng MQTT trước đây. Ở đây cắt ngay ở DB bằng
+     * {@code Pageable}, và trả DTO chỉ có trường UI cần.
+     *
+     * <p>{@code limit} bị chặn trong khoảng 1..200: bảng này tăng vô hạn theo thời gian chạy,
+     * nên không cho client tự chọn số dòng tuỳ ý.
+     */
+    public List<com.ptit.smartlocker.dto.CommandLogDTO> getCommandHistory(String lockerId, Integer limit) {
+        int safeLimit = 50;
+        if (limit != null) {
+            safeLimit = Math.max(1, Math.min(limit, 200));
+        }
+        String filter = (lockerId == null || lockerId.isBlank() || "ALL".equalsIgnoreCase(lockerId.trim()))
+                ? null
+                : lockerId.trim();
+
+        return commandLogRepository
+                .findRecentWithLocker(filter, org.springframework.data.domain.PageRequest.of(0, safeLimit))
+                .stream()
+                .map(c -> com.ptit.smartlocker.dto.CommandLogDTO.builder()
+                        .commandId(c.getCommandId())
+                        .lockerId(c.getLocker() != null ? c.getLocker().getLockerId() : null)
+                        .compartmentId(c.getCompartmentId())
+                        .commandType(c.getCommandType())
+                        .status(c.getStatus())
+                        .sentAt(c.getSentAt())
+                        .ackReceivedAt(c.getAckReceivedAt())
+                        .build())
+                .toList();
+    }
+
     public void publishRawMessage(String topic, String payload, int qos) {
         publishRawMessage(topic, payload, qos, false);
     }
