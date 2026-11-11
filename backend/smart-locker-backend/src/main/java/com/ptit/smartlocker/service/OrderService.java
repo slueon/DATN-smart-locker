@@ -78,14 +78,23 @@ public class OrderService {
                 .productName(productName)
                 .build();
 
-        // Xử lý giao tại tủ thông minh (Smart Locker)
-        if ("LOCKER".equalsIgnoreCase(request.getDeliveryType())) {
-            if (request.getLockerId() == null) {
-                throw new IllegalArgumentException("Vui lòng chọn Tủ giao nhận!");
-            }
+        // GĐ11 — KHÔNG còn bắt buộc chọn tủ khi tạo đơn.
+        //
+        // <p>Định hướng mới: khách chỉ NHẬN hàng, shipper toàn quyền chọn tủ trước khi giao.
+        // Vì vậy một đơn `LOCKER` hoàn toàn có thể ra đời mà chưa biết giao vào tủ nào —
+        // `locker`/`compartment` để NULL, shipper chọn sau qua
+        // `POST /api/shipper/orders/{orderId}/assign-locker`.
+        //
+        // <p>Nếu CÓ `lockerId` thì giữ NGUYÊN hành vi cũ (giữ slot + khoá ngăn) — tủ đó chỉ
+        // còn là ĐỀ XUẤT, shipper vẫn đổi được. Nhờ vậy không phá luồng cũ và không cần
+        // migration dữ liệu: `orders.locker_id` vốn đã cho phép NULL.
+        String requestedLockerId = request.getLockerId();
+        boolean hasRequestedLocker = requestedLockerId != null && !requestedLockerId.isBlank();
 
-            Locker locker = lockerRepository.findById(request.getLockerId())
-                    .orElseThrow(() -> new RuntimeException("Tủ không tồn tại: " + request.getLockerId()));
+        // Xử lý giao tại tủ thông minh (Smart Locker)
+        if ("LOCKER".equalsIgnoreCase(request.getDeliveryType()) && hasRequestedLocker) {
+            Locker locker = lockerRepository.findById(requestedLockerId)
+                    .orElseThrow(() -> new RuntimeException("Tủ không tồn tại: " + requestedLockerId));
             order.setLocker(locker);
 
             // GĐ10 ý 3 — CHẶN ĐẶT HÀNG VÀO TỦ ĐANG BẢO TRÌ.
@@ -108,7 +117,7 @@ public class OrderService {
             // Nếu đặt cho HÔM NAY: Đồng bộ availableSlots với số ngăn EMPTY thực tế
             if (deliveryDate.isEqual(LocalDate.now())) {
                 List<Compartment> currentEmptyComps = compartmentRepository
-                        .findByLocker_LockerIdAndStatus(request.getLockerId(), "EMPTY");
+                        .findByLocker_LockerIdAndStatus(requestedLockerId, "EMPTY");
                 if (currentEmptyComps.size() > schedule.getAvailableSlots()) {
                     schedule.setAvailableSlots(currentEmptyComps.size());
                     slotScheduleRepository.save(schedule);
@@ -128,7 +137,7 @@ public class OrderService {
             // Nếu đặt trước cho ngày tương lai, ngăn tủ sẽ được gán tự động khi Shipper nạp hàng vào ngày đó
             if (deliveryDate.isEqual(LocalDate.now())) {
                 List<Compartment> lockedEmptyComps = compartmentRepository
-                        .findWithLockByLockerIdAndStatus(request.getLockerId(), "EMPTY");
+                        .findWithLockByLockerIdAndStatus(requestedLockerId, "EMPTY");
 
                 Compartment assignedComp = selectSuitableCompartment(lockedEmptyComps, requiredSize);
                 if (assignedComp == null) {

@@ -83,6 +83,32 @@ public class ShipperController {
     }
 
     /**
+     * GĐ11 — gợi ý tủ cho một đơn PENDING: backend lọc sẵn tủ còn ngăn trống đúng cỡ, không bảo
+     * trì, còn nhịp tim và chưa kín. Shipper vẫn toàn quyền chọn tủ khác.
+     */
+    @GetMapping("/suggest-lockers")
+    public ResponseEntity<ApiResponse<List<ShipperDTO.SuggestLockerResponse>>> suggestLockers(
+            @RequestParam String orderId) {
+        List<ShipperDTO.SuggestLockerResponse> response = shipperService.suggestLockers(orderId);
+        return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách tủ gợi ý thành công", response));
+    }
+
+    /**
+     * GĐ11 — shipper chốt tủ (và ngăn) giao cho đơn. Nhả ngăn cũ an toàn: nếu tủ đích hết ngăn,
+     * đơn giữ nguyên ngăn cũ (xem javadoc {@code ShipperService#assignLocker}).
+     */
+    @PostMapping("/orders/{orderId}/assign-locker")
+    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> assignLocker(
+            @PathVariable String orderId,
+            @RequestBody(required = false) ShipperDTO.AssignLockerRequest request) {
+        String lockerId = request != null ? request.getLockerId() : null;
+        Integer compartmentIndex = request != null ? request.getCompartmentIndex() : null;
+        OrderDTO.OrderResponse response = shipperService.assignLocker(orderId, lockerId, compartmentIndex);
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Đã chốt tủ " + response.getLockerName() + " cho đơn " + orderId + "!", response));
+    }
+
+    /**
      * T3 — Đặt trước một ngăn cụ thể cho đơn PENDING (shipper chọn trên WEB, Q2).
      */
     @PostMapping("/orders/{orderId}/reserve")

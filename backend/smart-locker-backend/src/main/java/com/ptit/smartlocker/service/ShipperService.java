@@ -25,6 +25,7 @@ public class ShipperService {
     private final PickupCredentialRepository credentialRepository;
     private final DeviceEventRepository deviceEventRepository;
     private final LockerSlotScheduleRepository slotScheduleRepository;
+    private final LockerRepository lockerRepository;
 
     @Autowired(required = false)
     @Lazy
@@ -36,14 +37,22 @@ public class ShipperService {
             CompartmentRepository compartmentRepository,
             PickupCredentialRepository credentialRepository,
             DeviceEventRepository deviceEventRepository,
-            LockerSlotScheduleRepository slotScheduleRepository) {
+            LockerSlotScheduleRepository slotScheduleRepository,
+            LockerRepository lockerRepository) {
         this.tokenRepository = tokenRepository;
         this.orderRepository = orderRepository;
         this.compartmentRepository = compartmentRepository;
         this.credentialRepository = credentialRepository;
         this.deviceEventRepository = deviceEventRepository;
         this.slotScheduleRepository = slotScheduleRepository;
+        this.lockerRepository = lockerRepository;
     }
+
+    /** GĐ11 — ngưỡng "tủ còn sống": nhịp tim cũ hơn 5 phút thì không cho shipper chọn. */
+    private static final long HEARTBEAT_FRESH_MINUTES = 5L;
+
+    /** GĐ11 — ngưỡng tủ "đã kín": lấp đầy từ 80% trở lên thì không gợi ý nữa. */
+    private static final double MAX_OCCUPANCY_RATIO = 0.8;
 
     /**
      * 1. Sinh mã QR định danh động cho Shipper (Hiệu lực chính xác 60 giây)
@@ -218,6 +227,12 @@ public class ShipperService {
      * <p>{@code trackingCode} trả về = {@code tracking_code} nếu đã đặt, ngược lại là
      * {@code order_id} (user chốt Q1 = (c): mặc định lấy order_id, cho phép sửa).
      *
+     * <p><b>GĐ11:</b> nhánh "mọi tủ" phải dùng {@code findByStatusWithCompartment} — truy vấn
+     * theo tủ cụ thể sẽ bỏ sót vĩnh viễn các đơn <b>chưa được gán tủ</b> ({@code locker_id IS NULL}),
+     * mà từ GĐ11 loại đơn đó là bình thường (khách đặt trước, shipper chọn tủ sau). Nhánh lọc
+     * theo tủ thì đổi sang {@code findByLockerAndStatusFetchAll} để nạp sẵn cả {@code locker} —
+     * bản cũ chỉ fetch {@code compartment} nên đọc {@code getLocker()} trong vòng lặp là N+1.
+     *
      * @param lockerId null/rỗng/"ALL" = mọi tủ
      */
     @Transactional(readOnly = true)
@@ -226,7 +241,7 @@ public class ShipperService {
         if (lockerId == null || lockerId.isBlank() || "ALL".equalsIgnoreCase(lockerId)) {
             list = orderRepository.findByStatusWithCompartment("PENDING");
         } else {
-            list = orderRepository.findByLockerAndStatusWithCompartment(lockerId, "PENDING");
+            list = orderRepository.findByLockerAndStatusFetchAll(lockerId, "PENDING");
         }
 
         return list.stream()
@@ -463,6 +478,252 @@ public class ShipperService {
                         + compartment.getCompIndex())
                 .build();
         deviceEventRepository.save(event);
+    }
+
+    /**
+     * GĐ11 — danh sách tủ shipper CÓ THỂ chọn để giao đơn này.
+     *
+     * <p>Lọc cứng 4 điều kiện, theo đúng thứ tự:
+     * <ol>
+     *   <li>Có ít nhất một ngăn {@code EMPTY} đủ cỡ cho kiện.</li>
+     *   <li>{@code connection_status} khác {@code MAINTENANCE} — tủ đang bảo trì thì không nhận hàng.</li>
+     *   <li>{@code last_heartbeat} trong 5 phút gần nhất; <b>NULL thì loại luôn</b> (chưa từng gửi
+     *       nhịp tim = không tin được). Không đọc {@code connection_status} để suy ra sức khoẻ:
+     *       DB ghi {@code ONLINE} cho cả 10 tủ kể cả tủ im lặng nhiều ngày.</li>
+     *   <li>Tỷ lệ lấp đầy {@code (total - available) / total < 0.8}.</li>
+     * </ol>
+     *
+     * <p><b>GIỚI HẠN — phải nói rõ khi bảo vệ:</b> danh sách KHÔNG xếp theo khoảng cách tới khách
+     * vì bảng {@code orders} không lưu toạ độ khách. Đây là hạng mục phát triển tiếp theo; đừng
+     * trình bày là đã có.
+     *
+     * <p><b>Cỡ kiện:</b> {@code orders} cũng không lưu cỡ kiện (chỉ {@code CheckoutRequest} có
+     * {@code requiredSize} lúc tạo đơn). Vì vậy cỡ được suy từ ngăn đơn đang trỏ tới nếu có;
+     * không có ngăn thì coi là {@code S} — tức chấp nhận mọi cỡ ngăn, KHÔNG bịa cỡ kiện.
+     *
+     * <p><b>N+1:</b> chỉ 2 câu query — {@link CompartmentRepository#findAllWithLocker()} nạp toàn
+     * bộ ngăn kèm tủ, và {@code lockerRepository.findAll()}. Không truy vấn trong vòng lặp.
+     */
+    @Transactional(readOnly = true)
+    public List<ShipperDTO.SuggestLockerResponse> suggestLockers(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã đơn hàng cần gợi ý tủ!");
+        }
+        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+
+        String requiredSize = order.getCompartment() != null && order.getCompartment().getSize() != null
+                ? order.getCompartment().getSize().trim().toUpperCase()
+                : "S";
+        String currentLockerId = order.getLocker() != null ? order.getLocker().getLockerId() : null;
+
+        // 1 câu query cho toàn bộ ngăn của mọi tủ (JOIN FETCH locker) rồi gom theo lockerId.
+        java.util.Map<String, List<Compartment>> compsByLocker = new java.util.HashMap<>();
+        for (Compartment c : compartmentRepository.findAllWithLocker()) {
+            if (c.getLocker() == null || c.getLocker().getLockerId() == null) continue;
+            compsByLocker.computeIfAbsent(c.getLocker().getLockerId(), k -> new java.util.ArrayList<>()).add(c);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        List<ShipperDTO.SuggestLockerResponse> result = new java.util.ArrayList<>();
+
+        for (Locker locker : lockerRepository.findAll()) {
+            if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) continue;
+
+            // Nhịp tim: null = chưa từng báo → loại. Cũ hơn 5 phút → loại.
+            if (locker.getLastHeartbeat() == null) continue;
+            if (locker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) continue;
+
+            List<Compartment> comps = compsByLocker.getOrDefault(locker.getLockerId(), List.of());
+            if (comps.isEmpty()) continue;
+
+            int available = 0;
+            for (Compartment c : comps) {
+                if ("EMPTY".equalsIgnoreCase(c.getStatus()) && sizeFits(requiredSize, c.getSize())) {
+                    available++;
+                }
+            }
+            if (available == 0) continue;
+
+            int total = comps.size();
+            double occupancy = (double) (total - available) / total;
+            if (occupancy >= MAX_OCCUPANCY_RATIO) continue;
+
+            result.add(ShipperDTO.SuggestLockerResponse.builder()
+                    .lockerId(locker.getLockerId())
+                    .name(locker.getName())
+                    .address(locker.getAddress())
+                    .latitude(locker.getLatitude())
+                    .longitude(locker.getLongitude())
+                    .availableCompartments(available)
+                    .totalCompartments(total)
+                    .connectionStatus(locker.getConnectionStatus())
+                    .healthLabel(healthLabel(locker.getLastHeartbeat(), now))
+                    .isSuggestedByOrder(currentLockerId != null && currentLockerId.equals(locker.getLockerId()))
+                    .build());
+        }
+
+        // Tủ đang gán trong đơn lên đầu; còn lại nhiều ngăn trống hơn đứng trước; cuối cùng theo mã.
+        result.sort(java.util.Comparator
+                .comparing((ShipperDTO.SuggestLockerResponse r) -> !Boolean.TRUE.equals(r.getIsSuggestedByOrder()))
+                .thenComparing(ShipperDTO.SuggestLockerResponse::getAvailableCompartments,
+                        java.util.Comparator.reverseOrder())
+                .thenComparing(ShipperDTO.SuggestLockerResponse::getLockerId));
+        return result;
+    }
+
+    /**
+     * GĐ11 — shipper chốt tủ (và ngăn) cho một đơn PENDING.
+     *
+     * <p><b>Ràng buộc sống còn:</b> việc NHẢ ngăn cũ và GIỮ ngăn mới nằm trong CÙNG một
+     * {@code @Transactional}, và thứ tự là <i>giữ ngăn mới trước, nhả ngăn cũ sau</i>. Nhờ vậy
+     * khi tủ đích hết ngăn, ta ném lỗi 409 lúc ngăn cũ CHƯA bị đụng tới — đơn không bao giờ rơi
+     * vào trạng thái "mất ngăn cũ mà không có ngăn mới". Nếu chỉ dựa vào rollback thì vẫn đúng,
+     * nhưng phụ thuộc vào việc transaction thật sự rollback; đặt đúng thứ tự là an toàn kép.
+     *
+     * <p><b>Ngăn {@code OCCUPIED} tuyệt đối không bị đá:</b> đó là hàng thật của khách. Gặp ngăn
+     * cũ đang OCCUPIED thì từ chối 409 và không đổi gì.
+     *
+     * <p>Không đụng {@code available_slots} của tủ mới — giống {@code reserveCompartment} (R2):
+     * shipper chốt một ngăn vật lý đã có sẵn, không phải một suất mới trên lịch biểu.
+     */
+    @Transactional
+    public OrderDTO.OrderResponse assignLocker(String orderId, String lockerId, Integer compartmentIndex) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã đơn hàng cần chọn tủ!");
+        }
+        if (lockerId == null || lockerId.isBlank()) {
+            throw new IllegalArgumentException("Vui lòng chọn tủ cần giao!");
+        }
+
+        // Khoá bi quan dòng đơn: đổi tủ chạy song song với tác vụ tự nhả ngăn quá hạn.
+        Order order = orderRepository.findByIdForReleaseWithLock(orderId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Chỉ chọn tủ cho đơn đang chờ gửi. Đơn " + order.getOrderId()
+                            + " hiện ở trạng thái " + order.getStatus() + ".");
+        }
+
+        Locker targetLocker = lockerRepository.findById(lockerId.trim())
+                .orElseThrow(() -> new com.ptit.smartlocker.exception.BusinessException(
+                        "Tủ " + lockerId + " không tồn tại."));
+
+        if ("MAINTENANCE".equalsIgnoreCase(targetLocker.getConnectionStatus())) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Tủ " + targetLocker.getName() + " đang bảo trì, vui lòng chọn tủ khác.");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (targetLocker.getLastHeartbeat() == null
+                || targetLocker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Tủ " + targetLocker.getName() + " không có nhịp tim trong "
+                            + HEARTBEAT_FRESH_MINUTES + " phút gần đây, không thể giao hàng vào tủ này.");
+        }
+
+        Compartment old = order.getCompartment();
+        if (old != null && "OCCUPIED".equalsIgnoreCase(old.getStatus())) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Ngăn " + old.getCompIndex() + " của tủ cũ đang CHỨA HÀNG (OCCUPIED) nên không thể "
+                            + "đổi tủ. Vui lòng liên hệ admin.");
+        }
+
+        // BƯỚC 1 — GIỮ NGĂN MỚI TRƯỚC (khoá bi quan toàn bộ ngăn EMPTY của tủ đích).
+        List<Compartment> empties = compartmentRepository
+                .findWithLockByLockerIdAndStatus(targetLocker.getLockerId(), "EMPTY");
+
+        Compartment target;
+        if (compartmentIndex != null) {
+            if (compartmentIndex < 1) {
+                throw new IllegalArgumentException("Chỉ số ngăn không hợp lệ (phải từ 1 trở lên)!");
+            }
+            target = empties.stream()
+                    .filter(c -> compartmentIndex.equals(c.getCompIndex()))
+                    .findFirst()
+                    .orElseThrow(() -> new com.ptit.smartlocker.exception.BusinessException(
+                            "Ngăn " + compartmentIndex + " của tủ " + targetLocker.getLockerId()
+                                    + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác."));
+        } else {
+            String requiredSize = old != null && old.getSize() != null
+                    ? old.getSize().trim().toUpperCase()
+                    : "S";
+            target = empties.stream()
+                    .filter(c -> sizeFits(requiredSize, c.getSize()))
+                    .findFirst()
+                    .orElseThrow(() -> new com.ptit.smartlocker.exception.BusinessException(
+                            "Tủ " + targetLocker.getName() + " không còn ngăn trống phù hợp với kích thước kiện (Size "
+                                    + requiredSize + "). Vui lòng chọn tủ khác."));
+        }
+
+        target.setStatus("RESERVED");
+        compartmentRepository.save(target);
+
+        // BƯỚC 2 — NHẢ NGĂN CŨ, chỉ khi ngăn cũ đang RESERVED. Tủ cũ giữ nguyên (nếu không cùng tủ).
+        if (old != null && !old.getCompartmentId().equals(target.getCompartmentId())
+                && "RESERVED".equalsIgnoreCase(old.getStatus())) {
+            old.setStatus("EMPTY");
+            compartmentRepository.save(old);
+        }
+
+        order.setLocker(targetLocker);
+        order.setCompartment(target);
+        // Dấu hiệu "shipper đã chốt tuyến", phân biệt với tủ do hệ thống đề xuất lúc tạo đơn.
+        order.setShipperReservedAt(now);
+        orderRepository.save(order);
+
+        DeviceEvent event = DeviceEvent.builder()
+                .locker(targetLocker)
+                .compartmentId(target.getCompartmentId())
+                .eventType("ASSIGN_LOCKER")
+                .eventPayload("Order " + order.getOrderId() + " assigned to " + targetLocker.getLockerId()
+                        + " compartment " + target.getCompIndex()
+                        + (old != null ? " (from compartment " + old.getCompIndex() + ")" : " (no previous compartment)"))
+                .build();
+        deviceEventRepository.save(event);
+
+        String tracking = order.getTrackingCode() != null && !order.getTrackingCode().isBlank()
+                ? order.getTrackingCode()
+                : order.getOrderId();
+        return OrderDTO.OrderResponse.builder()
+                .orderId(order.getOrderId())
+                .customerName(order.getCustomerName())
+                .customerPhone(order.getCustomerPhone())
+                .deliveryType(order.getDeliveryType())
+                .lockerId(targetLocker.getLockerId())
+                .lockerName(targetLocker.getName())
+                .compartmentIndex(target.getCompIndex())
+                .compartmentSize(target.getSize())
+                .isShipperReserved(true)
+                .expectedDate(order.getExpectedDate())
+                .status(order.getStatus())
+                .productName(order.getProductName())
+                .totalAmount(order.getTotalAmount())
+                .paymentMethod(order.getPaymentMethod())
+                .paymentStatus(order.getPaymentStatus())
+                .createdAt(order.getCreatedAt())
+                .trackingCode(tracking)
+                .build();
+    }
+
+    /** Cỡ ngăn {@code compartmentSize} có chứa được kiện cỡ {@code requiredSize} hay không. */
+    private boolean sizeFits(String requiredSize, String compartmentSize) {
+        if (compartmentSize == null) return false;
+        String need = requiredSize == null ? "S" : requiredSize.trim().toUpperCase();
+        String have = compartmentSize.trim().toUpperCase();
+        if (need.equals(have)) return true;
+        if ("S".equals(need)) return "M".equals(have) || "L".equals(have);
+        if ("M".equals(need)) return "L".equals(have);
+        return false;
+    }
+
+    /** Nhãn sức khoẻ suy từ {@code lastHeartbeat} — 3 mức, KHÔNG đọc {@code connection_status}. */
+    private String healthLabel(LocalDateTime heartbeat, LocalDateTime now) {
+        if (heartbeat == null) return "MẤT KẾT NỐI";
+        long minutes = java.time.Duration.between(heartbeat, now).toMinutes();
+        if (minutes <= HEARTBEAT_FRESH_MINUTES) return "Online";
+        if (minutes <= 60) return "Không rõ";
+        return "MẤT KẾT NỐI";
     }
 
     /**

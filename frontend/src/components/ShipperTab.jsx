@@ -47,6 +47,19 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [reservedOrderIds, setReservedOrderIds] = useState({});
   const [usingMockData, setUsingMockData] = useState(false);
 
+  // GĐ11 — SHIPPER CHỌN TỦ GIAO HÀNG.
+  //
+  // Mô hình mới: khách chỉ nhận hàng, đơn có thể ra đời mà chưa gán tủ (`lockerId = null`).
+  // Shipper tự chọn tủ; backend lọc sẵn tủ khả dụng (còn ngăn trống đúng cỡ, không bảo trì,
+  // nhịp tim < 5 phút, lấp đầy < 80%) nhưng danh sách đó CHỈ là gợi ý.
+  const [suggestLockers, setSuggestLockers] = useState([]);
+  const [isLoadingSuggest, setIsLoadingSuggest] = useState(false);
+  const [showSuggestPanel, setShowSuggestPanel] = useState(false);
+  // Bấm thẻ tủ lần 1 chỉ mở hộp xác nhận (0 request); bấm "Xác nhận" mới gọi API.
+  const [pendingAssignLocker, setPendingAssignLocker] = useState(null);
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [assignMessage, setAssignMessage] = useState(null);
+
   // GĐ5-A — CẢM BIẾN THẬT của ngăn đang thao tác.
   //
   // Nguồn dữ liệu: `GET /api/lockers/{id}/compartments` → `currentWeight`, `isDoorClosed`.
@@ -393,9 +406,78 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     }
   };
 
-  /** T3 — đặt trước ngăn cho đơn đang chọn. */
-  const handleReserve = async () => {
+  /**
+   * GĐ11 — tải danh sách tủ gợi ý cho đơn đang chọn.
+   *
+   * <p>Chỉ gọi khi người dùng bấm "Đổi tủ / Chọn tủ" (không tự gọi khi mở tab) để không đốt
+   * request cho mọi đơn, và để mỗi lần mở là một lần lấy trạng thái tủ mới nhất.
+   */
+  const loadSuggestLockers = async (orderId) => {
+    if (!orderId) return;
+    setIsLoadingSuggest(true);
+    setAssignMessage(null);
+    try {
+      const res = await shipperApi.getSuggestLockers(orderId);
+      setSuggestLockers(res?.data?.data || []);
+    } catch (err) {
+      setSuggestLockers([]);
+      setAssignMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không tải được danh sách tủ gợi ý.',
+      });
+    } finally {
+      setIsLoadingSuggest(false);
+    }
+  };
+
+  const handleOpenSuggestPanel = async () => {
     if (!activeOrder) return;
+    setShowSuggestPanel(true);
+    setPendingAssignLocker(null);
+    await loadSuggestLockers(activeOrder.orderId);
+  };
+
+  /**
+   * GĐ11 — chốt tủ cho đơn.
+   *
+   * <p>Hai bước: bấm thẻ tủ chỉ đặt `pendingAssignLocker` (KHÔNG gọi API), bấm "Xác nhận" trong
+   * hộp thoại mới thật sự gọi `assignLocker`. Đổi tủ là thao tác làm thay đổi ngăn vật lý của tủ
+   * nên phải xác nhận rõ tủ cũ → tủ mới.
+   */
+  const handleConfirmAssignLocker = async () => {
+    if (!activeOrder || !pendingAssignLocker) return;
+    setIsAssigning(true);
+    setAssignMessage(null);
+    try {
+      const res = await shipperApi.assignLocker(activeOrder.orderId, {
+        lockerId: pendingAssignLocker.lockerId,
+      });
+      const data = res?.data?.data;
+      setAssignMessage({
+        type: 'success',
+        text: `Đã chốt tuyến: ${data?.lockerName || pendingAssignLocker.name}`
+          + (data?.compartmentIndex ? ` · Ngăn #${data.compartmentIndex}` : ''),
+      });
+      setPendingAssignLocker(null);
+      setShowSuggestPanel(false);
+      await loadOrders();
+      await loadReserveCompartments(data?.lockerId || pendingAssignLocker.lockerId, data?.compartmentIndex);
+    } catch (err) {
+      // 409 = tủ đích vừa hết ngăn / đang bảo trì / mất nhịp tim. Backend đã rollback: ngăn cũ
+      // ở tủ trước vẫn còn RESERVED, nên chỉ cần báo lỗi và cho shipper chọn tủ khác.
+      setAssignMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không chốt được tủ này. Vui lòng chọn tủ khác.',
+      });
+      setPendingAssignLocker(null);
+      await loadSuggestLockers(activeOrder.orderId);
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  /** T3 — đặt trước ngăn cho đơn đang chọn. */
+  const handleReserve = async () => {    if (!activeOrder) return;
     if (!reserveCompIndex) {
       setReserveMessage({ type: 'error', text: 'Vui lòng chọn một ngăn trống trước khi đặt trước.' });
       return;
@@ -769,13 +851,171 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
 
                 <div className="text-right">
                   <span className="text-[10px] text-slate-400 block font-semibold">Vị trí ngăn chỉ định</span>
-                  <span className="text-blue-600 font-extrabold text-sm">
-                    Ngăn #{activeOrder.compartmentIndex} (Size {activeOrder.compartmentSize || (activeOrder.compartmentIndex === 1 ? 'S' : 'L')})
+                  <span className={`font-extrabold text-sm ${activeOrder.lockerId ? 'text-blue-600' : 'text-amber-600'}`}>
+                    {activeOrder.lockerId
+                      ? `Ngăn #${activeOrder.compartmentIndex} (Size ${activeOrder.compartmentSize || (activeOrder.compartmentIndex === 1 ? 'S' : 'L')})`
+                      : 'Chưa gán tủ'}
                   </span>
                 </div>
               </div>
 
-              {/* T3 — PANEL ĐẶT TRƯỚC NGĂN (gọi API thật) */}
+              {/* GĐ11 — KHỐI "CHỌN TỦ GIAO HÀNG" (đặt TRƯỚC panel đặt trước ngăn).
+                  Đơn chưa có tủ là chuyện bình thường từ GĐ11: khách chỉ nhận hàng, shipper chọn tủ.
+                  Đặt trước ngăn phải ẩn khi chưa có tủ, vì không biết tủ nào thì không có ngăn để giữ. */}
+              <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs uppercase">
+                    <MapPin className="w-4 h-4 text-emerald-600" />
+                    <span>Chọn tủ giao hàng</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={showSuggestPanel ? () => setShowSuggestPanel(false) : handleOpenSuggestPanel}
+                    className="text-[11px] font-bold bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                  >
+                    {showSuggestPanel ? 'Đóng danh sách' : (activeOrder.lockerId ? 'Đổi tủ' : 'Chọn tủ')}
+                  </button>
+                </div>
+
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block font-semibold uppercase">Tủ hiện tại</span>
+                    <span className="text-sm font-bold text-slate-800">
+                      {activeOrder.lockerId
+                        ? (activeOrder.lockerName || activeOrder.lockerId)
+                        : 'Chưa có tủ — chọn tủ bên dưới'}
+                    </span>
+                  </div>
+                  {activeOrder.lockerId && (
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                      <CheckCircle2 className="w-3 h-3 inline -mt-0.5 mr-0.5" />
+                      Đã chốt tuyến
+                    </span>
+                  )}
+                </div>
+
+                {assignMessage && (
+                  <div
+                    className={`p-2.5 rounded-xl text-[11px] font-medium flex items-start gap-1.5 ${
+                      assignMessage.type === 'success'
+                        ? 'bg-emerald-100 border border-emerald-300 text-emerald-800'
+                        : 'bg-rose-50 border border-rose-200 text-rose-800'
+                    }`}
+                  >
+                    {assignMessage.type === 'success'
+                      ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      : <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
+                    <span>{assignMessage.text}</span>
+                  </div>
+                )}
+
+                {showSuggestPanel && (
+                  <div className="space-y-2">
+                    {isLoadingSuggest ? (
+                      <p className="text-[11px] text-slate-500 italic flex items-center gap-1.5">
+                        <RefreshCw className="w-3 h-3 animate-spin" /> Đang tải tủ khả dụng…
+                      </p>
+                    ) : suggestLockers.length === 0 ? (
+                      <p className="text-[11px] text-slate-500 italic">
+                        Không có tủ nào đủ điều kiện nhận kiện này (cần ngăn trống, tủ đang hoạt động và chưa kín).
+                      </p>
+                    ) : (
+                      suggestLockers.map((lk) => {
+                        const isCurrent = lk.isSuggestedByOrder || lk.lockerId === activeOrder.lockerId;
+                        return (
+                          <div
+                            key={lk.lockerId}
+                            className={`p-3 rounded-xl border bg-white ${
+                              isCurrent ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-slate-200'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-bold text-slate-900 truncate">{lk.name}</span>
+                                  {isCurrent && (
+                                    <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                                      Tủ đề xuất
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-500 truncate">{lk.address}</p>
+                                <div className="flex items-center gap-2 mt-1 text-[10px] font-semibold">
+                                  <span className="text-slate-700">
+                                    {lk.availableCompartments}/{lk.totalCompartments} ngăn trống
+                                  </span>
+                                  <span
+                                    className={
+                                      lk.healthLabel === 'Online'
+                                        ? 'text-emerald-600'
+                                        : lk.healthLabel === 'Không rõ'
+                                        ? 'text-amber-600'
+                                        : 'text-rose-600'
+                                    }
+                                  >
+                                    · {lk.healthLabel}
+                                  </span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={isAssigning}
+                                onClick={() => setPendingAssignLocker(lk)}
+                                className="shrink-0 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg transition cursor-pointer disabled:opacity-60"
+                              >
+                                Chọn tủ này
+                              </button>
+                            </div>
+
+                            {/* Xác nhận 2 bước: bấm "Chọn tủ này" chỉ mở hộp thoại này — 0 request. */}
+                            {pendingAssignLocker?.lockerId === lk.lockerId && (
+                              <div className="mt-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+                                <p className="text-[11px] text-slate-700">
+                                  Chuyển đơn từ{' '}
+                                  <strong>{activeOrder.lockerName || 'chưa có tủ'}</strong> sang{' '}
+                                  <strong>{lk.name}</strong>?
+                                  <span className="block text-[10px] text-slate-500 mt-0.5">
+                                    Ngăn cũ chỉ được nhả khi đang giữ chỗ (RESERVED). Nếu tủ mới hết ngăn,
+                                    đơn giữ nguyên tủ cũ.
+                                  </span>
+                                </p>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={isAssigning}
+                                    onClick={handleConfirmAssignLocker}
+                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1.5 rounded-lg transition cursor-pointer disabled:opacity-60"
+                                  >
+                                    {isAssigning ? 'Đang chốt…' : 'Xác nhận chốt tủ'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isAssigning}
+                                    onClick={() => setPendingAssignLocker(null)}
+                                    className="px-3 bg-white border border-slate-300 text-slate-700 text-[11px] font-bold py-1.5 rounded-lg transition cursor-pointer"
+                                  >
+                                    Huỷ
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* T3 — PANEL ĐẶT TRƯỚC NGĂN (gọi API thật).
+                  GĐ11: ẩn khi đơn CHƯA có tủ — không biết tủ thì không có ngăn nào để giữ. */}
+              {!activeOrder.lockerId && (
+                <div className="p-3 rounded-2xl bg-slate-50 border border-dashed border-slate-300 text-[11px] text-slate-500 flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                  <span>Chọn tủ trước, sau đó mới đặt trước được ngăn.</span>
+                </div>
+              )}
+              {activeOrder.lockerId && (
               <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs uppercase">
@@ -875,6 +1115,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   )}
                 </div>
               </div>
+              )}
 
               {/* 4-Step Visual Progress Bar */}
               <div className="grid grid-cols-4 gap-2 text-center text-xs">

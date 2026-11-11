@@ -165,7 +165,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/mqtt/recent-logs", "/api/mqtt/security-status").authenticated()
 
                 // --- Nghiệp vụ khách hàng & tạo đơn ---
-                .requestMatchers(HttpMethod.POST, "/api/orders/checkout").hasAnyRole("CUSTOMER", "SHIPPER", "ADMIN")
+                // GĐ11 — khách KHÔNG còn checkout: mô hình mới là khách chỉ NHẬN hàng, shipper
+                // chọn tủ rồi nạp hàng. Mở lại cho CUSTOMER là quay về mô hình thương mại điện tử.
+                .requestMatchers(HttpMethod.POST, "/api/orders/checkout").hasAnyRole("SHIPPER", "ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/pickup/**").hasRole("CUSTOMER")
 
                 // --- Nghiệp vụ shipper ---
@@ -178,6 +180,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/shipper/orders/pending").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.DELETE, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
+                // GĐ11 — shipper tự chọn tủ. CHỈ SHIPPER: ADMIN đã có công cụ bảo trì riêng, còn
+                // mở cho CUSTOMER thì khách tự chốt tủ hộ shipper (trái mô hình mới).
+                .requestMatchers(HttpMethod.GET, "/api/shipper/suggest-lockers").hasRole("SHIPPER")
+                .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/assign-locker").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.GET, "/api/shipper/overdue-orders").hasAnyRole("SHIPPER", "ADMIN")
 
                 // --- Mặc định đóng ---

@@ -28,4 +28,16 @@ public interface CompartmentRepository extends JpaRepository<Compartment, Intege
             @Param("lockerId") String lockerId,
             @Param("status") String status
     );
+
+    /**
+     * GĐ11 — nạp TOÀN BỘ ngăn của MỌI tủ trong <b>một</b> câu query, kèm {@code locker}.
+     *
+     * <p><b>Vì sao cần:</b> {@code GET /api/shipper/suggest-lockers} phải biết từng tủ còn bao
+     * nhiêu ngăn {@code EMPTY} phù hợp cỡ kiện. Cách sai là gọi
+     * {@code findByLocker_LockerIdAndStatus} trong vòng lặp 10 tủ → 10 câu SELECT (N+1). Cách sai
+     * thứ hai là {@code findAll()} rồi gọi {@code c.getLockerId()}: quan hệ {@code locker} là LAZY
+     * nên mỗi ngăn lại phát một SELECT nữa. {@code JOIN FETCH} gộp cả hai vào đúng 1 câu.
+     */
+    @Query("SELECT c FROM Compartment c JOIN FETCH c.locker ORDER BY c.locker.lockerId ASC, c.compIndex ASC")
+    List<Compartment> findAllWithLocker();
 }
