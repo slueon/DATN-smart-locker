@@ -36,26 +36,41 @@ export const formatRelativeTime = (iso) => {
 };
 
 /**
- * Trạng thái một tủ, suy THUẦN từ `lastHeartbeat`.
+ * Trạng thái một tủ. GĐ12: chia làm hai loại.
  *
- * @returns {{key: string, label: string, tone: 'emerald'|'amber'|'rose', rel: string, ageMs: number|null}}
+ * <p><b>Tủ ảo</b> ({@code isVirtual === true}) — khai báo trong CSDL, không có thiết bị nên không
+ * bao giờ có nhịp tim. Nếu suy thuần từ nhịp tim thì chúng luôn hiện "Mất kết nối" — sai sự thật
+ * theo hướng ngược lại (chúng không hỏng, chúng không tồn tại về mặt thiết bị). Nhánh này phải
+ * đứng TRƯỚC mọi nhánh dựa trên {@code ageMs}.
+ *
+ * <p><b>Tủ thật</b> — giữ nguyên 3 mức cũ theo nhịp tim, KHÔNG nới lỏng: đó là mục đích của
+ * việc theo dõi tủ thật.
+ *
+ * @returns {{key: string, label: string, tone: 'emerald'|'amber'|'rose', rel: string, ageMs: number|null, isVirtual: boolean}}
  *   `tone` dùng để tô màu: emerald = xanh, amber = vàng, rose = đỏ.
  */
 export const getLockerHealth = (locker) => {
   const hb = locker?.lastHeartbeat ? new Date(locker.lastHeartbeat).getTime() : null;
   const ageMs = hb != null && !Number.isNaN(hb) ? Date.now() - hb : null;
   const rel = formatRelativeTime(locker?.lastHeartbeat);
+  const isVirtual = locker?.isVirtual === true;
+
+  // GĐ12 — nhãn phải NÓI RÕ đây là tủ khai báo, không phải tủ đang chạy thật. Vẫn giữ `rel`
+  // (thời gian nhịp tim cuối) để người đọc biết tủ này không có thiết bị gửi nhịp tim.
+  if (isVirtual) {
+    return { key: 'VIRTUAL', label: 'Online (tủ ảo)', tone: 'emerald', rel, ageMs, isVirtual };
+  }
 
   if (ageMs == null) {
-    return { key: 'NEVER', label: 'Chưa có tín hiệu', tone: 'rose', rel, ageMs };
+    return { key: 'NEVER', label: 'Chưa có tín hiệu', tone: 'rose', rel, ageMs, isVirtual };
   }
   if (ageMs > HEARTBEAT_STALE_MS) {
-    return { key: 'STALE', label: 'Mất kết nối', tone: 'rose', rel, ageMs };
+    return { key: 'STALE', label: 'Mất kết nối', tone: 'rose', rel, ageMs, isVirtual };
   }
   if (ageMs > HEARTBEAT_FRESH_MS) {
-    return { key: 'UNKNOWN', label: 'Không rõ', tone: 'amber', rel, ageMs };
+    return { key: 'UNKNOWN', label: 'Không rõ', tone: 'amber', rel, ageMs, isVirtual };
   }
-  return { key: 'ONLINE', label: 'Online', tone: 'emerald', rel, ageMs };
+  return { key: 'ONLINE', label: 'Online', tone: 'emerald', rel, ageMs, isVirtual };
 };
 
 /** Màu hex ứng với tone — dùng cho Leaflet (nhận chuỗi màu, không nhận class Tailwind). */

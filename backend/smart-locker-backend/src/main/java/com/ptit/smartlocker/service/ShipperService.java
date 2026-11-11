@@ -530,9 +530,17 @@ public class ShipperService {
         for (Locker locker : lockerRepository.findAll()) {
             if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) continue;
 
-            // Nhịp tim: null = chưa từng báo → loại. Cũ hơn 5 phút → loại.
-            if (locker.getLastHeartbeat() == null) continue;
-            if (locker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) continue;
+            // GĐ12 — TÁCH TỦ THẬT / TỦ ẢO.
+            //
+            //   • Tủ ảo (`isVirtual = true`): khai báo CSDL, không có thiết bị nên không bao giờ
+            //     có nhịp tim → BỎ QUA kiểm nhịp tim. Nếu vẫn kiểm thì 9 tủ ảo luôn bị loại và
+            //     shipper chỉ còn đúng 1 tủ thật để chọn, đúng hiện tượng user báo.
+            //   • Tủ thật (`LOCKER_HN_01`): BẮT BUỘC nhịp tim trong HEARTBEAT_FRESH_MINUTES.
+            //     Đây là điểm user yêu cầu rõ — tủ thật phải theo dõi được có đang kết nối hay không.
+            if (!Boolean.TRUE.equals(locker.getIsVirtual())) {
+                if (locker.getLastHeartbeat() == null) continue;
+                if (locker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) continue;
+            }
 
             List<Compartment> comps = compsByLocker.getOrDefault(locker.getLockerId(), List.of());
             if (comps.isEmpty()) continue;
@@ -558,7 +566,7 @@ public class ShipperService {
                     .availableCompartments(available)
                     .totalCompartments(total)
                     .connectionStatus(locker.getConnectionStatus())
-                    .healthLabel(healthLabel(locker.getLastHeartbeat(), now))
+                    .healthLabel(healthLabel(locker.getLastHeartbeat(), now, Boolean.TRUE.equals(locker.getIsVirtual())))
                     .isSuggestedByOrder(currentLockerId != null && currentLockerId.equals(locker.getLockerId()))
                     .build());
         }
@@ -615,11 +623,16 @@ public class ShipperService {
                     "Tủ " + targetLocker.getName() + " đang bảo trì, vui lòng chọn tủ khác.");
         }
         LocalDateTime now = LocalDateTime.now();
-        if (targetLocker.getLastHeartbeat() == null
-                || targetLocker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) {
-            throw new com.ptit.smartlocker.exception.BusinessException(
-                    "Tủ " + targetLocker.getName() + " không có nhịp tim trong "
-                            + HEARTBEAT_FRESH_MINUTES + " phút gần đây, không thể giao hàng vào tủ này.");
+        // GĐ12 — cùng quy tắc với `suggestLockers`: tủ ảo bỏ qua kiểm nhịp tim, tủ thật thì
+        // KHÔNG. Thiết bị `khuon_vien` im quá 5 phút thì shipper giao vào LOCKER_HN_01 sẽ nhận 409
+        // — đúng ý user: tủ thật phải theo dõi được có đang kết nối hay không.
+        if (!Boolean.TRUE.equals(targetLocker.getIsVirtual())) {
+            if (targetLocker.getLastHeartbeat() == null
+                    || targetLocker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) {
+                throw new com.ptit.smartlocker.exception.BusinessException(
+                        "Tủ " + targetLocker.getName() + " không có nhịp tim trong "
+                                + HEARTBEAT_FRESH_MINUTES + " phút gần đây, không thể giao hàng vào tủ này.");
+            }
         }
 
         Compartment old = order.getCompartment();
@@ -717,8 +730,15 @@ public class ShipperService {
         return false;
     }
 
-    /** Nhãn sức khoẻ suy từ {@code lastHeartbeat} — 3 mức, KHÔNG đọc {@code connection_status}. */
-    private String healthLabel(LocalDateTime heartbeat, LocalDateTime now) {
+    /**
+     * Nhãn sức khoẻ — 3 mức cho TỦ THẬT, suy thuần từ {@code lastHeartbeat} (KHÔNG đọc
+     * {@code connection_status}).
+     *
+     * <p>GĐ12: nhánh tủ ảo đặt TRƯỚC mọi phép tính tuổi nhịp tim. Tủ ảo luôn "Online" nhưng có
+     * hậu tố "(tủ ảo)" để người đọc không tưởng nhầm đang có thiết bị chạy và gửi nhịp tim thật.
+     */
+    private String healthLabel(LocalDateTime heartbeat, LocalDateTime now, boolean isVirtual) {
+        if (isVirtual) return "Online (tủ ảo)";
         if (heartbeat == null) return "MẤT KẾT NỐI";
         long minutes = java.time.Duration.between(heartbeat, now).toMinutes();
         if (minutes <= HEARTBEAT_FRESH_MINUTES) return "Online";

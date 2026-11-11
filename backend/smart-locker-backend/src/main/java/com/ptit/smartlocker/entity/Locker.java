@@ -13,7 +13,6 @@ import java.time.LocalDateTime;
 @Table(name = "lockers")
 @Getter
 @Setter
-@Builder
 public class Locker {
 
     @Id
@@ -23,6 +22,21 @@ public class Locker {
     public Locker() {}
 
     public Locker(String lockerId, String name, String address, Double latitude, Double longitude, String connectionStatus, Integer totalCompartments, LocalDateTime lastHeartbeat, LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this(lockerId, name, address, latitude, longitude, connectionStatus, totalCompartments,
+                lastHeartbeat, createdAt, updatedAt, false);
+    }
+
+    /**
+     * Constructor đầy đủ 11 tham số. {@code @Builder} đặt Ở ĐÂY (không đặt trên class) vì class
+     * có NHIỀU constructor và Lombok chọn constructor đầu tiên không tham số-hoá được — lần
+     * compile đầu nó chọn bản 10 tham số (thiếu {@code isVirtual}) và báo
+     * "Boolean cannot be converted to LocalDateTime". Đặt builder trên đúng constructor đủ field
+     * là cách tường minh, không phụ thuộc thứ tự khai báo.
+     */
+    @Builder
+    public Locker(String lockerId, String name, String address, Double latitude, Double longitude,
+                  String connectionStatus, Integer totalCompartments, LocalDateTime lastHeartbeat,
+                  LocalDateTime createdAt, LocalDateTime updatedAt, Boolean isVirtual) {
         this.lockerId = lockerId;
         this.name = name;
         this.address = address;
@@ -33,6 +47,7 @@ public class Locker {
         this.lastHeartbeat = lastHeartbeat;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.isVirtual = isVirtual != null ? isVirtual : false;
     }
 
     @Column(name = "name", nullable = false, length = 100)
@@ -57,6 +72,25 @@ public class Locker {
 
     @Column(name = "last_heartbeat")
     private LocalDateTime lastHeartbeat;
+
+    /**
+     * GĐ12 — {@code true} = tủ KHAI BÁO trong CSDL, không có thiết bị thật gửi nhịp tim.
+     *
+     * <p><b>Vì sao phải có cờ này thay vì suy từ {@code lastHeartbeat}:</b> phần cứng thật chỉ có
+     * 1 tủ ({@code khuon_vien} → {@code LOCKER_HN_01}); 9 tủ còn lại là dữ liệu mẫu nên không bao
+     * giờ có nhịp tim, và suy thuần từ nhịp tim thì chúng luôn hiện "Mất kết nối" — sai sự thật
+     * theo hướng ngược lại (chúng không hỏng, chúng không tồn tại về mặt thiết bị).
+     *
+     * <p><b>Tuyệt đối KHÔNG bịa {@code lastHeartbeat} cho tủ ảo</b> để làm chúng "xanh": làm vậy
+     * là giả mạo dữ liệu thiết bị. Cột nhịp tim phải phản ánh sự thật; trạng thái "có kết nối"
+     * của tủ ảo đến từ chính cờ này và luôn được hiển thị kèm nhãn "(tủ ảo)".
+     *
+     * <p><b>Tủ thật KHÔNG được bỏ qua kiểm nhịp tim</b> — {@code LOCKER_HN_01} vẫn bị loại khỏi
+     * gợi ý / bị 409 khi thiết bị im quá 5 phút. Đó chính là mục đích của việc theo dõi.
+     */
+    @Column(name = "is_virtual", nullable = false)
+    @Builder.Default
+    private Boolean isVirtual = false;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

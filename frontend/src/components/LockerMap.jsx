@@ -48,11 +48,20 @@ export const getLockerStatusInfo = (locker) => {
       ? locker.compartments.filter((c) => c.status === 'EMPTY').length
       : 1
   );
+  // GĐ12 — TỦ ẢO: giữ nguyên logic sức chứa (Rỗi/Bận) vì đó là thông tin thật của tủ, nhưng
+  // nhãn phụ ghi rõ "(tủ ảo)" để không ai tưởng đây là thiết bị đang chạy. Tủ ảo KHÔNG rơi vào
+  // nhánh OFFLINE ở trên: nhánh đó dựa `connectionStatus`, mà tủ ảo luôn có 'ONLINE'.
+  //
+  // ⚠ KHÔNG đổi `statusKey` cho tủ ảo. Bộ lọc của CUSTOMER (`LockerNetworkMapTab:122-124`) so
+  // khớp ĐÚNG chuỗi `'AVAILABLE'`/`'FULL'`; đổi thành `'AVAILABLE_VIRTUAL'` từng làm chip "Rỗi"
+  // chỉ còn 1 marker (mất cả 9 tủ ảo) và "Mất kết nối" ra 0 — hồi quy thật do GĐ12 gây ra, đã bị
+  // `minh` bắt. Tủ ảo khác tủ thật ở NHÃN, không khác ở trạng thái sức chứa.
+  const virtualSuffix = locker.isVirtual === true ? ' (tủ ảo)' : '';
   if (available <= 0) {
     return {
       statusKey: 'FULL',
       dotColor: '#ef4444', // 🔴 Đỏ: Hết chỗ
-      label: 'Bận (Hết chỗ)',
+      label: 'Bận (Hết chỗ)' + virtualSuffix,
       badgeBg: '#fef2f2',
       badgeText: '#b91c1c',
       borderColor: '#fca5a5',
@@ -61,7 +70,7 @@ export const getLockerStatusInfo = (locker) => {
   return {
     statusKey: 'AVAILABLE',
     dotColor: '#10b981', // 🟢 Xanh lá: Rỗi (Còn chỗ)
-    label: 'Rỗi (Còn chỗ)',
+    label: 'Rỗi (Còn chỗ)' + virtualSuffix,
     badgeBg: '#f0fdf4',
     badgeText: '#15803d',
     borderColor: '#86efac',

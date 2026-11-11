@@ -92,16 +92,24 @@ const buildGreedyRoute = (start, stops) => {
 };
 
 /**
- * Trạng thái kết nối suy từ `lastHeartbeat` — **không** dùng `connectionStatus`.
+ * Trạng thái kết nối — **không** dùng `connectionStatus`.
  *
  * <p>Lý do: backend cập nhật cột `connection_status` khi có bản tin MQTT nhưng KHÔNG có scheduler
  * chuyển sang OFFLINE khi tủ im lặng. Đo thật ngày 10/11: cả 10 tủ ghi `ONLINE`, trong khi
  * HN_02 im 17 giờ, HN_04–10 im 3 ngày. Tin cột đó là shipper đi giao vào tủ đã tắt nguồn.
+ *
+ * <p>GĐ12 — có thêm loại TỦ ẢO: khai báo CSDL, không có thiết bị gửi nhịp tim nên không bao giờ
+ * có `lastHeartbeat`. Nhánh này đặt TRƯỚC mọi nhánh dựa trên `ageMs`, hành vi giống hệt
+ * `utils/lockerHealth.js` (file tự khai báo để không phụ thuộc, nhưng phải nói cùng một ngôn ngữ).
+ * Tủ thật vẫn theo dõi thật: im quá ngưỡng là đỏ.
  */
 const getLockerHealth = (locker) => {
   const hb = locker?.lastHeartbeat ? new Date(locker.lastHeartbeat).getTime() : null;
   const ageMs = hb != null && !Number.isNaN(hb) ? Date.now() - hb : null;
 
+  if (locker?.isVirtual === true) {
+    return { key: 'VIRTUAL', label: 'Online (tủ ảo)', tone: 'emerald', ageMs };
+  }
   if (ageMs == null) return { key: 'NEVER', label: 'Chưa có tín hiệu', tone: 'rose', ageMs };
   if (ageMs > HEARTBEAT_STALE_MS) return { key: 'STALE', label: 'Mất kết nối', tone: 'rose', ageMs };
   if (ageMs > HEARTBEAT_FRESH_MS) return { key: 'UNKNOWN', label: 'Không rõ', tone: 'amber', ageMs };
@@ -193,6 +201,13 @@ export default function ShipperRouteMap({ currentUser }) {
           lat: Number(locker.latitude),
           lng: Number(locker.longitude),
           lastHeartbeat: locker.lastHeartbeat,
+          // GĐ12 — PHẢI chép cờ này xuống.
+          //
+          // `stops` là bản sao rút gọn của locker (không giữ nguyên object), nên mọi field không
+          // chép sẽ thành `undefined` khi `getLockerHealth(stop)` đọc. Thiếu dòng này thì tủ ảo
+          // rơi về nhánh suy theo nhịp tim → popup ghi "Mất kết nối" và dòng đếm trên đầu trang
+          // báo "N tủ mất kết nối" trong khi thực tế chỉ có tủ thật cần theo dõi.
+          isVirtual: locker.isVirtual === true,
           orderCount: agg.count,
           orderIds: agg.orderIds,
         });

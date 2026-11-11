@@ -41,7 +41,19 @@ public class LockerDataSeeder implements CommandLineRunner {
         this.orderRepository = orderRepository;
     }
 
-    record LockerSeed(String id, String name, String address, double lat, double lng, String status, int totalComps, int[][] comps) {}
+    /**
+     * GĐ12 — {@code isVirtual}: {@code true} = tủ khai báo trong CSDL, KHÔNG có thiết bị thật.
+     *
+     * <p>Phần cứng thật chỉ có 1 tủ: thiết bị {@code khuon_vien} gửi nhịp tim cho
+     * {@code LOCKER_HN_01}. 9 tủ còn lại là dữ liệu mẫu nên không bao giờ có nhịp tim; đánh dấu
+     * chúng là tủ ảo để giao diện hiện "Online (tủ ảo)" thay vì "Mất kết nối" sai sự thật.
+     *
+     * <p><b>KHÔNG set {@code lastHeartbeat} cho tủ ảo.</b> Cột đó phải phản ánh sự thật "chưa
+     * từng gửi nhịp tim"; nếu bịa giá trị cho đẹp thì ta đang giả mạo dữ liệu thiết bị và không
+     * ai còn phân biệt được tủ thật với tủ khai báo.
+     */
+    record LockerSeed(String id, String name, String address, double lat, double lng, String status,
+                      int totalComps, int[][] comps, boolean isVirtual) {}
 
     @Override
     @Transactional
@@ -49,16 +61,16 @@ public class LockerDataSeeder implements CommandLineRunner {
         log.info(">>> Khởi chạy LockerDataSeeder: Tự động kiểm tra và đồng bộ mạng lưới 10 điểm tủ GIS...");
 
         List<LockerSeed> seeds = List.of(
-            new LockerSeed("LOCKER_HN_01", "Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)", "Sảnh Tầng 1, KTX A1, Học viện CNBCVT, Km10 Nguyễn Trãi, Q. Hà Đông", 20.9808, 105.7876, "ONLINE", 2, new int[][]{{1, 18}, {2, 19}}),
-            new LockerSeed("LOCKER_HN_02", "Tủ Giao Nhận Đại Học Hà Nội (HANU)", "Cổng Chính ĐH Hà Nội, Km9 Đường Nguyễn Trãi, P. Trung Văn, Q. Nam Từ Liêm", 20.9892, 105.7958, "ONLINE", 2, new int[][]{{1, 12}, {2, 14}}),
-            new LockerSeed("LOCKER_HN_03", "Tủ Giao Nhận Vinhomes Royal City (Ngã Tư Sở)", "Sảnh R1, KĐT Vinhomes Royal City, 72A Nguyễn Trãi, P. Thượng Đình, Q. Thanh Xuân", 21.0032, 105.8162, "ONLINE", 2, new int[][]{{1, 101}, {2, 102}}),
-            new LockerSeed("LOCKER_HN_04", "Tủ Giao Nhận Bến Xe Yên Nghĩa (Metro Hà Đông)", "Sảnh Ga Yên Nghĩa (Tuyến Metro Cát Linh - Hà Đông), P. Yên Nghĩa, Q. Hà Đông", 20.9542, 105.7538, "ONLINE", 2, new int[][]{{1, 105}, {2, 106}}),
-            new LockerSeed("LOCKER_HN_05", "Tủ Giao Nhận Trung Hòa - Nhân Chính (Cầu Giấy)", "Tòa Nhà 17T1 Hoàng Đạo Thúy, KĐT Trung Hòa Nhân Chính, Q. Cầu Giấy", 21.0088, 105.8035, "ONLINE", 2, new int[][]{{1, 109}, {2, 110}}),
-            new LockerSeed("LOCKER_HN_06", "Tủ Giao Nhận GO! Thăng Long (Trần Duy Hưng)", "Đại Siêu Thị GO! Thăng Long, 222 Trần Duy Hưng, P. Trung Hòa, Q. Cầu Giấy", 21.0068, 105.7918, "ONLINE", 2, new int[][]{{1, 113}, {2, 114}}),
-            new LockerSeed("LOCKER_HN_07", "Tủ Giao Nhận Aeon Mall Hà Đông (Dương Nội)", "Cổng 1, TTTM Aeon Mall Hà Đông, Khu Đô Thị Dương Nội, Q. Hà Đông", 20.9882, 105.7548, "ONLINE", 2, new int[][]{{1, 117}, {2, 118}}),
-            new LockerSeed("LOCKER_HN_08", "Tủ Giao Nhận KĐT Mỗ Lao (Mulberry Lane)", "Khu Chung Cư TSQ Mulberry Lane, KĐT Mỗ Lao, Q. Hà Đông", 20.9858, 105.7822, "ONLINE", 2, new int[][]{{1, 121}, {2, 122}}),
-            new LockerSeed("LOCKER_HN_09", "Tủ Giao Nhận ĐH Khoa Học Tự Nhiên (VNU)", "334 Nguyễn Trãi, P. Thanh Xuân Trung, Q. Thanh Xuân, Hà Nội", 20.9968, 105.8078, "ONLINE", 2, new int[][]{{1, 125}, {2, 126}}),
-            new LockerSeed("LOCKER_HN_10", "Tủ Giao Nhận Trung Tâm Hành Chính Hà Đông", "Phố Tô Hiệu, P. Hà Cầu, Q. Hà Đông (Gần Ga Metro La Khê)", 20.9678, 105.7738, "ONLINE", 2, new int[][]{{1, 129}, {2, 130}})
+            new LockerSeed("LOCKER_HN_01", "Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)", "Sảnh Tầng 1, KTX A1, Học viện CNBCVT, Km10 Nguyễn Trãi, Q. Hà Đông", 20.9808, 105.7876, "ONLINE", 2, new int[][]{{1, 18}, {2, 19}}, false),
+            new LockerSeed("LOCKER_HN_02", "Tủ Giao Nhận Đại Học Hà Nội (HANU)", "Cổng Chính ĐH Hà Nội, Km9 Đường Nguyễn Trãi, P. Trung Văn, Q. Nam Từ Liêm", 20.9892, 105.7958, "ONLINE", 2, new int[][]{{1, 12}, {2, 14}}, true),
+            new LockerSeed("LOCKER_HN_03", "Tủ Giao Nhận Vinhomes Royal City (Ngã Tư Sở)", "Sảnh R1, KĐT Vinhomes Royal City, 72A Nguyễn Trãi, P. Thượng Đình, Q. Thanh Xuân", 21.0032, 105.8162, "ONLINE", 2, new int[][]{{1, 101}, {2, 102}}, true),
+            new LockerSeed("LOCKER_HN_04", "Tủ Giao Nhận Bến Xe Yên Nghĩa (Metro Hà Đông)", "Sảnh Ga Yên Nghĩa (Tuyến Metro Cát Linh - Hà Đông), P. Yên Nghĩa, Q. Hà Đông", 20.9542, 105.7538, "ONLINE", 2, new int[][]{{1, 105}, {2, 106}}, true),
+            new LockerSeed("LOCKER_HN_05", "Tủ Giao Nhận Trung Hòa - Nhân Chính (Cầu Giấy)", "Tòa Nhà 17T1 Hoàng Đạo Thúy, KĐT Trung Hòa Nhân Chính, Q. Cầu Giấy", 21.0088, 105.8035, "ONLINE", 2, new int[][]{{1, 109}, {2, 110}}, true),
+            new LockerSeed("LOCKER_HN_06", "Tủ Giao Nhận GO! Thăng Long (Trần Duy Hưng)", "Đại Siêu Thị GO! Thăng Long, 222 Trần Duy Hưng, P. Trung Hòa, Q. Cầu Giấy", 21.0068, 105.7918, "ONLINE", 2, new int[][]{{1, 113}, {2, 114}}, true),
+            new LockerSeed("LOCKER_HN_07", "Tủ Giao Nhận Aeon Mall Hà Đông (Dương Nội)", "Cổng 1, TTTM Aeon Mall Hà Đông, Khu Đô Thị Dương Nội, Q. Hà Đông", 20.9882, 105.7548, "ONLINE", 2, new int[][]{{1, 117}, {2, 118}}, true),
+            new LockerSeed("LOCKER_HN_08", "Tủ Giao Nhận KĐT Mỗ Lao (Mulberry Lane)", "Khu Chung Cư TSQ Mulberry Lane, KĐT Mỗ Lao, Q. Hà Đông", 20.9858, 105.7822, "ONLINE", 2, new int[][]{{1, 121}, {2, 122}}, true),
+            new LockerSeed("LOCKER_HN_09", "Tủ Giao Nhận ĐH Khoa Học Tự Nhiên (VNU)", "334 Nguyễn Trãi, P. Thanh Xuân Trung, Q. Thanh Xuân, Hà Nội", 20.9968, 105.8078, "ONLINE", 2, new int[][]{{1, 125}, {2, 126}}, true),
+            new LockerSeed("LOCKER_HN_10", "Tủ Giao Nhận Trung Tâm Hành Chính Hà Đông", "Phố Tô Hiệu, P. Hà Cầu, Q. Hà Đông (Gần Ga Metro La Khê)", 20.9678, 105.7738, "ONLINE", 2, new int[][]{{1, 129}, {2, 130}}, true)
         );
 
         for (LockerSeed s : seeds) {
@@ -72,7 +84,11 @@ public class LockerDataSeeder implements CommandLineRunner {
                         .longitude(s.lng())
                         .connectionStatus(s.status())
                         .totalCompartments(2)
-                        .lastHeartbeat(LocalDateTime.now())
+                        // GĐ12 — tủ ảo KHÔNG có nhịp tim: không bịa `LocalDateTime.now()` cho nó.
+                        // Tủ thật (HN_01) tạo lần đầu thì lấy mốc hiện tại để không bị coi là "chưa
+                        // từng gửi nhịp tim" ngay sau khi cài đặt.
+                        .isVirtual(s.isVirtual())
+                        .lastHeartbeat(s.isVirtual() ? null : LocalDateTime.now())
                         .build();
                 lockerRepository.save(locker);
                 log.info("  + Đã tự động tạo trạm tủ 2 ngăn: {} ({})", s.id(), s.name());
@@ -93,6 +109,10 @@ public class LockerDataSeeder implements CommandLineRunner {
                     locker.setConnectionStatus(s.status());
                 }
                 locker.setTotalCompartments(2);
+                // GĐ12 — đồng bộ cờ phân loại. Cột này do seeder quản lý (khác `connectionStatus`
+                // là quyết định của admin), nên ghi mỗi lần khởi động để dữ liệu cũ tự được gán
+                // đúng: HN_01 = tủ thật, 9 tủ kia = tủ ảo.
+                locker.setIsVirtual(s.isVirtual());
                 lockerRepository.save(locker);
             }
 
