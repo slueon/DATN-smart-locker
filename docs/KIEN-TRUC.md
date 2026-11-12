@@ -32,14 +32,14 @@ Token **opaque**: 32 byte `SecureRandom` → Base64URL 43 ký tự, lưu **nguy�
 Broker dùng chung cho N tủ. Phải trả lời hai câu ngược nhau: *làm sao một tủ gửi dữ liệu lên mà backend biết đó là tủ nào?* và *làm sao lệnh mở tủ chỉ đến đúng một tủ?*
 
 ### Cách chọn
-- **Uplink** (tủ → backend): topic **chung**, không chứa id — `ptit/status`, `ptit/qr/order`, `ptit/compartment/N/status`. Tủ nào gửi thì nói trong payload: `{"locker_id":"khuon_vien", ...}`.
+- **Uplink** (tủ → backend): topic **chung**, không chứa id — `ptit/status`, `ptit/qr/order`, `ptit/compartment/N/status`. Tủ nào gửi thì nói trong payload: `{"locker_id":"Tu_1", ...}`.
 - **Downlink** (backend → tủ): topic **riêng từng tủ**, có `{id}` — `ptit/{dev}/verified/order`, `ptit/{dev}/locker/open`.
 
 Lý do bất đối xứng: uplink mà có id thì mỗi tủ phải biết mình là ai để publish đúng topic, và backend phải subscribe wildcard nhiều tầng. Còn downlink mà **không** có id thì **mọi tủ đều nhận lệnh và đều mở cửa** — đây là thảm hoạ, nên bắt buộc phải có id.
 
 ### Đánh đổi
 - Mỗi bản tin uplink phải **parse JSON** để biết tủ nào → tốn CPU hơn, và **hỏng nếu firmware quên `locker_id`**. Chuyện này đang xảy ra thật: firmware hiện tại gửi `ptit/chung2004/compartment/N/status` **không có** `locker_id`, nên backend phải đệm bằng `mqtt.locker.prefix.chung2004` (xem `GIOI-HAN-BAOMAT.md` #3).
-- **Đổi tên/id thiết bị phải sửa cấu hình**, không sửa code: `mqtt.locker.id.map=khuon_vien:LOCKER_HN_01`.
+- **Đổi tên/id thiết bị phải sửa cấu hình**, không sửa code: `mqtt.locker.id.map=Tu_1:LOCKER_HN_01`.
 - Backend subscribe `ptit/#` nên **nghe lại chính bản tin mình vừa phát** — phải có cơ chế chống echo (`isDownlinkTopic` + cửa sổ 5 giây). Nếu quên, mỗi lệnh mở tủ sẽ sinh thêm `device_events` rác.
 
 **Một điểm không hoàn hảo đã biết:** id tủ trong topic downlink **không phải bí mật** (ai đọc `MQTT_GUIDE.md` cũng biết). Vì broker công cộng không xác thực, người ngoài vẫn publish được vào topic đó. Cách chặn thật là broker riêng + ACL, không phải giấu id.

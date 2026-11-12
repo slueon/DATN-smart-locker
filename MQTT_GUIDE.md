@@ -4,9 +4,9 @@ Tài liệu này mô tả cách firmware tủ giao tiếp với backend qua MQTT
 
 ## 1. Thông tin chung
 
-- Locker ID hiện cấu hình là `khuon_vien`. Thay `{id}` trong tài liệu bằng Locker ID thực tế của tủ.
+- Locker ID hiện cấu hình là `Tu_1`. Thay `{id}` trong tài liệu bằng Locker ID thực tế của tủ.
 - **Topic UPLINK (tủ gửi lên) là topic chung, KHÔNG có `{id}`** — ví dụ `ptit/qr/order`. Locker ID nằm trong `locker_id` của payload. Riêng `status` xem mục 3.1.
-- **Topic DOWNLINK (backend gửi xuống) có `{id}`** — ví dụ `ptit/khuon_vien/verified/order`, để lệnh chỉ đến đúng tủ nhận.
+- **Topic DOWNLINK (backend gửi xuống) có `{id}`** — ví dụ `ptit/Tu_1/verified/order`, để lệnh chỉ đến đúng tủ nhận.
 - Topic phân biệt chữ hoa/chữ thường. Firmware hiện dùng topic chữ thường.
 - **Tủ gửi lên backend:** payload thường là JSON có `locker_id`. Ngoại lệ là topic trạng thái kết nối `status`, gửi chuỗi `ONLINE`/`OFFLINE`.
 - **Backend gửi xuống tủ:** payload là chuỗi thuần, không bọc JSON.
@@ -24,7 +24,7 @@ Thiết lập firmware hiện tại:
 | Giao thức | MQTT over TLS |
 | URI | `mqtts://broker.emqx.io` |
 | Cổng MQTT TLS | `8883` |
-| Client ID của firmware | Locker ID, ví dụ `khuon_vien` |
+| Client ID của firmware | Locker ID, ví dụ `Tu_1` |
 
 Firmware đồng bộ giờ qua SNTP trước khi kết nối TLS. Nếu đồng bộ giờ thất bại, MQTT không được khởi động.
 
@@ -52,7 +52,7 @@ Ngoại lệ: `status` là chuỗi thuần nên **không mang `locker_id`**. Hai
 | Khuyến nghị | `ptit/{id}/status` | `ONLINE` / `OFFLINE` | Lấy Locker ID từ chính topic |
 | Tương thích firmware hiện tại | `ptit/status` | `ONLINE` / `OFFLINE` | Không đọc được tủ nào → gán tủ mặc định + log WARN (vẫn cập nhật nhịp tim) |
 
-Ví dụ với ID `khuon_vien`: `ptit/khuon_vien/status`.
+Ví dụ với ID `Tu_1`: `ptit/Tu_1/status`.
 
 ### 3.2 QR, thông tin nhận hàng và thao tác giao diện
 
@@ -60,17 +60,24 @@ Tất cả topic dưới đây là **topic chung, không chứa `{id}`**. Locker
 
 | Topic | Payload mẫu | Ý nghĩa |
 |---|---|---|
-| `ptit/qr/shipper` | `{"locker_id":"khuon_vien","qr":"<mã QR shipper>"}` | Mã QR shipper quét từ TFT. Backend xác minh rồi publish kết quả lên `verified/shipper`. |
-| `ptit/qr/order` | `{"locker_id":"khuon_vien","qr":"<mã vận đơn>"}` | Mã vận đơn trên nhãn kiện hàng. Backend tra đơn: nếu đơn đã được shipper đặt trước ngăn thì publish `1`; nếu chưa thì publish `0`. |
-| `ptit/qr/receive` | `{"locker_id":"khuon_vien","qr":"<mã QR nhận hàng>"}` | Mã QR khách dùng để nhận hàng. Backend xác minh; nếu hợp lệ gửi lệnh mở theo luồng nhận hàng. |
-| `ptit/receive/phone` | `{"locker_id":"khuon_vien","phone":"090..."}` | Số điện thoại khách nhập. Backend phản hồi số đơn qua `verified/customer`. |
-| `ptit/receive/otp` | `{"locker_id":"khuon_vien","otp":"123456"}` | OTP khách nhập. Backend xác minh OTP. |
-| `ptit/session/cancel` | `{"locker_id":"khuon_vien","action":"cancel_send"}` | Tín hiệu hủy thao tác. `action` phân biệt: `cancel_send`, `cancel_receive`, `cancel_order_scan`, `cancel_receive_phone`, `cancel_receive_qr`, `cancel_receive_otp`. |
-| `ptit/locker/scan_order_qr/request` | `{"locker_id":"khuon_vien","action":"scan_order_qr"}` | Báo backend bắt đầu luồng quét QR đơn hàng; đây không phải nội dung QR. QR thực tế gửi trên `qr/order`. |
-| `ptit/receive/scan_qr/request` | `{"locker_id":"khuon_vien","action":"scan_receive_qr"}` | Báo backend bắt đầu luồng quét QR nhận hàng; QR thực tế gửi trên `qr/receive`. |
-| `ptit/locker/select_compartment` | `{"locker_id":"khuon_vien","compartment":0,"qr":"<mã vận đơn>"}` | Shipper chọn ngăn trong nhánh **không có đặt trước**. Tủ mở ngăn ngay tại thao tác chọn và gửi thông tin ngăn/đơn cho backend lưu. `compartment` bắt đầu từ 0. Backend **chỉ ghi nhận, không phát lệnh mở** cho lần chọn này. |
+| `ptit/qr/shipper` | `{"locker_id":"Tu_1","qr":"<mã QR shipper>"}` | Mã QR shipper quét từ TFT. Backend xác minh rồi publish kết quả lên `verified/shipper`. |
+| `ptit/qr/order` | `{"locker_id":"Tu_1","qr":"<mã vận đơn>"}` | Mã vận đơn trên nhãn kiện hàng. Backend tra đơn: nếu đơn đã được shipper đặt trước ngăn thì publish `1`; nếu chưa thì publish `0`. |
+| `ptit/qr/receive` | `{"locker_id":"Tu_1","qr":"<mã QR nhận hàng>"}` | Mã QR khách dùng để nhận hàng. Backend xác minh; nếu hợp lệ gửi lệnh mở theo luồng nhận hàng. |
+| `ptit/receive/phone` | `{"locker_id":"Tu_1","phone":"090..."}` | Số điện thoại khách nhập. Backend phản hồi số đơn qua `verified/customer`. |
+| `ptit/receive/otp` | `{"locker_id":"Tu_1","otp":"123456"}` | OTP khách nhập. Backend xác minh OTP. |
+| `ptit/session/cancel` | `{"locker_id":"Tu_1","action":"cancel_send"}` | Tín hiệu hủy thao tác. `action` phân biệt: `cancel_send`, `cancel_receive`, `cancel_order_scan`, `cancel_receive_phone`, `cancel_receive_qr`, `cancel_receive_otp`. |
+| `ptit/locker/scan_order_qr/request` | `{"locker_id":"Tu_1","action":"scan_order_qr"}` | Báo backend bắt đầu luồng quét QR đơn hàng; đây không phải nội dung QR. QR thực tế gửi trên `qr/order`. |
+| `ptit/receive/scan_qr/request` | `{"locker_id":"Tu_1","action":"scan_receive_qr"}` | Báo backend bắt đầu luồng quét QR nhận hàng; QR thực tế gửi trên `qr/receive`. |
+| `ptit/locker/select_compartment` | `{"locker_id":"Tu_1","compartment":0,"qr":"<mã vận đơn>"}` | Shipper chọn ngăn trong nhánh **không có đặt trước**. Tủ mở ngăn ngay tại thao tác chọn và gửi thông tin ngăn/đơn cho backend lưu. `compartment` bắt đầu từ 0. Backend **chỉ ghi nhận, không phát lệnh mở** cho lần chọn này. |
 
 QR shipper, QR đơn và QR nhận hàng có topic riêng để backend không nhầm mục đích của mã.
+
+> **GĐ15 — mã QR shipper KHÔNG còn hạn.** Trước đây token định danh shipper sống 60 giây; nay
+> token được cấp với `expired_at = 9999-12-31` và backend **bỏ hẳn** khối kiểm hết hạn, nên một
+> mã đã phát ra dùng được mãi. Hệ quả bảo mật (mất lớp chống Replay Attack) ghi ở
+> `docs/GIOI-HAN-BAOMAT.md` mục 6. Hai lớp bảo vệ còn lại vẫn giữ: mỗi token chỉ quét được **một
+> lần** (`is_verified`), và token gắn `locker_id` nên không dùng chéo tủ.
+> Mã OTP nhận hàng của khách **vẫn 5 phút** — không đổi.
 
 ### 3.3 Trạng thái ngăn và sự kiện giao dịch
 
@@ -78,8 +85,8 @@ QR shipper, QR đơn và QR nhận hàng có topic riêng để backend không n
 
 | Topic | Payload mẫu | Ý nghĩa |
 |---|---|---|
-| `ptit/compartment/N/status` | `{"locker_id":"khuon_vien","has_item":1,"door_closed":1,"weight":120.5}` | Trạng thái hiện tại của ngăn. Firmware publish khi có thay đổi trạng thái hàng/cửa, hoặc gửi lại sau khi thoát bảo trì. Không phải heartbeat định kỳ. |
-| `ptit/compartment/N/event` | `{"locker_id":"khuon_vien","status":"deposit_success","weight":120.5,"compartment":1}` | Sự kiện nghiệp vụ sau thao tác gửi/nhận hàng. `compartment` trong payload bắt đầu từ **1**. |
+| `ptit/compartment/N/status` | `{"locker_id":"Tu_1","has_item":1,"door_closed":1,"weight":120.5}` | Trạng thái hiện tại của ngăn. Firmware publish khi có thay đổi trạng thái hàng/cửa, hoặc gửi lại sau khi thoát bảo trì. Không phải heartbeat định kỳ. |
+| `ptit/compartment/N/event` | `{"locker_id":"Tu_1","status":"deposit_success","weight":120.5,"compartment":1}` | Sự kiện nghiệp vụ sau thao tác gửi/nhận hàng. `compartment` trong payload bắt đầu từ **1**. |
 
 > **Firmware hiện tại** publish trạng thái ngăn theo dạng phẳng `ptit/chung2004/compartment/N/status` mà payload **không có `locker_id`**. Backend vẫn nhận được nhờ cấu hình `mqtt.locker.prefix.chung2004` (mặc định `LOCKER_HN_01`) — xem `application.properties`. Khi firmware chuyển sang topic chung có `locker_id` thì đặt cấu hình đó rỗng.
 
@@ -126,9 +133,9 @@ Firmware subscribe các topic dưới đây theo QoS 1. Payload gửi xuống l�
 ### Import cấu hình theo dõi
 
 1. Trong MQTTX, chọn **Import Data**.
-2. Chọn định dạng **JSON** và import file [`mqttx-khuon_vien-import.json`](./mqttx-khuon_vien-import.json).
-3. Kết nối profile **Smart Locker khuon_vien**.
-4. File có subscription riêng cho các topic tủ gửi lên và topic phản hồi/lệnh. Để xem nhanh toàn bộ traffic, có thể thêm một subscription `ptit/khuon_vien/#` (QoS 1).
+2. Chọn định dạng **JSON** và import file [`mqttx-Tu_1-import.json`](./mqttx-Tu_1-import.json).
+3. Kết nối profile **Smart Locker Tu_1**.
+4. File có subscription riêng cho các topic tủ gửi lên và topic phản hồi/lệnh. Để xem nhanh toàn bộ traffic, có thể thêm một subscription `ptit/Tu_1/#` (QoS 1).
 
 MQTTX import tạo profile và danh sách **subscriptions** để theo dõi. Nó không tự publish lệnh, không cấu hình backend, và cũng không tự thay đổi topic firmware.
 
@@ -138,13 +145,13 @@ Trong MQTTX, chọn **Plaintext**, nhập topic đầy đủ và payload tương
 
 | Mục đích thử | Topic | Payload |
 |---|---|---|
-| Hiển thị các ngăn khả dụng | `ptit/khuon_vien/verified/order` | `0` |
-| Báo QR đơn đã đặt trước | `ptit/khuon_vien/verified/order` | `1` |
-| Mô phỏng shipper đã xác minh | `ptit/khuon_vien/verified/shipper` | `1` |
-| Bật bảo trì tủ | `ptit/khuon_vien/maintenance/locker` | `1` |
-| Tắt bảo trì tủ | `ptit/khuon_vien/maintenance/locker` | `0` |
-| Bảo trì ngăn 1 | `ptit/khuon_vien/maintenance/compartment` | `0,1` |
-| Cho ngăn 1 hoạt động | `ptit/khuon_vien/maintenance/compartment` | `0,0` |
+| Hiển thị các ngăn khả dụng | `ptit/Tu_1/verified/order` | `0` |
+| Báo QR đơn đã đặt trước | `ptit/Tu_1/verified/order` | `1` |
+| Mô phỏng shipper đã xác minh | `ptit/Tu_1/verified/shipper` | `1` |
+| Bật bảo trì tủ | `ptit/Tu_1/maintenance/locker` | `1` |
+| Tắt bảo trì tủ | `ptit/Tu_1/maintenance/locker` | `0` |
+| Bảo trì ngăn 1 | `ptit/Tu_1/maintenance/compartment` | `0,1` |
+| Cho ngăn 1 hoạt động | `ptit/Tu_1/maintenance/compartment` | `0,0` |
 
 Với trạng thái bảo trì, bật **Retain** để firmware nhận lại trạng thái khi reconnect. Không bật Retain cho kết quả xác minh hay lệnh mở vì đây là phản hồi theo một giao dịch cụ thể, không phải trạng thái bền vững. Khi thử thủ công, nên tạm dừng backend để tránh backend đồng thời phản hồi các bản tin test.
 

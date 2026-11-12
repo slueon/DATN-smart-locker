@@ -63,6 +63,32 @@ public class MqttConfig {
         return lwtTopic.trim();
     }
 
+    /**
+     * GĐ16 — chuẩn hoá URL broker về scheme mà <b>Paho 1.2.5 hiểu được</b>.
+     *
+     * <h2>Vì sao bắt buộc phải có</h2>
+     * Firmware thật (`Tu_1`) dùng TLS ở cổng 8883, và tài liệu/UI của EMQX hay ghi scheme
+     * {@code mqtts://}. Nhưng Paho client **v3 chỉ chấp nhận** {@code tcp://}, {@code ssl://},
+     * {@code ws://}, {@code wss://} — đưa {@code mqtts://} vào {@code new MqttClient(...)} là ném
+     * {@code IllegalArgumentException} về URI.
+     *
+     * <p>Lỗi đó lại bị {@code catch} ở {@link #mqttClient} (cố ý, để app vẫn khởi động được khi
+     * broker chết) nên hệ quả là <b>app chạy bình thường nhưng MQTT = null</b>: không nhận cảm
+     * biến, không gửi lệnh mở tủ — mà không ai thấy lỗi. Đây đúng là loại lỗi im lặng nguy hiểm
+     * nhất của tầng MQTT, nên phải chặn ngay tại biên.
+     *
+     * <p>Hàm này chạy TRƯỚC khi tạo client, để dù ai đặt biến môi trường {@code MQTT_BROKER_URL}
+     * sai scheme thì hệ thống vẫn nối được (kèm cảnh báo trong log).
+     */
+    static String normalizeBrokerUrl(String url) {
+        if (url == null) return null;
+        String u = url.trim();
+        if (u.isEmpty()) return u;
+        if (u.startsWith("mqtts://")) return "ssl://" + u.substring("mqtts://".length());
+        if (u.startsWith("mqtt://")) return "tcp://" + u.substring("mqtt://".length());
+        return u;
+    }
+
     @Bean
     public MqttConnectOptions mqttConnectOptions() {
         MqttConnectOptions options = new MqttConnectOptions();
@@ -115,15 +141,32 @@ public class MqttConfig {
             log.info("MQTT đang tắt trong file cấu hình.");
             return null;
         }
+        // GĐ16 — chuẩn hoá scheme TRƯỚC khi tạo client (xem javadoc `normalizeBrokerUrl`).
+        // Log cả giá trị gốc khi phải đổi, để người vận hành biết env var đang đặt sai scheme.
+        String effectiveBrokerUrl = normalizeBrokerUrl(brokerUrl);
+        if (effectiveBrokerUrl != null && !effectiveBrokerUrl.equals(brokerUrl)) {
+            log.warn("GĐ16 — URL broker '{}' dùng scheme Paho không hỗ trợ; đã chuẩn hoá thành '{}'. "
+                    + "Hãy sửa cấu hình cho đúng (dùng ssl:// cho TLS, tcp:// cho plaintext).",
+                    brokerUrl, effectiveBrokerUrl);
+        }
         try {
             String effectiveClientId = clientId + "_" + UUID.randomUUID().toString().substring(0, 6);
-            MqttClient client = new MqttClient(brokerUrl, effectiveClientId, new MemoryPersistence());
-            log.info("Đang khởi tạo kết nối MQTT Broker: {} (ClientId: {})...", brokerUrl, effectiveClientId);
+            MqttClient client = new MqttClient(effectiveBrokerUrl, effectiveClientId, new MemoryPersistence());
+            log.info("Đang khởi tạo kết nối MQTT Broker: {} (ClientId: {})...", effectiveBrokerUrl, effectiveClientId);
             client.connect(options);
-            log.info("Kết nối MQTT Broker thành công tại: {}", brokerUrl);
+            log.info("Kết nối MQTT Broker thành công tại: {}", effectiveBrokerUrl);
             return client;
         } catch (Exception e) {
-            log.warn("Chưa thể kết nối tức thời tới MQTT Broker {}: {}. Hệ thống vẫn vận hành bình thường.", brokerUrl, e.getMessage());
+            // GĐ16 — KHÔNG nuốt lỗi im lặng nữa.
+            //
+            // Vẫn KHÔNG throw: app phải khởi động được kể cả khi broker chết (ràng buộc cứng).
+            // Nhưng trước đây chỉ `log.warn` nên khi TLS sai chứng chỉ / sai cổng, hệ thống chạy
+            // "bình thường" mà MQTT = null — không cảm biến, không mở được tủ, không ai biết.
+            // Nay log ở mức ERROR kèm nguyên nhân và hệ quả rõ ràng để người vận hành thấy ngay.
+            log.error("KHÔNG kết nối được MQTT Broker tại {} — nguyên nhân: {}. "
+                    + "HỆ QUẢ: backend KHÔNG nhận bản tin cảm biến và KHÔNG gửi được lệnh mở tủ "
+                    + "(mqttClient = null). App vẫn chạy nhưng tầng MQTT đang chết — kiểm tra TLS/cổng/tường lửa.",
+                    effectiveBrokerUrl, e.getMessage(), e);
             return null;
         }
     }

@@ -10,13 +10,13 @@
  * CÁCH DÙNG
  *   node scripts/mqtt-probe.mjs pub <topic> <payload> [--retain] [--qos=0|1]
  *   node scripts/mqtt-probe.mjs sub <topicFilter> [--ms=3000]
- *   node scripts/mqtt-probe.mjs shipper <token> [--locker=khuon_vien]
- *   node scripts/mqtt-probe.mjs send <orderId> [--locker=khuon_vien]
- *   node scripts/mqtt-probe.mjs status [--locker=khuon_vien] [--plaintext]
- *   node scripts/mqtt-probe.mjs receive-phone <phone> [--locker=khuon_vien]
+ *   node scripts/mqtt-probe.mjs shipper <token> [--locker=Tu_1]
+ *   node scripts/mqtt-probe.mjs send <orderId> [--locker=Tu_1]
+ *   node scripts/mqtt-probe.mjs status [--locker=Tu_1] [--plaintext]
+ *   node scripts/mqtt-probe.mjs receive-phone <phone> [--locker=Tu_1]
  *
  * BIẾN MÔI TRƯỜNG
- *   MQTT_BROKER_URL     mặc định tcp://broker.emqx.io:1883
+ *   MQTT_BROKER_URL     mặc định ssl://broker.emqx.io:8883 (TLS — GĐ16)
  *   MQTT_TOPIC_BASE     mặc định ptit
  *   MQTT_PROBE_TIMEOUT  mặc định 8000 (ms)
  *
@@ -26,9 +26,10 @@
  */
 
 import net from 'node:net';
+import tls from 'node:tls';
 import { randomBytes } from 'node:crypto';
 
-const BROKER_URL = process.env.MQTT_BROKER_URL || 'tcp://broker.emqx.io:1883';
+const BROKER_URL = process.env.MQTT_BROKER_URL || 'ssl://broker.emqx.io:8883';
 const BASE = process.env.MQTT_TOPIC_BASE || 'ptit';
 const TIMEOUT = Number(process.env.MQTT_PROBE_TIMEOUT || 8000);
 const VERBOSE = process.env.MQTT_PROBE_VERBOSE === '1';
@@ -53,10 +54,16 @@ function parseArgs(argv) {
 
 function parseBroker(url) {
   const trimmed = String(url).trim();
-  const withScheme = trimmed.includes('://') ? trimmed : `tcp://${trimmed}`;
+  // GĐ16 — mặc định TLS: thiết bị thật `Tu_1` chỉ nói TLS ở cổng 8883.
+  // Chuẩn hoá `mqtts://` (scheme quen thuộc) về `ssl://` để cùng một nhánh TLS bên dưới.
+  const normalized = trimmed.startsWith('mqtts://')
+    ? 'ssl://' + trimmed.slice('mqtts://'.length)
+    : trimmed;
+  const withScheme = normalized.includes('://') ? normalized : `tcp://${normalized}`;
   const u = new URL(withScheme);
-  const port = Number(u.port || (u.protocol === 'mqtts:' || u.protocol === 'ssl:' ? 8883 : 1883));
-  return { host: u.hostname, port };
+  const useTls = u.protocol === 'mqtts:' || u.protocol === 'ssl:';
+  const port = Number(u.port || (useTls ? 8883 : 1883));
+  return { host: u.hostname, port, useTls };
 }
 
 const log = (...args) => {
@@ -198,10 +205,11 @@ function decodePublish({ firstByte, body }) {
 // ──────────────────────────────── client ────────────────────────────────
 
 class ProbeClient {
-  constructor({ host, port, clientId }) {
+  constructor({ host, port, clientId, useTls = false }) {
     this.host = host;
     this.port = port;
     this.clientId = clientId;
+    this.useTls = useTls;
     this.socket = null;
     this.connected = false;
     this.pending = [];
@@ -212,7 +220,12 @@ class ProbeClient {
 
   connect() {
     return new Promise((resolve, reject) => {
-      const socket = net.createConnection({ host: this.host, port: this.port });
+      // GĐ16 — firmware thật (`Tu_1`) và backend đều dùng TLS 8883, nên probe phải nói TLS
+      // được. Trước đây script chỉ dùng `node:net` thuần (TCP) nên không bao giờ kết nối được
+      // cổng 8883 — demo theo tài liệu sẽ treo tới timeout.
+      const socket = this.useTls
+        ? tls.connect({ host: this.host, port: this.port, servername: this.host })
+        : net.createConnection({ host: this.host, port: this.port });
       this.socket = socket;
       socket.setNoDelay(true);
 
@@ -325,8 +338,8 @@ function makeClientId(prefix = 'probe') {
 }
 
 async function withClient(fn) {
-  const { host, port } = parseBroker(BROKER_URL);
-  const client = new ProbeClient({ host, port, clientId: makeClientId() });
+  const { host, port, useTls } = parseBroker(BROKER_URL);
+  const client = new ProbeClient({ host, port, clientId: makeClientId(), useTls });
   try {
     await client.connect();
     return await fn(client);
@@ -380,7 +393,7 @@ async function expectOn(client, topic, ms) {
 async function cmdShipper(positional, flags) {
   const [token] = positional;
   if (!token) throw usage('shipper cần <token>');
-  const locker = flags.locker || 'khuon_vien';
+  const locker = flags.locker || 'Tu_1';
   const dev = flags.dev || locker;
   const modernTopic = topicPath('qr', 'shipper');
   const legacyTopic = topicPath('QR_Shipper');
@@ -406,7 +419,7 @@ async function cmdShipper(positional, flags) {
 async function cmdSend(positional, flags) {
   const [orderId] = positional;
   if (!orderId) throw usage('send cần <orderId>');
-  const locker = flags.locker || 'khuon_vien';
+  const locker = flags.locker || 'Tu_1';
   const dev = flags.dev || locker;
   const topic = flags.legacy ? topicPath('QR_send') : topicPath('qr', 'order');
   const payload = JSON.stringify({ locker_id: locker, qr: orderId });
@@ -422,7 +435,7 @@ async function cmdSend(positional, flags) {
 }
 
 async function cmdStatus(positional, flags) {
-  const locker = flags.locker || 'khuon_vien';
+  const locker = flags.locker || 'Tu_1';
   const topic = topicPath('status');
   const payload = flags.plaintext
     ? 'ONLINE'
@@ -438,7 +451,7 @@ async function cmdStatus(positional, flags) {
 async function cmdReceivePhone(positional, flags) {
   const [phone] = positional;
   if (!phone) throw usage('receive-phone cần <phone>');
-  const locker = flags.locker || 'khuon_vien';
+  const locker = flags.locker || 'Tu_1';
   const dev = flags.dev || locker;
   const topic = flags.legacy ? topicPath('rec', 'phone') : topicPath('receive', 'phone');
   const payload = JSON.stringify({ locker_id: locker, phone });

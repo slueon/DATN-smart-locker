@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS lockers (
     total_compartments INT NOT NULL DEFAULT 2,
     last_heartbeat DATETIME DEFAULT CURRENT_TIMESTAMP,
     -- GĐ12: TRUE = tủ khai báo trong CSDL, KHÔNG có thiết bị thật (không bao giờ gửi nhịp tim).
-    -- Phần cứng thật chỉ có 1 tủ: thiết bị `khuon_vien` → LOCKER_HN_01 (is_virtual = FALSE).
+    -- Phần cứng thật chỉ có 1 tủ: thiết bị `Tu_1` → LOCKER_HN_01 (is_virtual = FALSE).
     -- Cột nhịp tim PHẢI phản ánh sự thật, nên KHÔNG bịa last_heartbeat cho tủ ảo để làm nó "xanh";
     -- trạng thái "có kết nối" của tủ ảo đến từ chính cờ này và luôn hiện kèm nhãn "(tủ ảo)".
     is_virtual BOOLEAN NOT NULL DEFAULT FALSE,

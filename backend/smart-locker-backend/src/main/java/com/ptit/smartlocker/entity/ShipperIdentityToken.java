@@ -47,8 +47,16 @@ public class ShipperIdentityToken {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
+    /**
+     * Thời điểm hết hạn của mã.
+     *
+     * <p>Trước GĐ15 là {@code now + 60 giây}. Từ GĐ15 (user chốt "QR vĩnh viễn") luôn được gán
+     * mốc {@code 9999-12-31T23:59:59} — KHÔNG còn ý nghĩa "hết hạn", nhưng phải giữ cột
+     * {@code NOT NULL} để không phải migration. Truy vấn {@code expiredAt > :now} trong
+     * {@code ShipperIdentityTokenRepository} vì thế luôn đúng, đúng như mong muốn.
+     */
     @Column(name = "expired_at", nullable = false)
-    private LocalDateTime expiredAt; // 60 seconds lifespan
+    private LocalDateTime expiredAt;
 
     @Column(name = "is_verified", nullable = false)
     @Builder.Default

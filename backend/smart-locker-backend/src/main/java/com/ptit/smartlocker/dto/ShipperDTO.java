@@ -14,8 +14,10 @@ public class ShipperDTO {
     public static class GenerateTokenResponse {
         private String shipperId;
         private String dynamicToken;
+        /** GĐ15 — luôn là mốc {@code 9999-12-31T23:59:59}: mã QR shipper KHÔNG còn hạn. */
         private LocalDateTime expiresAt;
-        private int validitySeconds; // 60s
+        /** GĐ15 — {@code 0} = không giới hạn thời gian sống (trước đây là 60 giây). */
+        private int validitySeconds;
 
         public GenerateTokenResponse() {
         }

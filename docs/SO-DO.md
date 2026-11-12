@@ -92,7 +92,7 @@ sequenceDiagram
     BE->>DB: compartment.status=RESERVED<br/>order.compartment + tracking_code<br/>order.shipper_reserved_at = now()
     BE-->>W: 200 OK (hoặc 409 nếu đã đặt trước)
 
-    S->>T: Quét QR shipper tại tủ (60 giây)
+    S->>T: Quét QR shipper tại tủ (mã không có hạn)
     T->>B: publish ptit/qr/shipper {locker_id, qr}
     B->>BE: nhận uplink
     BE->>DB: verifyDynamicToken → token.is_verified=true<br/>token.locker_id = tủ này

@@ -12,7 +12,9 @@ Hệ thống giải quyết bài toán giao nhận hàng hóa chặng cuối (La
 4. **Cơ chế Chống Dò Mã (Anti-Brute-Force Lockout)**: Tạm khóa mã nhận hàng sau 5 lần nhập sai liên tiếp, đồng thời tích hợp lá chắn trạm tủ chống quét từ điển tự động.
 5. **Chính sách lưu kho hết 24h00 ngày hôm sau**: Hàng sau khi shipper nạp vào tủ sẽ được lưu trữ đến hết 24h00 của ngày tiếp theo, tích hợp đồng hồ đếm ngược chuyển màu và cảnh báo tự động.
 6. **Quy trình 2 bước bảo mật tại tủ (TFT & GM65)**:
-   - Bước 1: Shipper quét **Mã QR Định Danh Động 60 giây** qua camera GM65 để xác thực danh tính.
+   - Bước 1: Shipper quét **Mã QR Định Danh** qua camera GM65 để xác thực danh tính. Mã này
+     **không có hạn** (GĐ15 — bỏ cơ chế 60 giây theo yêu cầu người dùng); hệ quả bảo mật ghi ở
+     `docs/GIOI-HAN-BAOMAT.md` mục 6.
    - Bước 2: Quét mã vận đơn đơn hàng ➔ Tủ tự động bật mở khóa Solenoid đúng ngăn.
 7. **Xác thực cảm biến kép (Dual-Sensor)**: Cảm biến từ cửa MC-38 xác nhận đóng kín + Cảm biến cân tải trọng Load cell HX711 xác nhận có kiện hàng trong ngăn.
 8. **Nhận hàng bằng mã OTP & QR động**: Khách hàng có thể quét mã QR động hoặc yêu cầu tạo mã OTP 6 số (hiệu lực 5 phút), ràng buộc chống IDOR theo số điện thoại người nhận.
@@ -137,7 +139,7 @@ Hệ thống giải quyết bài toán giao nhận hàng hóa chặng cuối (La
 | Vai trò | Tên đăng nhập | Mật khẩu mẫu | Chức năng chính |
 |---|---|---|---|
 | **Khách Hàng** | `khachhang` | `123456` | Sàn mua sắm, chọn trạm tủ trên bản đồ Leaflet, giỏ hàng & thanh toán, nhận hàng bằng QR / OTP (hiệu lực 5 phút) |
-| **Shipper** | `shipper` | `shipper123` | Thống kê ca giao, xác minh danh tính QR 60s, quét đơn nạp tủ với cảm biến kép, thu hồi đơn quá hạn |
+| **Shipper** | `shipper` | `shipper123` | Thống kê ca giao, xác minh danh tính QR (mã không hạn), quét đơn nạp tủ với cảm biến kép, thu hồi đơn quá hạn |
 | **Quản Trị Viên** | `admin` | `admin123` | Dashboard KPI lấp đầy, ma trận ngăn tủ, mở ngăn khẩn cấp từ xa, quét đơn quá hạn, cấp tài khoản |
 
 ---

@@ -44,7 +44,7 @@ public class LockerDataSeeder implements CommandLineRunner {
     /**
      * GĐ12 — {@code isVirtual}: {@code true} = tủ khai báo trong CSDL, KHÔNG có thiết bị thật.
      *
-     * <p>Phần cứng thật chỉ có 1 tủ: thiết bị {@code khuon_vien} gửi nhịp tim cho
+     * <p>Phần cứng thật chỉ có 1 tủ: thiết bị {@code Tu_1} gửi nhịp tim cho
      * {@code LOCKER_HN_01}. 9 tủ còn lại là dữ liệu mẫu nên không bao giờ có nhịp tim; đánh dấu
      * chúng là tủ ảo để giao diện hiện "Online (tủ ảo)" thay vì "Mất kết nối" sai sự thật.
      *

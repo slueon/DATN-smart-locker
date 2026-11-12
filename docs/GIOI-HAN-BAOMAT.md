@@ -30,7 +30,7 @@ Broker không kiểm danh tính người kết nối. Bất kỳ ai trên Intern
 - Ai biết tên topic đều **publish được lệnh mở tủ**. Đây là đường mở tủ từ xa không cần
   đăng nhập: `ptit/{dev}/locker/open` với payload `<index>,deposit|pickup`.
 - Đọc được dữ liệu nghiệp vụ phát lên broker: trạng thái ngăn, trọng lượng, sự kiện nạp/nhận,
-  token QR định danh shipper (token sống 60 giây).
+  token QR định danh shipper (**từ GĐ15 token này KHÔNG có hạn — xem mục 6**).
 - Kẻ tấn công có thể giả mạo bản tin `ptit/{dev}/compartment/N/status|event` để đẩy sai
   trạng thái ngăn/đơn hàng vào CSDL.
 - Không có TLS ⇒ dữ liệu bị đọc/sửa trên đường truyền ở bất kỳ chặng nào.
@@ -130,7 +130,7 @@ gán bản tin cho tủ trong `mqtt.locker.prefix.chung2004` (= `LOCKER_HN_01`) 
 **Hướng khắc phục**
 1. **Sửa firmware** để mọi payload nghiệp vụ đều kèm `locker_id` (đúng contract):
    ```json
-   {"locker_id":"khuon_vien","has_item":0,"door_closed":1,"weight":0.0}
+   {"locker_id":"Tu_1","has_item":0,"door_closed":1,"weight":0.0}
    ```
    Đây là cách khắc phục gốc, làm một lần là xong.
 2. Trong thời gian chờ nạp firmware, đổi `mqtt.locker.prefix.chung2004` cho khớp tủ thật
@@ -145,8 +145,58 @@ gán bản tin cho tủ trong `mqtt.locker.prefix.chung2004` (= `LOCKER_HN_01`) 
 
 ---
 
+## 6. Mã QR định danh shipper KHÔNG còn hạn — mất lớp chống Replay Attack
+
+**Mức độ: CAO (đánh đổi do người dùng chốt)**
+
+**Mô tả**
+
+Trước GĐ15, token QR định danh shipper sống **60 giây**: `ShipperService.generateDynamicToken`
+gán `expiredAt = now + 60s`, và `verifyDynamicToken` từ chối token quá hạn. GĐ15 đã **bỏ hoàn
+toàn hạn này** theo yêu cầu của người dùng ("QR vĩnh viễn, KHÔNG giới hạn gì"):
+
+- `expiredAt` được gán mốc `9999-12-31T23:59:59` (không dùng `NULL` vì cột `expired_at` là
+  `NOT NULL` — giữ nguyên schema, không cần migration).
+- Khối kiểm `now.isAfter(expiredAt)` trong `verifyDynamicToken` đã **bị xoá**.
+- `GenerateTokenResponse.validitySeconds` trả `0` (nghĩa: không giới hạn).
+
+**Tác động — phải nói rõ, không được giấu**
+
+- **KHÔNG còn chống Replay Attack bằng hạn thời gian.** Ai **chụp ảnh** màn hình QR của shipper
+  một lần là giữ được mã đó **vĩnh viễn**, dùng lại bất kỳ lúc nào.
+- Nếu ảnh QR rò rỉ (chụp trộm, ảnh đăng nhóm chat, ảnh trong log màn hình), kẻ đó có thể tới
+  tủ và mở quyền nạp hàng dưới danh nghĩa shipper thật.
+- Đây là **đánh đổi có ý thức** của người dùng để tiện demo/trình diễn; nó **không phù hợp cho
+  môi trường thật**.
+
+**Hai lớp bảo vệ CÒN LẠI (bắt buộc giữ, đã kiểm hoạt động)**
+
+1. **`isVerified`** — mỗi token chỉ quét được **đúng một lần**. Quét lại cùng token → lỗi
+   "Mã QR Shipper này đã được sử dụng!". Đây là lớp DUY NHẤT còn lại chặn phát lại đúng một mã;
+   **bỏ nó là mất hoàn toàn khả năng chống quét lại**.
+2. **`lockerId`** — token được gắn tủ lúc quét. Token xác thực ở tủ A **không** mở được cửa tủ B
+   (`findActiveVerifiedTokensForLocker` lọc theo `lockerId`), nên không dùng chéo tủ được.
+
+**Lưu ý về thiết kế hiện tại:** mỗi lần bấm "Xem mã QR định danh" lại sinh một token MỚI; token
+cũ **không bị thu hồi** và vẫn dùng được. Vì vậy số mã có hiệu lực tăng dần theo số lần bấm —
+càng nhiều ảnh QR từng phát ra thì càng nhiều mã còn dùng được.
+
+**Hướng khắc phục (nếu cần đưa lên môi trường thật)**
+
+1. Khôi phục hạn ngắn (60–120 giây) và cho shipper tạo lại mã tại chỗ — đây là cách chuẩn.
+2. Hoặc dùng QR một-lần ký bằng khoá bí mật, có `nonce` + hạn, để vừa chống chụp lại vừa chống
+   phát lại.
+3. Hoặc gắn mã với phiên đăng nhập + thiết bị, thu hồi mã cũ khi sinh mã mới.
+
+**Ghi chú:** tài liệu này **trước đây không còn câu nào nói "đã chống Replay Attack nhờ QR 60s"**.
+Nếu ở bất kỳ bản nháp/tài liệu nào khác còn câu đó thì **câu đó SAI** — hạn 60 giây chỉ làm giảm
+cửa sổ tấn công, và từ GĐ15 nó đã bị bỏ hẳn.
+
+---
+
 ## Ghi chú chung
 
-Ba giới hạn trên đều **đã biết và chấp nhận có kiểm soát** trong phạm vi đồ án. Khi đưa lên
-môi trường thật, thứ tự xử lý nên là: **#1 (broker) → #2 (mật khẩu) → #3 (firmware)**, vì #1 là
-đường tấn công trực tiếp không cần bất kỳ thông tin đăng nhập nào.
+Bốn giới hạn trên đều **đã biết và chấp nhận có kiểm soát** trong phạm vi đồ án. Khi đưa lên
+môi trường thật, thứ tự xử lý nên là: **#1 (broker) → #2 (mật khẩu) → #3 (firmware) → #6 (QR
+shipper vĩnh viễn)**, vì #1 là đường tấn công trực tiếp không cần bất kỳ thông tin đăng nhập nào,
+còn #6 là đường tấn công cần tiếp cận vật lý hoặc ảnh chụp.

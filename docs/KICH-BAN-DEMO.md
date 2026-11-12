@@ -169,7 +169,8 @@ Kiểm bằng lệnh nếu bị hỏi:
 ### BƯỚC 3 — Shipper nạp hàng tại tủ (≈3 phút)
 
 **Ai bấm gì:**
-1. Vẫn ở tab Shipper → bấm **"Sinh Mã QR Shipper 60s"** → modal hiện QR + đếm ngược.
+1. Vẫn ở tab Shipper → bấm **"Xem mã QR định danh"** → modal hiện QR + nhãn
+   *"Mã QR cố định — dùng được nhiều lần, không cần tạo lại"* (**không còn đếm ngược**).
 2. **Quét QR đó tại tủ** (hoặc người demo mô phỏng bằng probe — xem Phần 3).
 3. Quét **mã vận đơn** trên nhãn kiện hàng (hoặc bấm "Quét Mã Kiện").
 4. Tủ bung đúng ngăn đã đặt trước → shipper bỏ hàng, đóng cửa → bấm **"Mở Cửa Ngăn"** để hệ thống
@@ -187,8 +188,9 @@ Kiểm bằng lệnh nếu bị hỏi:
 **Điều kiện bắt buộc — nói rõ khi demo:**
 > "Quét mã đơn chỉ mở tủ khi hội đủ **4 điều kiện**: đơn `PENDING`, có ngăn, **`shipper_reserved_at`
 > ≠ NULL** (đã đặt trước), và đơn thuộc **đúng tủ đang nhận bản tin**. Cộng thêm phiên shipper đã
-> xác thực còn hiệu lực **tại đúng tủ đó** (token sống 60 giây). Thiếu bất kỳ điều kiện nào →
-> hệ thống phát `verified/order = 0` và **không mở** — nghĩa là lỗi sẽ lộ ra ngay, không im lặng."
+> xác thực **tại đúng tủ đó** (mã QR shipper **không có hạn** — không còn điều kiện thời gian).
+> Thiếu bất kỳ điều kiện nào → hệ thống phát `verified/order = 0` và **không mở** — nghĩa là lỗi sẽ
+> lộ ra ngay, không im lặng."
 
 ---
 
@@ -292,13 +294,16 @@ bung.
    - `scripts/evidence/demo-run1.json` — 18/18 bước, có cả kết quả MQTT `verified/order=1`,
      `locker/open=1,deposit`.
    - `scripts/evidence/demo-run1-backend.log` — log thật có dòng
-     `Kết nối MQTT Broker thành công tại: tcp://broker.emqx.io:1883` và `✅ Đã subscribe ... ptit/#`.
+     `Kết nối MQTT Broker thành công tại: ssl://broker.emqx.io:8883` (TLS — GĐ16) và
+     `✅ Đã subscribe ... ptit/#`.
 3. Nếu hội đồng muốn xem trực tiếp: dùng **`scripts/mqtt-probe.mjs`** (tự cài MQTT 3.1.1 trên
-   `node:net`, không cần npm) để giả lập tủ:
+   `node:net`/`node:tls`, không cần npm) để giả lập tủ. **Từ GĐ16 probe mặc định đi
+   `ssl://broker.emqx.io:8883` (TLS) và dùng id thiết bị `Tu_1`** — không cần truyền env, nhưng
+   vẫn phải khớp id thiết bị thật:
 
 ```powershell
 # Giả lập tủ báo đã nạp hàng: phát sự kiện deposit_success
-node scripts\mqtt-probe.mjs pub "ptit/compartment/1/event" '{"locker_id":"khuon_vien","status":"deposit_success","compartment":1,"weight":0.85}' --qos=1
+node scripts\mqtt-probe.mjs pub "ptit/compartment/1/event" '{"locker_id":"Tu_1","status":"deposit_success","compartment":1,"weight":120.5}' --qos=1
 ```
 
 > ⚠️ Trên PowerShell 5.1, dấu `"` trong tham số bị bóc. Nếu lệnh trên lỗi, ghi payload ra file rồi
@@ -314,14 +319,16 @@ node scripts\mqtt-probe.mjs pub "ptit/compartment/1/event" '{"locker_id":"khuon_
 
 | Việc firmware làm | Lệnh giả lập | Kỳ vọng |
 |---|---|---|
-| Tủ báo kết nối | `node scripts\mqtt-probe.mjs status --plaintext` | `lockers.last_heartbeat` tăng |
-| Tủ quét QR shipper | `node scripts\mqtt-probe.mjs shipper <token>` | `verified/shipper = 1` |
-| Tủ quét mã vận đơn | `node scripts\mqtt-probe.mjs send <trackingCode> --locker=LOCKER_HN_03 --dev=LOCKER_HN_03` | `verified/order = 1` + `locker/open` |
-| Khách nhập SĐT | `node scripts\mqtt-probe.mjs receive-phone 0988123456` | `verified/customer = n` |
-| Cảm biến ngăn thay đổi | `node scripts\mqtt-probe.mjs pub "ptit/compartment/1/status" '{"locker_id":"khuon_vien","has_item":1,"door_closed":1,"weight":120.5}'` | `compartments` cập nhật |
+| Tủ báo kết nối | `node scripts\mqtt-probe.mjs status --locker=Tu_1 --plaintext` | `lockers.last_heartbeat` tăng |
+| Tủ quét QR shipper | `node scripts\mqtt-probe.mjs shipper <token> --locker=Tu_1` | `verified/shipper = 1` |
+| Tủ quét mã vận đơn | `node scripts\mqtt-probe.mjs send <trackingCode> --locker=Tu_1 --dev=Tu_1` | `verified/order = 1` + `locker/open` |
+| Khách nhập SĐT | `node scripts\mqtt-probe.mjs receive-phone 0988123456 --locker=Tu_1` | `verified/customer = n` |
+| Cảm biến ngăn thay đổi | `node scripts\mqtt-probe.mjs pub "ptit/compartment/1/status" '{"locker_id":"Tu_1","has_item":1,"door_closed":1,"weight":120.5}'` | `compartments` cập nhật |
 
-**Lưu ý tiếng Việt:** `mqtt-probe.mjs` cần `--locker` và `--dev` cùng trỏ đúng tủ để quan sát
-downlink. Nếu không thấy `RESULT payload=...`, tăng thời gian chờ: `--ms=12000`.
+**Lưu ý — id thiết bị phải là `Tu_1`:** tủ thật dùng id **`Tu_1`** (GĐ16, trước là `khuon_vien`),
+map sang `LOCKER_HN_01` trong DB. Probe đã mặc định `--locker=Tu_1`, nhưng nếu gõ tay id cũ thì
+backend sẽ ghi `HW_MQTT_UNMAPPED` và dữ liệu KHÔNG vào được CSDL — đó là lỗi hay gặp nhất khi demo.
+Nếu không thấy `RESULT payload=...`, tăng thời gian chờ: `--ms=12000`.
 
 ### B.3 Nếu frontend trắng trang / lỗi
 
@@ -336,7 +343,7 @@ downlink. Nếu không thấy `RESULT payload=...`, tăng thời gian chờ: `--
 
 Cách ngắn nhất để chứng minh luồng nhận hàng mà không cần OTP:
 ```powershell
-node scripts\mqtt-probe.mjs pub "ptit/rec/otp" '{"locker_id":"khuon_vien","otp":"<OTP 6 số>"}' --qos=1
+node scripts\mqtt-probe.mjs pub "ptit/rec/otp" '{"locker_id":"Tu_1","otp":"<OTP 6 số>"}' --qos=1
 ```
 hoặc đọc thẳng DB để chứng minh trạng thái đã đúng:
 ```powershell
@@ -423,12 +430,21 @@ hoặc đọc thẳng DB để chứng minh trạng thái đã đúng:
 > `if (status === 400)` để hiện thông báo sẽ **không bắt được 409**, phải sửa thành kiểm
 > `status >= 400`. Em giữ 400 cho các chỗ chưa gắn nhãn đúng để **không phá client đang chạy**.
 
-**Câu 7: "Token QR shipper sống 60 giây. Nếu mạng chậm quá 60 giây thì sao?"**
+**Câu 7: "Mã QR shipper có hạn bao lâu? Nếu bị chụp lại thì sao?"**
 
-> Thì tủ từ chối và shipper phải bấm tạo lại — đúng thiết kế, vì token ngắn là để chống chụp lại
-> màn hình dùng lại. Backend kiểm **cả** `is_verified` **và** `expired_at > now()`, đồng thời lọc
-> theo `locker_id`, nên token xác thực ở tủ A **không** mở được tủ B (lỗi cross-locker đã vá và có
-> test khoá lại).
+> Hiện **mã QR shipper không có hạn** — em đã bỏ cơ chế 60 giây theo yêu cầu của người dùng, nên
+> mạng chậm hay chờ lâu cũng không còn chuyện "hết hạn phải tạo lại". **Nhưng phải nói thẳng hệ
+> quả:** bỏ hạn là **mất lớp chống Replay Attack**. Ai chụp được ảnh QR của shipper một lần thì
+> giữ được mã đó và dùng lại bất cứ lúc nào. Đây là **đánh đổi có ý thức** để thuận tiện khi demo,
+> và em đã ghi rõ trong `docs/GIOI-HAN-BAOMAT.md` mục 6 chứ không giấu.
+>
+> Hai lớp bảo vệ **còn lại** và vẫn hoạt động: **(1)** `is_verified` — mỗi token chỉ quét được **đúng
+> một lần**, quét lại cùng token thì backend trả 400 "Mã QR Shipper này đã được sử dụng!";
+> **(2)** `locker_id` — token được gắn tủ lúc quét nên token xác thực ở tủ A **không** mở được tủ B
+> (lỗi cross-locker đã vá và có test khoá lại).
+>
+> Nếu đưa lên môi trường thật thì phải khôi phục hạn ngắn (60–120 giây) hoặc dùng QR một-lần ký
+> bằng khoá bí mật có `nonce` + hạn — em đã ghi hướng khắc phục đó trong tài liệu bảo mật.
 
 **Câu 8: "Vì sao chọn MySQL chứ không phải PostgreSQL / MongoDB?"**
 

@@ -189,8 +189,8 @@ class MqttTopicRoutingTests {
     @DisplayName("Downlink do chính backend phát bị bỏ qua (chống echo, không tự xử lý lại)")
     void downlinkCuaChinhMinhBiBoQua() {
         long truoc = demDeviceEvent();
-        // ptit/khuon_vien/verified/shipper là DOWNLINK (topic riêng từng tủ) → backend nghe lại phải bỏ qua
-        publish("ptit/khuon_vien/verified/shipper", "1");
+        // ptit/Tu_1/verified/shipper là DOWNLINK (topic riêng từng tủ) → backend nghe lại phải bỏ qua
+        publish("ptit/Tu_1/verified/shipper", "1");
         assertEquals(truoc, demDeviceEvent(),
                 "Nghe lại downlink của chính mình không được sinh event");
     }
@@ -198,7 +198,7 @@ class MqttTopicRoutingTests {
     @Test
     @DisplayName("Heartbeat dạng JSON có locker_id: nhận đúng, cập nhật connection_status")
     void heartbeatJsonCoLockerId() {
-        publish("ptit/status", "{\"locker_id\":\"khuon_vien\",\"status\":\"ONLINE\"}");
+        publish("ptit/status", "{\"locker_id\":\"Tu_1\",\"status\":\"ONLINE\"}");
         Locker sau = lockerRepository.findById(locker.getLockerId()).orElseThrow();
         assertEquals("ONLINE", sau.getConnectionStatus(),
                 "Heartbeat JSON phải được map đúng tủ qua locker_id");
@@ -241,7 +241,7 @@ class MqttTopicRoutingTests {
         // Kể cả khi có shipper đã xác thực, backend vẫn KHÔNG được ra lệnh mở:
         // theo MQTT_GUIDE.md dòng 103, firmware tự mở ngăn tại thao tác chọn.
         publish("ptit/locker/select_compartment",
-                "{\"locker_id\":\"khuon_vien\",\"compartment\":0,\"qr\":\"ORD-TEST-SELECT\"}");
+                "{\"locker_id\":\"Tu_1\",\"compartment\":0,\"qr\":\"ORD-TEST-SELECT\"}");
 
         assertEquals(cmdTruoc, demCommandLog(),
                 "Backend không được phát lệnh mở cho select_compartment — đây là lỗi đã vá");
@@ -262,7 +262,7 @@ class MqttTopicRoutingTests {
         taoDonPending("ORD-TEST-CHUADAT", 1);
         long cmdTruoc = demCommandLog();
 
-        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"ORD-TEST-CHUADAT\"}");
+        publish("ptit/qr/order", "{\"locker_id\":\"Tu_1\",\"qr\":\"ORD-TEST-CHUADAT\"}");
 
         assertEquals(cmdTruoc, demCommandLog(),
                 "Đơn chưa đặt trước (shipper_reserved_at NULL) không được tự mở tủ");
@@ -276,7 +276,7 @@ class MqttTopicRoutingTests {
         orderRepository.save(don);
         long cmdTruoc = demCommandLog();
 
-        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"ORD-TEST-DA-GUI\"}");
+        publish("ptit/qr/order", "{\"locker_id\":\"Tu_1\",\"qr\":\"ORD-TEST-DA-GUI\"}");
 
         assertEquals(cmdTruoc, demCommandLog(), "Đơn đã DEPOSITED không được mở tủ lần nữa");
     }
@@ -298,7 +298,7 @@ class MqttTopicRoutingTests {
         long cmdTruoc = demCommandLog();
         clearInvocations(mqttServiceSpy);
 
-        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"TRACK-AUTH-NO\"}");
+        publish("ptit/qr/order", "{\"locker_id\":\"Tu_1\",\"qr\":\"TRACK-AUTH-NO\"}");
 
         // (1) Không được phát lệnh mở: đây là assertion bắt được việc xoá khối xác thực,
         //     vì nếu khối bị xoá thì publishCommand chạy và command_logs +1.
@@ -325,7 +325,7 @@ class MqttTopicRoutingTests {
         long cmdTruoc = demCommandLog();
         clearInvocations(mqttServiceSpy);
 
-        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"TRACK-AUTH-OK\"}");
+        publish("ptit/qr/order", "{\"locker_id\":\"Tu_1\",\"qr\":\"TRACK-AUTH-OK\"}");
 
         // Đối chứng dương: nếu ai đó chặn mọi trường hợp thì test A vẫn pass nhưng test này FAIL.
         assertEquals(cmdTruoc + 1, demCommandLog(),
@@ -352,7 +352,7 @@ class MqttTopicRoutingTests {
         long cmdTruoc = demCommandLog();
         clearInvocations(mqttServiceSpy);
 
-        publish("ptit/qr/order", "{\"locker_id\":\"khuon_vien\",\"qr\":\"TRACK-AUTH-KHAC-TU\"}");
+        publish("ptit/qr/order", "{\"locker_id\":\"Tu_1\",\"qr\":\"TRACK-AUTH-KHAC-TU\"}");
 
         assertEquals(cmdTruoc, demCommandLog(),
                 "Phiên xác thực ở tủ khác KHÔNG được mở tủ này");
@@ -368,14 +368,14 @@ class MqttTopicRoutingTests {
     @Test
     @DisplayName("Heartbeat plaintext 'ONLINE' vẫn cập nhật nhịp tim (không được bỏ qua)")
     void heartbeatPlaintextVanCapNhatNhipTim() {
-        // Firmware hiện tại publish ptit/khuon_vien/status với payload "ONLINE" (không JSON, không locker_id).
+        // Firmware hiện tại publish ptit/Tu_1/status với payload "ONLINE" (không JSON, không locker_id).
         // Nếu bỏ qua thì dashboard admin báo tủ offline sai.
         Locker truoc = lockerRepository.findById(locker.getLockerId()).orElseThrow();
         truoc.setConnectionStatus("OFFLINE");
         truoc.setLastHeartbeat(null);
         lockerRepository.save(truoc);
 
-        publish("ptit/khuon_vien/status", "ONLINE");
+        publish("ptit/Tu_1/status", "ONLINE");
 
         Locker sau = lockerRepository.findById(locker.getLockerId()).orElseThrow();
         assertEquals("ONLINE", sau.getConnectionStatus(),
@@ -392,7 +392,7 @@ class MqttTopicRoutingTests {
     @DisplayName("compartment/N/status: N trong topic là 1-based, khớp comp_index trong DB")
     void trangThaiNgan1Based() {
         publish("ptit/compartment/2/status",
-                "{\"locker_id\":\"khuon_vien\",\"has_item\":1,\"door_closed\":0,\"weight\":120.5}");
+                "{\"locker_id\":\"Tu_1\",\"has_item\":1,\"door_closed\":0,\"weight\":120.5}");
 
         Compartment comp = compartmentRepository
                 .findByLocker_LockerIdAndCompIndex(locker.getLockerId(), 2)

@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
  * trong khi guide lại vẽ topic có id. Backend nhận CẢ BA kiểu (phẳng cũ / mới có id / mới phẳng)
  * và parse CẢ JSON lẫn chuỗi thuần — đây là lớp tương thích, không phải làm ẩu.
  *
- * <p><b>Id thiết bị ≠ id tủ:</b> payload mang {@code khuon_vien}, CSDL dùng {@code LOCKER_HN_01}.
+ * <p><b>Id thiết bị ≠ id tủ:</b> payload mang {@code Tu_1}, CSDL dùng {@code LOCKER_HN_01}.
  * Ánh xạ bằng cấu hình ({@code mqtt.locker.id.map}), KHÔNG đổi schema. Mọi thứ ghi xuống
  * {@code device_events}/{@code command_logs} luôn là id tủ trong CSDL.
  */
@@ -67,8 +67,8 @@ public class MqttService implements MqttCallbackExtended {
     @Value("${mqtt.topic.base:ptit}")
     private String topicBase;
 
-    /** Danh sách {@code dev:DBID} phân tách bằng dấu phẩy, ví dụ {@code khuon_vien:LOCKER_HN_01}. */
-    @Value("${mqtt.locker.id.map:khuon_vien:LOCKER_HN_01}")
+    /** Danh sách {@code dev:DBID} phân tách bằng dấu phẩy, ví dụ {@code Tu_1:LOCKER_HN_01}. */
+    @Value("${mqtt.locker.id.map:Tu_1:LOCKER_HN_01}")
     private String lockerIdMapRaw;
 
     /** Tủ dùng khi payload lẫn topic đều không cho biết thiết bị nào. */
@@ -148,7 +148,7 @@ public class MqttService implements MqttCallbackExtended {
 
     /**
      * GĐ10 — bản public của {@link #deviceIdOf(String)} để service khác đổi id tủ trong CSDL
-     * ({@code LOCKER_HN_01}) sang id thiết bị dùng trong topic ({@code khuon_vien}).
+     * ({@code LOCKER_HN_01}) sang id thiết bị dùng trong topic ({@code Tu_1}).
      */
     public String resolveDeviceId(String dbLockerId) {
         return deviceIdOf(dbLockerId);

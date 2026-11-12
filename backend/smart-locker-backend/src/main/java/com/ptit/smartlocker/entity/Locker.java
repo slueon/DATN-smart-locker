@@ -77,7 +77,7 @@ public class Locker {
      * GĐ12 — {@code true} = tủ KHAI BÁO trong CSDL, không có thiết bị thật gửi nhịp tim.
      *
      * <p><b>Vì sao phải có cờ này thay vì suy từ {@code lastHeartbeat}:</b> phần cứng thật chỉ có
-     * 1 tủ ({@code khuon_vien} → {@code LOCKER_HN_01}); 9 tủ còn lại là dữ liệu mẫu nên không bao
+     * 1 tủ ({@code Tu_1} → {@code LOCKER_HN_01}); 9 tủ còn lại là dữ liệu mẫu nên không bao
      * giờ có nhịp tim, và suy thuần từ nhịp tim thì chúng luôn hiện "Mất kết nối" — sai sự thật
      * theo hướng ngược lại (chúng không hỏng, chúng không tồn tại về mặt thiết bị).
      *
