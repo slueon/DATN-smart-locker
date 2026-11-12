@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { lockerApi, shipperApi } from '../services/api';
+// GĐ14 — lộ trình lái xe THẬT từ OSRM; lỗi thì fallback Haversine kèm nhãn cảnh báo.
+import { fetchDrivingRoute } from '../services/routingApi';
 import {
   MapPin, Navigation, RefreshCw, AlertTriangle, Package,
   Crosshair, Route, CheckCircle2, XCircle, Clock, ExternalLink
@@ -142,6 +144,17 @@ export default function ShipperRouteMap({ currentUser }) {
   const [route, setRoute] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  // GĐ14 — dữ liệu lộ trình THẬT từ OSRM (nếu lấy được).
+  //
+  // `routeGeometry`: mảng [lat,lng] men theo đường (nhiều điểm gấp khúc). `null` = đang dùng
+  // Haversine → vẽ nối thẳng và hiện nhãn vàng cảnh báo.
+  // `routeMeta`: `{ source, totalKm, durationMin }` — nguồn của con số đang hiển thị.
+  const [routeGeometry, setRouteGeometry] = useState(null);
+  const [routeMeta, setRouteMeta] = useState({ source: 'haversine', totalKm: 0, durationMin: null });
+  const [routingError, setRoutingError] = useState(null);
+  /** GĐ14 — số hiệu lượt tải; lượt cũ về muộn không được ghi đè lượt mới. */
+  const loadRunIdRef = useRef(0);
   const [start, setStart] = useState(DEFAULT_START);
   const [usingMyLocation, setUsingMyLocation] = useState(false);
   const [geoStatus, setGeoStatus] = useState('idle'); // 'idle' | 'asking' | 'ok' | 'error'
@@ -167,6 +180,14 @@ export default function ShipperRouteMap({ currentUser }) {
   const loadRoute = async () => {
     setLoading(true);
     setErrorMsg(null);
+    // GĐ14 — xoá lỗi OSRM của lần trước, nếu không nhãn vàng sẽ giữ lý do cũ dù lần này thành công.
+    setRoutingError(null);
+
+    // GĐ14 — CHỐNG RACE. `loadRoute` được gọi từ effect mount và từ nút "Tải lại"; hai lần chạy
+    // song song thì lần về SAU ghi đè lần về trước, có thể trộn `route` của lần này với `routeMeta`
+    // của lần kia. Đã bắt được lỗi thật do việc này: nhãn "chim bay" nhưng số là của OSRM.
+    // Mỗi lượt lấy một số hiệu; chỉ lượt MỚI NHẤT được ghi state.
+    const runId = ++loadRunIdRef.current;
     try {
       // Gọi SONG SONG: danh sách đơn chờ nạp + danh sách tủ (để lấy toạ độ/tên/nhịp tim).
       // Không tuần tự vì hai nguồn độc lập nhau, tuần tự chỉ làm chậm thêm.
@@ -213,18 +234,83 @@ export default function ShipperRouteMap({ currentUser }) {
         });
       });
 
-      setRoute(buildGreedyRoute(
+      // ─── GĐ14: LẤY LỘ TRÌNH THẬT TỪ OSRM ───
+      //
+      // Thứ tự ghé tủ vẫn do `buildGreedyRoute` (Haversine) quyết định — CHỈ số km và hình
+      // polyline đổi sang dữ liệu OSRM. Lý do chọn cách này (không gọi OSRM 2 lần):
+      //   • Gọi 1 lần với thứ tự Haversine đã "đủ tốt" (greedy tối đa 25% dài hơn tối ưu).
+      //   • Gọi 2 lần (một để đo, một cho thứ tự cuối) làm tăng gấp đôi độ trễ và gấp đôi điểm lỗi
+      //     trên một dịch vụ công cộng, trong khi lợi ích với 2–10 tủ là không đáng.
+      //   Muốn thứ tự cũng tối ưu theo OSRM thì đó là việc riêng (bài toán TSP trên ma trận thật).
+      const greedyRoute = buildGreedyRoute(
         { lat: start.lat, lng: start.lng },
         stops
-      ));
+      );
+
+      let osrm = null;
+      // Không gọi OSRM khi không có tủ nào (request vô ích) — nhưng VẪN gọi khi chỉ có 1 tủ,
+      // vì shipper cần số km thật của chặng từ điểm xuất phát tới tủ đó.
+      if (greedyRoute.length > 0) {
+        try {
+          osrm = await fetchDrivingRoute([
+            { lat: start.lat, lng: start.lng },
+            ...greedyRoute.map((s) => ({ lat: s.lat, lng: s.lng })),
+          ]);
+        } catch (osrmErr) {
+          // KHÔNG ném tiếp: rơi xuống Haversine + nhãn vàng. Bản đồ phải luôn có dữ liệu.
+          console.warn('[ShipperRouteMap] OSRM không khả dụng, dùng Haversine:', osrmErr?.message);
+          setRoutingError(osrmErr?.message || 'Không lấy được lộ trình thật.');
+        }
+      }
+
+      // GĐ14 — lượt cũ về muộn thì BỎ, không ghi state (xem `loadRunIdRef`).
+      // Kiểm ngay trước khi ghi, sau mọi `await` — đó là chỗ race thật sự xảy ra.
+      if (runId !== loadRunIdRef.current) return;
+
+      if (osrm) {
+        // Số km từng chặng lấy từ `legs` thật; cộng dồn để có `cumKm`.
+        let cumulative = 0;
+        const withRealKm = greedyRoute.map((stop, i) => {
+          const legKm = osrm.legs?.[i]?.distanceKm ?? stop.legKm;
+          cumulative += legKm;
+          return {
+            ...stop,
+            // `legKm`/`cumKm` là số ĐƯỜNG ĐI THẬT, không còn là chim bay.
+            legKm: Math.round(legKm * 10) / 10,
+            cumKm: Math.round(cumulative * 10) / 10,
+          };
+        });
+        setRoute(withRealKm);
+        setRouteGeometry(osrm.geometry);
+        setRouteMeta({
+          source: 'osrm',
+          totalKm: osrm.distanceKm,
+          durationMin: osrm.durationMin,
+        });
+      } else {
+        // FALLBACK: dùng đúng tổng Haversine của greedy route, và `source: 'haversine'` để UI hiện
+        // nhãn VÀNG "đường chim bay". Tổng tính bằng cách cộng `legKm` của chính mảng sắp xếp —
+        // KHÔNG đọc `greedyRoute[last].cumKm` rồi trộn với meta của lượt khác.
+        const havTotal = greedyRoute.reduce((sum, s) => sum + (Number(s.legKm) || 0), 0);
+        setRoute(greedyRoute);
+        setRouteGeometry(null);
+        setRouteMeta({
+          source: 'haversine',
+          totalKm: Math.round(havTotal * 10) / 10,
+          durationMin: null,
+        });
+      }
     } catch (err) {
+      if (runId !== loadRunIdRef.current) return;
       setErrorMsg(
         err?.response?.data?.message
           || 'Không tải được lộ trình. Kiểm tra đã đăng nhập SHIPPER và backend đang chạy.'
       );
       setRoute([]);
+      setRouteGeometry(null);
+      setRouteMeta({ source: 'haversine', totalKm: 0, durationMin: null });
     } finally {
-      setLoading(false);
+      if (runId === loadRunIdRef.current) setLoading(false);
     }
   };
 
@@ -263,12 +349,33 @@ export default function ShipperRouteMap({ currentUser }) {
 
     // Bắt buộc: Leaflet đo kích thước container lúc khởi tạo. Trong SPA, container có thể
     // chưa có kích thước thật → bản đồ hiện xám. Gọi invalidateSize sau khi layout xong.
+    //
+    // LỖI THẬT ĐÃ SỬA (11/11 14:20): chỉ dùng `setTimeout(invalidateSize, 200)` MỘT LẦN là
+    // không đủ. Ảnh chụp thực tế cho thấy bản đồ chỉ tải được vài tile ở góc trên-trái, phần
+    // còn lại trắng, còn polyline vẫn vẽ ra ngoài vùng tile đã tải.
+    //
+    // Nguyên nhân: `L.map()` chạy khi Tailwind `grid-cols-12` + `liquid-glass-card` CHƯA
+    // layout xong → Leaflet đo được khung nhỏ, tính số tile theo khung đó. 200ms sau container
+    // đã phình ra thật nhưng KHÔNG ai gọi `invalidateSize` nữa nên Leaflet không biết cần tải
+    // thêm tile. `fitBounds()` thì tính đúng toạ độ (nên polyline đúng), chỉ tile là thiếu.
+    //
+    // `LockerMap.jsx` không bị lỗi này vì nó dùng `ResizeObserver` (dòng 331-343). Bản này
+    // viết sau nên thiếu. Nay dùng CẢ HAI: ResizeObserver cho mọi thay đổi layout về sau, và
+    // setTimeout làm lưới an toàn cho trình duyệt cũ không có ResizeObserver.
     setTimeout(() => map.invalidateSize(), 200);
+
+    let resizeObserver = null;
+    if (window.ResizeObserver && mapRef.current) {
+      resizeObserver = new ResizeObserver(() => map.invalidateSize());
+      resizeObserver.observe(mapRef.current);
+    }
+
     const onResize = () => map.invalidateSize();
     window.addEventListener('resize', onResize);
 
     return () => {
       window.removeEventListener('resize', onResize);
+      if (resizeObserver) resizeObserver.disconnect();
       layersRef.current.forEach((l) => map.removeLayer(l));
       layersRef.current = [];
       map.remove();
@@ -301,13 +408,22 @@ export default function ShipperRouteMap({ currentUser }) {
       return;
     }
 
-    // Đường nối theo đúng thứ tự lộ trình.
-    const pts = [[start.lat, start.lng], ...route.map((r) => [r.lat, r.lng])];
+    // GĐ14 — Đường nối.
+    //
+    // Có `routeGeometry` từ OSRM → vẽ đúng đường lái xe (hàng chục điểm gấp khúc, men theo phố).
+    // Không có (fallback) → nối thẳng toạ độ như cũ và để UI hiện nhãn vàng "đường chim bay":
+    // một đường thẳng tắp cộng với nhãn cảnh báo là trung thực; đường thẳng mà không nói gì mới
+    // là thứ user vừa báo lỗi.
+    const usingRealGeometry = Array.isArray(routeGeometry) && routeGeometry.length > 2;
+    const pts = usingRealGeometry
+      ? routeGeometry
+      : [[start.lat, start.lng], ...route.map((r) => [r.lat, r.lng])];
     const polyline = L.polyline(pts, {
-      color: '#2563eb',
+      color: usingRealGeometry ? '#2563eb' : '#d97706',
       weight: 4,
-      opacity: 0.75,
-      dashArray: '6 8',
+      opacity: 0.85,
+      // Nét đứt chỉ dùng cho đường ước lượng — để nhìn là biết không phải đường thật.
+      dashArray: usingRealGeometry ? null : '6 8',
     }).addTo(map);
     layersRef.current.push(polyline);
 
@@ -343,8 +459,12 @@ export default function ShipperRouteMap({ currentUser }) {
 
     // Thu khung nhìn vừa đủ lộ trình thay vì cố định zoom, để tủ xa nhất vẫn thấy được.
     map.fitBounds(L.latLngBounds(pts).pad(0.2));
+    // `fitBounds` đổi khung nhìn nhưng KHÔNG tự đo lại container. Nếu container vừa đổi kích
+    // thước trong cùng nhịp layout, Leaflet vẫn dùng khung cũ để chọn tile → thiếu tile.
+    // Gọi `invalidateSize` ngay sau đó để nó tính lại theo kích thước thật rồi mới nạp tile.
+    map.invalidateSize();
     // `start` đổi thì phải vẽ lại (điểm xuất phát khác → thứ tự đi khác).
-  }, [route, start]);
+  }, [route, start, routeGeometry]);
 
   /* ─────────────── 3. Sức chứa của tủ đang chọn ─────────────── */
 
@@ -407,7 +527,23 @@ export default function ShipperRouteMap({ currentUser }) {
     );
   };
 
-  const totalKm = route.length > 0 ? route[route.length - 1].cumKm : 0;
+  // GĐ14 — tổng km và đơn vị đo phải đi CÙNG NHAU, không được tách rời.
+  //
+  // `routeMeta.source`: 'osrm' = số liệu đường đi thật; 'haversine' = ước lượng chim bay.
+  // Tuyệt đối không hiện số Haversine mà thiếu nhãn cảnh báo — đó chính là lỗi user vừa báo
+  // ("lộ trình đang vẽ đường chim bay" mà không ai nói cho họ biết).
+  // GĐ14 — tổng km LUÔN lấy từ `routeMeta.totalKm`, không đọc lại `route[last].cumKm`.
+  //
+  // Vì sao: `route` và `routeMeta` là hai state riêng, nên có thể lệch nhau một nhịp render (hoặc
+  // lệch hẳn nếu hai lần `loadRoute` chạy song song ghi đè nhau). Đã bắt được lỗi thật: nhãn ghi
+  // "đường chim bay" nhưng số lại là 7,6 km của OSRM trong khi Haversine đúng phải là 3,3 km —
+  // tức con số và nhãn nguồn nói hai chuyện khác nhau, đúng loại lỗi user vừa báo.
+  // Một nguồn duy nhất (`routeMeta.totalKm`) được set cùng lúc với nhãn ⇒ không thể lệch.
+  const isRealRoute = routeMeta.source === 'osrm';
+  const totalKm = routeMeta.totalKm;
+  const totalLabel = isRealRoute
+    ? `Tổng ${totalKm.toFixed(1).replace('.', ',')} km đường đi thực tế`
+    : `Tổng ${totalKm.toFixed(1).replace('.', ',')} km đường chim bay (không lấy được lộ trình thật)`;
 
   /** Tủ mất kết nối phải nổi bật trong panel để shipper biết đừng đến. */
   const disconnectedCount = useMemo(
@@ -428,9 +564,21 @@ export default function ShipperRouteMap({ currentUser }) {
               Lộ trình giao hàng hôm nay ({route.length} trạm)
             </h3>
             <p className="text-[11px] text-slate-500 mt-1">
-              Thứ tự đi theo tủ gần nhất (nearest-neighbour) · Tổng{' '}
-              <strong className="text-slate-800">{totalKm.toFixed(1)} km</strong>
+              Thứ tự đi theo tủ gần nhất (nearest-neighbour) ·{' '}
+              <strong className={isRealRoute ? 'text-slate-800' : 'text-amber-600'}>
+                {totalLabel}
+              </strong>
+              {/* GĐ14 — thời gian lái xe ước tính chỉ có khi OSRM trả về; fallback thì KHÔNG bịa. */}
+              {isRealRoute && routeMeta.durationMin != null && (
+                <span className="ml-1 text-slate-500 font-medium">· ~{routeMeta.durationMin} phút</span>
+              )}
             </p>
+            {!isRealRoute && route.length > 0 && (
+              <p className="text-[10px] text-amber-700 mt-0.5">
+                {routingError ? `Lỗi lộ trình: ${routingError}` : 'Chưa lấy được lộ trình thật.'}
+                {' '}Số km và đường vẽ là ước lượng thẳng — đừng dùng để tính giờ hẹn.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
