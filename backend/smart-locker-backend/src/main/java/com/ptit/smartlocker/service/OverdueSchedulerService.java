@@ -23,10 +23,20 @@ public class OverdueSchedulerService {
     /**
      * Tác vụ quét định kỳ (Mỗi 10 phút kiểm tra 1 lần)
      * Tự động quét và khóa các đơn hàng vượt quá thời hạn 24h00 ngày hôm sau
+     *
+     * <p><b>GĐ13 — đổi {@code void} → {@code int}.</b> Trước đây không có cách nào biết lượt quét
+     * vừa rồi đổi được bao nhiêu đơn, nên nút "Quét đơn quá hạn" trên web phải quét một mảng
+     * {@code localStorage} và báo con số bịa. Nay method trả về <b>số đơn thật sự chuyển sang
+     * {@code OVERDUE}</b> để {@code POST /api/admin/scan-overdue} trả đúng con số đó cho client.
+     *
+     * <p>Spring {@code @Scheduled} gọi được method có giá trị trả về (bỏ qua kết quả), nên lịch
+     * chạy ngầm giữ nguyên hành vi.
+     *
+     * @return số đơn đã chuyển sang OVERDUE trong lượt này (0 nếu không có đơn nào quá hạn)
      */
     @Scheduled(fixedRate = 600000) // 10 phút / lần
     @Transactional
-    public void scanAndLockOverdueOrders() {
+    public int scanAndLockOverdueOrders() {
         LocalDateTime now = LocalDateTime.now();
         // N+1: bản nạp sẵn `locker` — vòng lặp dưới đọc order.getLocker().getLockerId() cho
         // từng đơn, nếu để LAZY thì mỗi đơn phát thêm 1 SELECT.
@@ -43,5 +53,6 @@ public class OverdueSchedulerService {
                         order.getExpiryDeadline());
             }
         }
+        return overdueOrders.size();
     }
 }

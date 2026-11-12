@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import CircularTimer from './CircularTimer';
+// GĐ15 — KHÔNG còn CircularTimer ở file này (mã QR shipper giờ vĩnh viễn, không đếm ngược).
+// File `CircularTimer.jsx` VẪN GIỮ vì `CustomerPickupTab` + `ShipperRecallTab` còn dùng cho OTP khách.
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
 import { shipperApi, lockerApi, orderApi } from '../services/api';
@@ -19,9 +20,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [selectedLockerFilter, setSelectedLockerFilter] = useState('ALL');
   const [selectedOrderId, setSelectedOrderId] = useState(null);
 
-  // Token QR 60s
+  // Token QR định danh shipper — GĐ15: KHÔNG còn hạn (vĩnh viễn), nên không có state đếm ngược.
   const [dynamicToken, setDynamicToken] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(0);
   const [showQrModal, setShowQrModal] = useState(false);
 
   // Deposit Stepper State (1: Scan Barcode, 2: Solenoid Open, 3: Put & Close, 4: Dual Sensor)
@@ -100,7 +100,12 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   };
 
   useEffect(() => {
-    store.checkAndScanOverdueOrders();
+    // GĐ13 — KHÔNG còn `store.checkAndScanOverdueOrders()`.
+    //
+    // Hàm đó quét mảng đơn trong localStorage rồi trả `sweptCount`; con số không liên quan tới DB
+    // (việc chuyển đơn sang OVERDUE do `OverdueSchedulerService` ở backend quyết định, mỗi 10 phút).
+    // Nay tab shipper chỉ tải danh sách THẬT: đơn chờ nạp qua API, đơn quá hạn qua
+    // `shipperApi.getOverdueOrders` (dùng ở tab Thu hồi).
     loadOrders();
     setAllLockers(store.getLockers());
 
@@ -110,12 +115,9 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     };
     const handleOverdueDetected = () => loadOrders();
 
-    // Tác vụ Daemon ngầm định kỳ 30 giây tự động đồng bộ dữ liệu
+    // Poll lại danh sách từ API mỗi 30 giây (backend tự quét theo lịch riêng của nó).
     const scanTimer = setInterval(() => {
-      const scanResult = store.checkAndScanOverdueOrders();
-      if (scanResult.sweptCount > 0) {
-        loadOrders();
-      }
+      loadOrders();
     }, 30000);
 
     window.addEventListener('smart_locker_store_updated', handleUpdate);
@@ -155,8 +157,12 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         }
       }
     } catch (err) {
+      // GĐ13 — fallback CÓ KIỂM SOÁT (không phải nguồn chính): bật `usingMockData` để hiện banner
+      // "Đang dùng dữ liệu mô phỏng" ở đầu danh sách. Nguồn chính luôn là API ở nhánh try trên.
       console.warn('[ShipperTab] Không gọi được API đơn chờ nạp, dùng dữ liệu mô phỏng:', err?.message);
       setUsingMockData(true);
+      // `store.getOrders()` — FALLBACK: chỉ chạy khi API lỗi, và banner `usingMockData` ở trên đã
+      // nói rõ với người dùng đây không phải dữ liệu máy chủ.
       const all = store.getOrders();
       setOrders(all);
       const pending = all.filter((o) => o.status === 'PENDING');
@@ -196,61 +202,36 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
 
       if (res?.data?.success && res.data.data) {
         const ord = res.data.data;
-        // Đồng bộ lưu vào store cục bộ
-        store.createOrder({
-          orderId: ord.orderId,
-          customerName: ord.customerName || 'Đoàn Viết Hoàng',
-          customerPhone: ord.customerPhone || '0988123456',
-          productName: ord.productName || randProd.name,
-          productPrice: ord.totalAmount || randProd.price,
-          deliveryType: 'LOCKER',
-          lockerId: 'LOCKER_HN_01',
-          lockerName: ord.lockerName || 'Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)',
-          lockerAddress: ord.lockerAddress || 'Sảnh Tầng 1, KTX A1, Học viện CNBCVT, Km10 Nguyễn Trãi, Q. Hà Đông',
-          compartmentIndex: ord.compartmentIndex || (randProd.size === 'S' ? 1 : 2),
-          compartmentSize: ord.compartmentSize || randProd.size,
-          orderDate: today,
-          expectedDate: ord.expectedDate || today,
-          status: 'PENDING',
-          totalAmount: ord.totalAmount || randProd.price,
-          paymentMethod: 'ONLINE_VIETQR',
-          paymentStatus: 'PAID',
-          qrToken: ord.qrToken,
-          otpCode: null,
-          otpExpiresAt: null,
-        });
-
+        // GĐ13 — ĐÃ XOÁ `store.createOrder({...})` ở đây.
+        //
+        // `POST /api/orders/checkout` đã tạo đơn THẬT trong CSDL và trả về `ord`. Chép thêm một
+        // bản vào localStorage là dựng nguồn sự thật thứ hai: nó khác dần DB (không có cập nhật
+        // trạng thái sau đó), và nếu `loadOrders()` lỗi thì UI hiện bản sao cũ này như đơn thật.
+        // Đơn mới hiện ra bằng `await loadOrders()` ngay bên dưới — đọc thẳng từ API.
         await loadOrders();
         setSelectedOrderId(ord.orderId);
-        setSampleToast(`Đã thêm đơn ${ord.orderId} cho Đoàn Viết Hoàng (0988123456) gửi về Tủ KTX A1!`);
+        setSampleToast(`Đã tạo đơn THẬT ${ord.orderId} cho Đoàn Viết Hoàng (0988123456) trên máy chủ.`);
         setTimeout(() => setSampleToast(null), 3500);
         return;
       }
     } catch (err) {
-      console.warn('[ShipperTab] Gọi API checkout thất bại, dùng fallback store:', err?.message);
+      console.warn('[ShipperTab] Gọi API checkout thất bại, dùng đơn mẫu trong trình duyệt:', err?.message);
     }
 
-    // 2. Fallback store nếu API gặp sự cố
+    // 2. GĐ13 — FALLBACK DEMO: không tạo được đơn thật thì sinh một đơn MẪU trong localStorage.
+    //
+    // Đây là dữ liệu MẪU để demo luồng UI, KHÔNG phải đơn trong CSDL: nó không có trong
+    // `GET /api/shipper/orders/pending`, không thể nạp hàng thật, và biến mất khi xoá cache.
+    // Thông báo bên dưới phải nói rõ điều đó — trước đây nó báo y hệt nhánh thành công
+    // ("Đã thêm đơn …"), nên người xem demo tưởng đã tạo được đơn thật.
     const newOrd = store.generateSamplePendingOrder('LOCKER_HN_01');
     await loadOrders();
     setSelectedOrderId(newOrd.orderId);
-    setSampleToast(`Đã thêm đơn ${newOrd.orderId} cho Đoàn Viết Hoàng (0988123456) gửi về Tủ KTX A1!`);
-    setTimeout(() => setSampleToast(null), 3500);
+    setSampleToast(
+      `Đã tạo đơn MẪU ${newOrd.orderId} trên trình duyệt này (chỉ để xem giao diện — KHÔNG có trong CSDL, không nạp hàng thật được).`
+    );
+    setTimeout(() => setSampleToast(null), 5000);
   };
-
-  useEffect(() => {
-    if (timeLeft <= 0) return;
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [timeLeft]);
 
   /**
    * T3 — xin mã QR định danh shipper từ BACKEND.
@@ -258,7 +239,12 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
    * <p>Trước đây hàm này tự bịa `'SHIPPER-TOKEN-' + Math.random()` ở client. Token giả đó
    * không tồn tại trong bảng `shipper_identity_tokens`, nên `POST /api/shipper/deposit`
    * (kiểm bằng `tokenRepository.findByDynamicToken`) sẽ luôn từ chối. Nay lấy token thật
-   * do backend cấp trong 60 giây.
+   * do backend cấp.
+   *
+   * <p><b>GĐ15 — token KHÔNG còn hạn 60 giây (user chốt "QR vĩnh viễn").</b> Mỗi lần bấm vẫn
+   * tạo một token MỚI; token cũ vẫn dùng được (không bị thu hồi), nên không cần "tạo lại trước
+   * khi hết hạn" như trước. Lớp chặn duy nhất còn lại là mỗi token chỉ quét được MỘT lần
+   * (`isVerified` ở backend).
    */
   const handleGenerateToken = async () => {
     try {
@@ -269,7 +255,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         return;
       }
       setDynamicToken(token);
-      setTimeLeft(60);
       setShowQrModal(true);
       setScanError(null);
     } catch (err) {
@@ -698,7 +683,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         </div>
       </div>
 
-      {/* Action Strip: Kiosk Identification 60s */}
+      {/* Action Strip: Xác thực danh tính tại Kiosk. GĐ15 — mã QR không còn hạn 60s. */}
       <div className="liquid-glass-card border border-amber-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm bg-gradient-to-r from-amber-50/80 via-orange-50/40 to-amber-50/80">
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-amber-900 text-xs font-bold uppercase tracking-wide">
@@ -714,7 +699,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
           className="ios-btn bg-gradient-to-r from-amber-500 via-amber-400 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold px-5 py-2.5 rounded-2xl text-xs shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer whitespace-nowrap transition border border-white/40"
         >
           <QrCode className="w-4 h-4" />
-          <span>Sinh Mã QR Shipper 60s</span>
+          {/* GĐ15 — mã QR vĩnh viễn nên không còn là "sinh mới 60s". */}
+          <span>Xem mã QR định danh</span>
         </button>
       </div>
 
@@ -1351,7 +1337,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         </div>
       </div>
 
-      {/* Modal QR Định Danh Shipper 60s với CircularTimer */}
+      {/* GĐ15 — Modal QR Định Danh Shipper (mã VĨNH VIỄN, không đếm ngược) */}
       {showQrModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl relative border border-slate-200 animate-in zoom-in-95 duration-200">
@@ -1375,15 +1361,10 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
               <QRCodeSVG value={dynamicToken} size={180} />
             </div>
 
-            {/* Circular Timer for Shipper 60s */}
-            <div className="flex flex-col items-center justify-center my-2">
-              <CircularTimer
-                secondsLeft={timeLeft}
-                totalSeconds={60}
-                size={70}
-                strokeWidth={5}
-                label="Hiệu Lực"
-              />
+            {/* GĐ15 — KHÔNG còn đếm ngược. Mã QR shipper là VĨNH VIỄN (user chốt). */}
+            <div className="my-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-800 flex items-center justify-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+              <span>Mã QR cố định — dùng được nhiều lần, không cần tạo lại</span>
             </div>
 
             <p className="text-[11px] text-slate-500 mb-4 px-2">

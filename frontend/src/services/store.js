@@ -471,7 +471,35 @@ export const store = {
     window.dispatchEvent(new Event('smart_locker_store_updated'));
   },
 
-  // Lấy danh sách thông báo theo SĐT khách hoặc Role
+  /**
+   * Đọc danh sách "thông báo" lưu trong **localStorage của trình duyệt này**.
+   *
+   * <h2>⚠ ĐÂY KHÔNG PHẢI THÔNG BÁO HỆ THỐNG</h2>
+   *
+   * <p>Dữ liệu nằm ở {@code localStorage[NOTIFS_KEY]} — tức là <b>chỉ tồn tại trên đúng máy và
+   * đúng trình duyệt</b> đã tạo ra nó. Hệ quả người dùng PHẢI biết:
+   * <ul>
+   *   <li>Xoá cache / dùng ẩn danh / đổi máy / đổi trình duyệt → <b>mất toàn bộ</b>.</li>
+   *   <li>Máy khác đăng nhập cùng tài khoản <b>không thấy</b> thông báo này.</li>
+   *   <li>Không ai ở phía máy chủ biết thông báo này tồn tại.</li>
+   * </ul>
+   *
+   * <h2>Vì sao không nối vào backend (GĐ13 — quyết định phạm vi)</h2>
+   *
+   * <p>Backend <b>không có</b> entity/bảng {@code Notification} nào (đã kiểm: 11 entity, không có
+   * cái nào tên Notification). Nghĩa là <b>không có thông báo máy chủ nào bị bỏ rơi</b>: máy chủ
+   * chưa từng sinh ra thông báo, nên đọc localStorage không làm mất dữ liệu của ai.
+   *
+   * <p>Cụ thể {@code OverdueSchedulerService} (tác vụ quét quá hạn mỗi 10 phút) chỉ gọi
+   * {@code order.setStatus("OVERDUE")} — <b>không</b> tạo thông báo. Nên vòng quét không "âm thầm"
+   * sinh ra dữ liệu mà giao diện bỏ sót.
+   *
+   * <p>Muốn có thông báo thật (bảng + push + đánh dấu đã đọc ở server) là một <b>tính năng riêng</b>,
+   * không phải việc sửa lỗi — xem ghi chú trong {@code STATE.md}, mục GĐ13 việc 2.
+   *
+   * @param phone SĐT khách để lọc; bỏ trống = không lọc theo SĐT
+   * @param role  {@code 'SHIPPER'|'ADMIN'} để lọc theo vai trò
+   */
   getNotifications: (phone, role = null) => {
     try {
       const data = localStorage.getItem(NOTIFS_KEY);
@@ -489,7 +517,20 @@ export const store = {
     }
   },
 
-  // Thêm thông báo mới (ví dụ khi sinh mã OTP hoặc khi hàng về)
+  /**
+   * Thêm một "thông báo" vào **localStorage của trình duyệt này**.
+   *
+   * <p><b>⚠ Chỉ là thông báo tạm trong phiên trình duyệt</b> — xem javadoc {@link #getNotifications}
+   * ở trên: mất khi xoá cache, không đồng bộ sang máy khác, và <b>không phải</b> thông báo hệ thống.
+   *
+   * <p>Chỗ dùng hợp lệ duy nhất hiện nay: phản hồi tức thời cho người vừa bấm một thao tác
+   * (ví dụ "đã thu hồi bưu kiện X"). Nếu cần thông báo tới người dùng khác hoặc khác thiết bị thì
+   * phải xây dịch vụ thông báo ở backend — chưa có.
+   *
+   * <p><b>KHÔNG</b> dùng hàm này để "ghi nhận" kết quả nghiệp vụ. Ví dụ điển hình của lỗi đã sửa ở
+   * GĐ13: trước đây nút thu hồi gọi {@code store.updateOrderStatus()} + {@code addNotification()}
+   * rồi báo thành công, trong khi backend không hề đổi gì — người vận hành tưởng đã xử lý.
+   */
   addNotification: (notif) => {
     try {
       const data = localStorage.getItem(NOTIFS_KEY);

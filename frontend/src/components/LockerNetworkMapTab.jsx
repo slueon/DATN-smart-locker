@@ -12,7 +12,13 @@ import {
 } from 'lucide-react';
 
 export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, onNavigateToShipper }) {
-  const [lockers, setLockers] = useState(() => store.getLockers());
+  // GĐ13 — KHỞI TẠO RỖNG, chờ API.
+  //
+  // Trước đây `useState(() => store.getLockers())` đọc localStorage: bản đồ hiện ngay 10 tủ từ
+  // cache (kèm nhịp tim/trạng thái CŨ), rồi vài trăm ms sau API trả về và ghi đè. Người dùng thấy
+  // bản đồ "nhảy" từ dữ liệu cũ sang dữ liệu mới, và nếu API lỗi thì họ tin nhầm số liệu cache.
+  // Bản đồ là màn hình giám sát trạng thái THẬT — thà hiện khung đang tải còn hơn hiện tủ đã cũ.
+  const [lockers, setLockers] = useState([]);
   const [selectedLockerId, setSelectedLockerId] = useState('LOCKER_HN_01');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL'); // ADMIN: tone sức khoẻ; khác: statusKey
@@ -45,52 +51,76 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
   const [loadingMaintenanceLogs, setLoadingMaintenanceLogs] = useState(false);
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockMsg, setUnlockMsg] = useState(null);
+  // GĐ13 — lỗi tải bản đồ. Phải NÓI RA, không được im lặng trộn cache vào.
+  const [mapError, setMapError] = useState(null);
 
+  /**
+   * GĐ13 — tải dữ liệu bản đồ. DỨT ĐIỂM cách làm "cache trước, API sau".
+   *
+   * <h2>Ba lỗi của bản cũ (đều là ghi/hiện dữ liệu giả)</h2>
+   * <ol>
+   *   <li>Dòng đầu tiên {@code setLockers(store.getLockers())} — đổ dữ liệu localStorage lên bản
+   *       đồ NGAY, rồi API trả về và ghi đè. Người dùng thấy bản đồ nhảy từ số liệu cũ sang mới,
+   *       và nếu API lỗi thì họ tin nhầm số liệu cache mà không biết.</li>
+   *   <li>{@code missing = store.getLockers().filter(...)} — chèn lại các tủ <b>CHỈ CÓ trong
+   *       cache</b> mà backend không trả về. Nghĩa là một tủ đã bị xoá/đổi mã trong DB vẫn hiện
+   *       trên bản đồ giám sát như tủ thật, kèm trạng thái cũ. Đây đúng là "âm thầm hiện dữ liệu
+   *       giả" mà GĐ13 phải dọn.</li>
+   *   <li>{@code localStorage.setItem('smart_locker_lockers_data', ...)} — ghi kết quả API trở
+   *       lại cache, tạo vòng tự nuôi dữ liệu cũ.</li>
+   * </ol>
+   *
+   * <p><b>Cách làm mới:</b> API là nguồn DUY NHẤT. Lỗi mạng thì giữ nguyên danh sách đang hiện
+   * (không xoá trắng màn hình) và bật cờ {@code mapError} để UI nói rõ "đang hiện dữ liệu lần tải
+   * trước / chưa tải được", thay vì lặng lẽ trộn cache vào.
+   *
+   * <p>Cache localStorage vẫn được dùng làm <b>fallback cho toạ độ</b> khi backend thiếu
+   * {@code latitude}/{@code longitude} — đó là dữ liệu tĩnh của trạm, không phải trạng thái sống,
+   * nên dùng lại hợp lý. Chỉ trạng thái (nhịp tim, ngăn, sức chứa) là phải lấy từ API.
+   */
   const loadLockerData = async () => {
     setIsRefreshing(true);
-    // 1. Lấy dữ liệu từ local store trước
-    const local = store.getLockers();
-    setLockers(local);
-
-    // 2. Thử đồng bộ từ Backend API nếu máy chủ online
+    setMapError(null);
     try {
       const res = await lockerApi.getAll();
-      if (res.data?.data && res.data.data.length > 0) {
-        const backendLockers = res.data.data;
-        const defaultMap = new Map(store.getLockers().map((dl) => [dl.lockerId, dl]));
-        const fullLockers = await Promise.all(
-          backendLockers.map(async (l) => {
-            const fallback = defaultMap.get(l.lockerId) || {};
-            try {
-              const compRes = await lockerApi.getCompartments(l.lockerId);
-              const comps = compRes.data?.data && compRes.data.data.length > 0
-                ? compRes.data.data
-                : (fallback.compartments || []);
-              const available = comps.filter((c) => c.status === 'EMPTY').length;
-              return {
-                ...fallback,
-                ...l,
-                lockerType: fallback.lockerType || (l.lockerId === 'LOCKER_HN_01' ? 'PHYSICAL' : 'SIMULATED'),
-                latitude: l.latitude || fallback.latitude,
-                longitude: l.longitude || fallback.longitude,
-                compartments: comps,
-                totalCompartments: l.totalCompartments || comps.length,
-                availableCompartments: available,
-              };
-            } catch {
-              return { ...fallback, ...l };
-            }
-          })
-        );
-        // Đảm bảo không bao giờ bị rớt trạm nếu backend chỉ trả về một phần
-        const loadedIds = new Set(fullLockers.map((l) => l.lockerId));
-        const missing = store.getLockers().filter((l) => !loadedIds.has(l.lockerId));
-        const finalAllLockers = [...fullLockers, ...missing];
-        setLockers(finalAllLockers);
-        localStorage.setItem('smart_locker_lockers_data', JSON.stringify(finalAllLockers));
+      const backendLockers = res.data?.data || [];
+      if (backendLockers.length === 0) {
+        setMapError('Máy chủ không trả về trạm tủ nào.');
+        return;
       }
-    } catch {
-      // Backend offline: Giữ nguyên dữ liệu local
+      const fallbackMap = new Map(store.getLockers().map((dl) => [dl.lockerId, dl]));
+      const fullLockers = await Promise.all(
+        backendLockers.map(async (l) => {
+          const fallback = fallbackMap.get(l.lockerId) || {};
+          try {
+            const compRes = await lockerApi.getCompartments(l.lockerId);
+            const comps = compRes.data?.data && compRes.data.data.length > 0
+              ? compRes.data.data
+              : (fallback.compartments || []);
+            const available = comps.filter((c) => c.status === 'EMPTY').length;
+            return {
+              ...fallback,
+              ...l,
+              lockerType: fallback.lockerType || (l.lockerId === 'LOCKER_HN_01' ? 'PHYSICAL' : 'SIMULATED'),
+              latitude: l.latitude || fallback.latitude,
+              longitude: l.longitude || fallback.longitude,
+              compartments: comps,
+              totalCompartments: l.totalCompartments || comps.length,
+              availableCompartments: available,
+            };
+          } catch {
+            return { ...fallback, ...l };
+          }
+        })
+      );
+      // KHÔNG chèn lại tủ chỉ có trong cache: bản đồ phải khớp đúng DB.
+      setLockers(fullLockers);
+    } catch (err) {
+      // Giữ danh sách đang hiện, nhưng NÓI RÕ là vừa không tải được — không im lặng.
+      setMapError(
+        err?.response?.data?.message
+          || 'Không tải được dữ liệu trạm tủ từ máy chủ. Số liệu đang hiện có thể đã cũ.'
+      );
     } finally {
       setIsRefreshing(false);
     }
@@ -366,6 +396,14 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
 
   return (
     <div className="space-y-6">
+      {/* GĐ13 — lỗi tải dữ liệu phải HIỆN, không được im lặng hiện cache cũ. */}
+      {mapError && (
+        <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+          <span>{mapError}</span>
+        </div>
+      )}
+
       {/* 1. Header Banner & Title (Apple Liquid Glass) */}
       <div className="liquid-glass-card rounded-3xl p-6 sm:p-8 border border-white/90 shadow-xl relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 relative z-10">

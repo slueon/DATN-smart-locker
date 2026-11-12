@@ -30,6 +30,10 @@ export default function CustomerPickupTab({ currentUser }) {
   const [otpToast, setOtpToast] = useState(null);
   const [nowTime, setNowTime] = useState(Date.now());
 
+  // GĐ13 — true = danh sách đơn đang đọc từ localStorage (cache), KHÔNG phải máy chủ.
+  // Phải có cờ này để hiện banner, nếu không khách tưởng đơn cache là đơn thật của mình.
+  const [usingFallback, setUsingFallback] = useState(false);
+
   // GĐ5 — cảm biến THẬT của ngăn chứa đơn đang xem: cân nặng + trạng thái cửa.
   // Trước đây là số cứng `0.85` nên khách nào cũng thấy cùng một con số dù kiện nặng nhẹ khác nhau.
   // DB lưu GRAM (`MqttService:1069`), `LockerCabinetVisualizer` hiểu KG → chia 1000 tại chỗ truyền.
@@ -79,21 +83,29 @@ export default function CustomerPickupTab({ currentUser }) {
   const loadOrders = async () => {
     const phone = currentUser?.phone;
     if (!phone) {
-      // Không có SĐT → không gọi API (sẽ 403/400). Fallback localStorage để trang không trắng.
+      // GĐ13 — dữ liệu cache CHỈ dùng khi thiếu SĐT đăng nhập, và phải bật cờ để UI cảnh báo.
+      // Không có cờ thì khách thấy danh sách cũ mà tưởng là đơn thật của mình.
       setOrders(store.getOrders());
+      setUsingFallback(true);
       return;
     }
     try {
       const res = await orderApi.getByPhone(phone);
       const apiOrders = res?.data?.data || [];
       setOrders(apiOrders);
+      setUsingFallback(false);
       if (apiOrders.length > 0 && !selectedOrderId) {
         setSelectedOrderId(apiOrders[0].orderId);
       }
     } catch (err) {
-      // Mất mạng / 401 / 403: giữ dữ liệu mô phỏng để khách vẫn thao tác được.
+      // GĐ13 — fallback có kiểm soát, theo mẫu `usingMockData` của ShipperTab.
+      //
+      // Vẫn giữ danh sách cache để trang không trắng, nhưng BẬT CỜ để hiện banner cảnh báo: khách
+      // phải biết đây không phải dữ liệu máy chủ. Trước đây hàm này im lặng đổ cache vào và người
+      // dùng không phân biệt được.
       console.warn('[CustomerPickupTab] Không tải được đơn từ API, dùng dữ liệu mô phỏng:', err?.message);
       setOrders(store.getOrders());
+      setUsingFallback(true);
     }
   };
 
@@ -229,10 +241,23 @@ export default function CustomerPickupTab({ currentUser }) {
         console.warn('Backend không tìm thấy đơn hoặc đang offline, tạo mã OTP trên local store:', errMsg);
       }
 
-      const result = store.requestOtpForOrder(order.orderId, apiOtp);
+      // GĐ13 — ĐÃ XOÁ `store.requestOtpForOrder(order.orderId, apiOtp)`.
+      //
+      // Dòng đó ghi mã OTP vào localStorage SAU KHI `pickupApi.requestOtp` (dòng 210) đã tạo mã
+      // THẬT ở backend. Hai hệ quả xấu:
+      //   • Lưu mã OTP vào localStorage là giữ bí mật mở tủ ở nơi ai đọc được bằng JS/devtools —
+      //     trong khi mã thật đã có trong response và cột `pickup_credentials.otp_code`.
+      //   • Nếu `apiOtp` là null (nhánh fallback khi backend lỗi) thì store vẫn nhận mã tự sinh,
+      //     hiện "Đã tạo mã OTP" trong khi backend không có mã đó — thao tác giả.
+      //
+      // Không còn nhánh nào cần ghi đè: mã OTP chỉ đọc từ server (`loadOrders` → `order.otpCode`).
       loadOrders();
       setCopiedOtp(false);
-      setOtpToast(`Đã tạo mã OTP nhận hàng mới (Hiệu lực 5 phút: ${result?.otpCode || ''})!`);
+      if (apiOtp) {
+        setOtpToast(`Đã tạo mã OTP nhận hàng mới (Hiệu lực 5 phút: ${apiOtp})!`);
+      } else {
+        setOtpToast('Máy chủ không cấp được mã OTP cho đơn này. Vui lòng thử lại.');
+      }
       setTimeout(() => setOtpToast(null), 4000);
     } catch (err) {
       console.error('Lỗi tạo OTP:', err);
@@ -332,6 +357,17 @@ export default function CustomerPickupTab({ currentUser }) {
 
   return (
     <div className="space-y-5 notranslate select-none">
+      {/* GĐ13 — banner fallback: khách phải biết danh sách này KHÔNG phải dữ liệu máy chủ. */}
+      {usingFallback && (
+        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-[11px] flex items-start gap-2 font-medium">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+          <span>
+            Không tải được đơn từ máy chủ — danh sách dưới đây là dữ liệu tạm lưu trên trình duyệt
+            này và có thể đã cũ. Kiểm tra kết nối hoặc đăng nhập lại.
+          </span>
+        </div>
+      )}
+
       {/* Top Stats Banner (Apple Liquid Glass Bento Grid) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">

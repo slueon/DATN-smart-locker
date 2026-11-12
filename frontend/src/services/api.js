@@ -205,6 +205,14 @@ export const adminApi = {
     const qs = params.toString();
     return api.get(`/admin/maintenance-logs${qs ? `?${qs}` : ''}`);
   },
+
+  /**
+   * GĐ13 — chạy NGAY một lượt quét đơn quá hạn (đúng tác vụ `@Scheduled` chạy mỗi 10 phút).
+   *
+   * Trả về số đơn THẬT vừa chuyển `OVERDUE` trong DB. Trước đây nút trên web đọc một mảng
+   * `localStorage` và báo con số của trình duyệt — bấm xong CSDL không đổi gì.
+   */
+  scanOverdue: () => api.post('/admin/scan-overdue'),
 };
 
 export default api;

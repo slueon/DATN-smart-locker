@@ -139,7 +139,13 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/auth/users").hasRole("ADMIN")
                 // GĐ7 — danh sách đơn cho dashboard quản trị. CHỈ ADMIN: endpoint trả đơn của
                 // MỌI khách, nếu mở cho vai trò khác là rò rỉ toàn bộ đơn hàng của hệ thống.
-                .requestMatchers(HttpMethod.GET, "/api/admin/**").hasRole("ADMIN")
+                //
+                // GĐ13 — bỏ giới hạn GET: `POST /api/admin/scan-overdue` cũng thuộc nhóm quản trị
+                // này. Nếu để `HttpMethod.GET` thì POST rơi xuống `.anyRequest().denyAll()` và
+                // luôn 403 kể cả với ADMIN — đúng loại lỗi im lặng đã làm AdminTab phải dùng
+                // localStorage suốt GĐ5–GĐ12. Khoá theo PREFIX là đủ vì cả cây `/api/admin/**`
+                // chỉ dành cho quản trị viên.
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 // GĐ7 — lịch sử mở tủ: ADMIN xem toàn hệ thống, SHIPPER xem lệnh của mình.
                 // Phải đặt TRƯỚC luật "/api/mqtt/recent-logs, security-status" bên dưới để không
                 // bị luật chung `.authenticated()` nuốt mất (matcher khớp theo thứ tự khai báo).
@@ -174,8 +180,15 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST,
                         "/api/shipper/token/generate",
                         "/api/shipper/token/verify",
-                        "/api/shipper/deposit",
-                        "/api/shipper/recall-overdue").hasRole("SHIPPER")
+                        "/api/shipper/deposit").hasRole("SHIPPER")
+                // GĐ13 — thu hồi hàng quá hạn mở thêm cho ADMIN.
+                //
+                // Trước đây chỉ `hasRole("SHIPPER")` nên AdminTab gọi bị 403 và code cũ "chữa
+                // cháy" bằng cách ghi localStorage: web báo "đã thu hồi" trong khi kiện hàng vẫn
+                // nằm trong tủ và DB vẫn OVERDUE. Thu hồi là cùng một nghiệp vụ, ai trực ca cũng
+                // phải làm được; quyền được kiểm ở đây chứ không phải bằng cách bỏ qua backend.
+                .requestMatchers(HttpMethod.POST, "/api/shipper/recall-overdue")
+                        .hasAnyRole("SHIPPER", "ADMIN")
                 // T3: đặt trước ngăn. Thiếu 3 dòng này là 403 vì anyRequest().denyAll() ở dưới.
                 .requestMatchers(HttpMethod.GET, "/api/shipper/orders/pending").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")

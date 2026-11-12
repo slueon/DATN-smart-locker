@@ -131,8 +131,10 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
         setSelectedRecallOrderId(null);
       }
     } catch (err) {
-      // Mất mạng / 401: fallback localStorage để trang không trắng.
-      console.warn('[ShipperRecallTab] Không tải được đơn quá hạn từ API, dùng mô phỏng:', err?.message);
+      // GĐ13 — FALLBACK CÓ KIỂM SOÁT: chỉ chạy khi API lỗi (mất mạng/401) để trang không trắng.
+      // Nguồn chính là `shipperApi.getOverdueOrders` ở nhánh try trên; dữ liệu dưới đây là cache
+      // trình duyệt và có thể đã cũ — đừng coi là danh sách quá hạn thật.
+      console.warn('[ShipperRecallTab] Không tải được đơn quá hạn từ API, dùng cache trình duyệt:', err?.message);
       const all = store.getOrders();
       setOrders(all);
       const overdue = all.filter((o) => o.status === 'OVERDUE');
@@ -147,14 +149,15 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   };
 
   useEffect(() => {
-    const initialScan = store.checkAndScanOverdueOrders();
+    // GĐ13 — KHÔNG còn `store.checkAndScanOverdueOrders()`.
+    //
+    // Hàm đó quét mảng đơn trong localStorage rồi trả `sweptCount`; con số báo cho shipper là của
+    // trình duyệt, còn DB thì do `OverdueSchedulerService` (Spring, mỗi 10 phút) quyết định. Hai
+    // bên lệch nhau và không ai biết tin bên nào. Nay chỉ đọc đơn quá hạn THẬT qua
+    // `GET /api/shipper/overdue-orders`; ai chuyển đơn sang OVERDUE là việc của backend.
     setLastScanTime(new Date().toLocaleTimeString('vi-VN'));
     loadOrders();
     setAllLockers(store.getLockers());
-
-    if (initialScan.sweptCount > 0) {
-      setAlertNotice(`Phát hiện ${initialScan.sweptCount} bưu kiện quá hạn cần thu hồi để giải phóng ô tủ.`);
-    }
 
     const handleUpdate = () => {
       loadOrders();
@@ -167,12 +170,10 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
       }
     };
 
+    // Poll lại danh sách từ API mỗi 30 giây (backend tự quét theo lịch riêng của nó).
     const scanTimer = setInterval(() => {
-      const scanResult = store.checkAndScanOverdueOrders();
+      loadOrders();
       setLastScanTime(new Date().toLocaleTimeString('vi-VN'));
-      if (scanResult.sweptCount > 0) {
-        loadOrders();
-      }
     }, 30000);
 
     window.addEventListener('smart_locker_store_updated', handleUpdate);
@@ -277,18 +278,23 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     setFailsafeMessage(null);
 
     setTimeout(async () => {
+      // GĐ13 — API là đường DUY NHẤT. Trước đây `catch` chỉ `console.warn` rồi vẫn chạy tiếp
+      // `store.updateOrderStatus(...)` bên dưới, nên khi backend lỗi (403/409/mất mạng) giao diện
+      // vẫn hiện "đã thu hồi thành công" và đổi trạng thái trong localStorage — tiến trình giả.
+      // Nay lỗi thì DỪNG: hiện message thật, không ghi gì, không thêm thông báo thành công.
       try {
         await shipperApi.recallOverdue(activeRecallOrder.orderId);
       } catch (e) {
-        console.warn('Backend API offline, cập nhật qua store local:', e.message);
+        setFailsafeMessage(
+          e?.response?.data?.message
+            || 'Không thu hồi được qua máy chủ. Kiện hàng VẪN trong tủ — vui lòng thử lại.'
+        );
+        setRecallPhase('PENDING');
+        return;
       }
 
-      const now = new Date();
-      store.updateOrderStatus(activeRecallOrder.orderId, 'COMPLETED', {
-        returnedAt: now.toISOString(),
-        note: 'Đã thu hồi về kho qua cảm biến kép tự động (Zero-Touch)',
-      });
-
+      // Thông báo trong phiên trình duyệt — KHÔNG phải thông báo hệ thống (backend không có bảng
+      // notifications). Giữ lại để shipper thấy phản hồi ngay; mất khi xoá cache.
       store.addNotification({
         phone: activeRecallOrder.customerPhone,
         orderId: activeRecallOrder.orderId,

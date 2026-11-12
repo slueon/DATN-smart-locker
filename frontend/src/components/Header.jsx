@@ -109,7 +109,7 @@ export default function Header({
                     </div>
                     <div>
                       <span className="text-xs font-bold text-slate-900 block">
-                        {currentUser?.role === 'SHIPPER' ? 'Thông Báo Điều Phối Shipper' : 'Thông Báo Hệ Thống'}
+                        {currentUser?.role === 'SHIPPER' ? 'Thông Báo Điều Phối Shipper' : 'Thông Báo Nhận Hàng'}
                       </span>
                       <span className="text-[10px] text-slate-400">{notifications.length} bản ghi thông báo</span>
                     </div>
@@ -130,6 +130,13 @@ export default function Header({
                       <X className="w-4 h-4" />
                     </button>
                   </div>
+                </div>
+
+                {/* GĐ13 — CẢNH BÁO NGUỒN DỮ LIỆU (giống Navbar). Nhãn cũ ghi "Thông Báo Hệ Thống"
+                    là SAI: dữ liệu đọc từ localStorage, backend không có bảng Notification nào. */}
+                <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[10px] leading-snug text-amber-800 flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px text-amber-600" />
+                  <span>Thông báo tạm trên trình duyệt này. Hệ thống chưa có dịch vụ thông báo máy chủ.</span>
                 </div>
 
                 {/* Filter Pills */}

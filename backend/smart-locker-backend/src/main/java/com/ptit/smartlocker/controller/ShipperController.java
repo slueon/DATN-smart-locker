@@ -157,15 +157,16 @@ public class ShipperController {
     }
 
     /**
-     * Shipper xác nhận thu hồi bưu kiện quá hạn về kho bãi và giải phóng ngăn tủ
+     * Shipper hoặc ADMIN xác nhận thu hồi bưu kiện quá hạn về kho bãi và giải phóng ngăn tủ.
+     *
+     * <p><b>GĐ13 — đã bỏ {@code catch (Exception)}.</b> Trước đó mọi ngoại lệ bị nuốt và trả 400,
+     * nên {@code BusinessException} ("đơn không ở trạng thái quá hạn") mất đúng mã 409 mà
+     * {@code GlobalExceptionHandler} đã ánh xạ. Bấm "Thu hồi" lần hai phải ra 409 để client biết
+     * đây là đơn đã xử lý, không phải request hỏng. Controller không quyết định status nữa.
      */
     @PostMapping("/recall-overdue")
     public ResponseEntity<ApiResponse<Void>> recallOverdue(@RequestParam String orderId) {
-        try {
-            shipperService.recallOverduePackage(orderId);
-            return ResponseEntity.ok(ApiResponse.ok("Thu hồi bưu kiện " + orderId + " về kho bãi thành công!", null));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        shipperService.recallOverduePackage(orderId);
+        return ResponseEntity.ok(ApiResponse.ok("Thu hồi bưu kiện " + orderId + " về kho bãi thành công!", null));
     }
 }

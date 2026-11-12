@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
-import { authApi, lockerApi, adminApi, mqttApi } from '../services/api';
+import { authApi, lockerApi, adminApi, mqttApi, shipperApi } from '../services/api';
 import { store } from '../services/store';
 import { getLockerHealth } from '../utils/lockerHealth';
 import { describeActor, actorBadgeClass } from '../utils/commandLogActor';
@@ -58,6 +58,15 @@ export default function AdminTab() {
   // Cron Job state
   const [cronRunning, setCronRunning] = useState(false);
   const [cronMsg, setCronMsg] = useState('');
+
+  // GĐ13 — thông báo kết quả THU HỒI, thay cho `alert()`.
+  //
+  // Trước đây nút thu hồi chỉ ghi localStorage rồi `alert("Đã thu hồi...")` — người vận hành
+  // tưởng việc đã xong trong khi kiện hàng vẫn nằm trong tủ và DB vẫn `OVERDUE`. Nay thông báo
+  // tách 2 loại: `type='success'` chỉ khi API trả 200, `type='error'` khi 4xx/5xx (kèm message
+  // thật từ server). Màu đỏ/xanh để không thể đọc nhầm.
+  const [recallMsg, setRecallMsg] = useState(null); // { type: 'success'|'error', text: string }
+  const [recallingOrderId, setRecallingOrderId] = useState(null);
 
   /**
    * GĐ5-B1 — KPI Admin lấy từ API THẬT thay vì localStorage.
@@ -291,34 +300,103 @@ export default function AdminTab() {
     }
   };
 
-  const handleForceUnlock = async (lockerId, compIndex) => {
-    if (!window.confirm(`XÁC NHẬN: Bạn có chắc chắn muốn mở cưỡng bức Ngăn #${compIndex} của ${lockerId} từ xa qua lệnh khẩn cấp?`)) {
-      return;
-    }
+  /**
+   * GĐ13 — mở khoá khẩn cấp. Bỏ `window.confirm` + 2 `alert()`, dùng xác nhận 2 bước trong trang
+   * và một state message duy nhất (`unlockResult`) cho đồng bộ với 2 nút thu hồi/quét ở việc 1.
+   *
+   * <p>Vì sao phải bỏ `alert`: hộp thoại modal của trình duyệt chặn toàn bộ trang, không style được,
+   * không đọc được bằng screen reader nhất quán, và — quan trọng hơn — nó chỉ hiện MỘT LẦN rồi
+   * biến mất, nên khi thao tác hàng loạt người vận hành không còn dấu vết nào để đối chiếu. Message
+   * trong trang thì ở lại tới lần bấm sau.
+   *
+   * <p>`store.forceUnlockCompartment` ĐƯỢC GIỮ: bên trong nó gọi API thật
+   * (`POST /api/lockers/{id}/compartments/{i}/unlock`) và trả `true` chỉ khi server nhận lệnh — đã
+   * sửa từ W5, không phải đường ghi localStorage.
+   */
+  const [unlockTarget, setUnlockTarget] = useState(null); // { lockerId, compIndex }
+  const [unlockResult, setUnlockResult] = useState(null); // { type: 'success'|'error', text }
+  const [unlockBusyLocal, setUnlockBusyLocal] = useState(false);
 
-    // W5: chỉ báo thành công khi server thực sự nhận lệnh (không còn "báo mở giả").
+  const handleForceUnlock = (lockerId, compIndex) => {
+    // Bước 1: chỉ mở hộp xác nhận, KHÔNG gọi API (0 request).
+    setUnlockResult(null);
+    setUnlockTarget({ lockerId, compIndex });
+  };
+
+  const handleConfirmForceUnlock = async () => {
+    if (!unlockTarget) return;
+    const { lockerId, compIndex } = unlockTarget;
+    setUnlockTarget(null);
+    setUnlockBusyLocal(true);
     const ok = await store.forceUnlockCompartment(lockerId, compIndex);
-
     if (ok) {
-      alert(`Đã gửi lệnh mở khóa Solenoid Ngăn #${compIndex} thành công!`);
+      setUnlockResult({
+        type: 'success',
+        text: `Đã gửi lệnh mở khoá Solenoid Ngăn #${compIndex} của ${lockerId} tới máy chủ.`,
+      });
     } else {
-      alert(
-        `KHÔNG mở được Ngăn #${compIndex}.\n\n` +
-        `Lệnh đã bị server từ chối hoặc không gửi được (kiểm tra đã đăng nhập ADMIN và backend đang chạy).\n` +
-        `Cửa tủ VẪN ĐANG ĐÓNG.`
-      );
+      setUnlockResult({
+        type: 'error',
+        text: `KHÔNG mở được Ngăn #${compIndex}. Máy chủ từ chối hoặc không gửi được lệnh. Cửa tủ VẪN ĐANG ĐÓNG.`,
+      });
+    }
+    setUnlockBusyLocal(false);
+  };
+
+  /**
+   * GĐ13 — quét đơn quá hạn bằng API THẬT.
+   *
+   * <p>Trước đây gọi `store.checkAndScanOverdueOrders()` — hàm đó duyệt một mảng trong
+   * `localStorage` rồi trả `sweptCount`, nên con số "phát hiện X đơn" là của trình duyệt và CSDL
+   * không hề đổi. Nay gọi `POST /api/admin/scan-overdue`, chạy đúng tác vụ `@Scheduled` và trả số
+   * đơn thật vừa chuyển `OVERDUE`.
+   */
+  const handleRunOverdueCron = async () => {
+    setCronRunning(true);
+    setCronMsg('');
+    try {
+      const res = await adminApi.scanOverdue();
+      const changed = res?.data?.data ?? 0;
+      setCronMsg(`Đã quét lúc ${new Date().toLocaleTimeString('vi-VN')} — ${changed} đơn vừa chuyển sang OVERDUE. (Hệ thống cũng tự chạy ngầm mỗi 10 phút.)`);
+      await refreshAllData();
+    } catch (err) {
+      setCronMsg(err?.response?.data?.message || 'Không quét được đơn quá hạn. Kiểm tra đăng nhập ADMIN và backend.');
+    } finally {
+      setCronRunning(false);
     }
   };
 
-  const handleRunOverdueCron = () => {
-    setCronRunning(true);
-    setCronMsg('');
-    setTimeout(() => {
-      const result = store.checkAndScanOverdueOrders();
-      setCronRunning(false);
-      setCronMsg(`Đã quét thủ công lúc ${new Date().toLocaleTimeString('vi-VN')}! Phát hiện ${result.sweptCount} đơn quá hạn mới (Hệ thống cũng đang tự động chạy ngầm mỗi 30s và bắn Push Alert tới Shipper).`);
-      refreshAllData();
-    }, 700);
+  /**
+   * GĐ13 — thu hồi kiện quá hạn bằng API THẬT rồi giải phóng ngăn.
+   *
+   * <p><b>KHÔNG còn nhánh localStorage nào.</b> Trước đây hàm này chỉ gọi
+   * `store.updateOrderStatus(orderId, 'COMPLETED')` — đổi trạng thái trong trình duyệt rồi báo
+   * "đã thu hồi thành công". Hậu quả: hàng của khách vẫn nằm trong tủ, DB vẫn `OVERDUE`, và lần
+   * mở trang sau mọi thứ quay lại như cũ — người vận hành đã tưởng xử lý xong. Thu hồi hàng là
+   * thao tác không được phép "giả vờ thành công", nên đường duy nhất còn lại là API.
+   *
+   * <p>Bấm lần thứ hai trên cùng đơn: backend trả **409** (đơn không còn `OVERDUE`), ta hiện
+   * nguyên message đó — không bao giờ báo thành công giả.
+   */
+  const handleRecallOverdue = async (ord) => {
+    setRecallingOrderId(ord.orderId);
+    setRecallMsg(null);
+    try {
+      await shipperApi.recallOverdue(ord.orderId);
+      setRecallMsg({
+        type: 'success',
+        text: `Đã thu hồi bưu kiện ${ord.orderId} và giải phóng ngăn #${ord.compartmentIndex}.`,
+      });
+      await refreshAllData();
+    } catch (err) {
+      setRecallMsg({
+        type: 'error',
+        text: err?.response?.data?.message
+          || `Không thu hồi được đơn ${ord.orderId}. Hàng vẫn nằm trong tủ.`,
+      });
+    } finally {
+      setRecallingOrderId(null);
+    }
   };
 
   const getCompartmentBadge = (status) => {
@@ -637,11 +715,47 @@ export default function AdminTab() {
 
                           <button
                             onClick={() => handleForceUnlock(locker.lockerId, comp.compIndex)}
-                            className="ios-btn w-full bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-[11px] font-bold py-1.5 px-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer border border-slate-200/80 shadow-2xs"
+                            disabled={unlockBusyLocal}
+                            className="ios-btn w-full bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 text-[11px] font-bold py-1.5 px-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer border border-slate-200/80 shadow-2xs disabled:opacity-50"
                             title="Mở khóa khẩn cấp từ xa"
                           >
                             <Unlock className="w-3 h-3 text-rose-500" /> Mở khẩn cấp
                           </button>
+
+                          {/* GĐ13 — xác nhận 2 bước NGAY TẠI NGĂN, thay `window.confirm`.
+                              Bấm "Mở khẩn cấp" chỉ mở hộp này (0 request). */}
+                          {unlockTarget && unlockTarget.lockerId === locker.lockerId
+                            && unlockTarget.compIndex === comp.compIndex && (
+                            <div className="mt-1.5 p-2 rounded-lg bg-rose-50 border border-rose-200 space-y-1.5">
+                              <p className="text-[10px] text-rose-800 leading-snug">
+                                Mở cưỡng bức Ngăn #{comp.compIndex} của {locker.lockerId}?
+                              </p>
+                              <div className="flex gap-1.5">
+                                <button
+                                  onClick={handleConfirmForceUnlock}
+                                  className="flex-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold py-1 rounded-md cursor-pointer"
+                                >
+                                  Xác nhận mở
+                                </button>
+                                <button
+                                  onClick={() => setUnlockTarget(null)}
+                                  className="px-2 bg-white border border-slate-300 text-slate-700 text-[10px] font-bold py-1 rounded-md cursor-pointer"
+                                >
+                                  Huỷ
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {unlockResult && (
+                            <p
+                              className={`mt-1 text-[10px] font-medium leading-snug ${
+                                unlockResult.type === 'success' ? 'text-emerald-700' : 'text-rose-700'
+                              }`}
+                            >
+                              {unlockResult.text}
+                            </p>
+                          )}
                         </div>
                       );
                     })}
@@ -683,6 +797,22 @@ export default function AdminTab() {
             </div>
           )}
 
+          {/* GĐ13 — kết quả thu hồi. Tách 2 màu: chỉ xanh khi API đã trả 200. */}
+          {recallMsg && (
+            <div
+              className={`p-3.5 text-xs rounded-2xl flex items-start gap-2 border ${
+                recallMsg.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}
+            >
+              {recallMsg.type === 'success'
+                ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                : <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />}
+              <span>{recallMsg.text}</span>
+            </div>
+          )}
+
           {overdueList.length === 0 ? (
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-12 text-center shadow-md">
               <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
@@ -717,16 +847,11 @@ export default function AdminTab() {
                     </div>
 
                     <button
-                      onClick={() => {
-                        store.updateOrderStatus(ord.orderId, 'COMPLETED', {
-                          returnedAt: new Date().toISOString(),
-                          note: 'Admin thu hồi cưỡng bức',
-                        });
-                        alert(`Đã thu hồi bưu kiện ${ord.orderId} và giải phóng Ngăn #${ord.compartmentIndex}!`);
-                      }}
-                      className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs py-2 px-4 rounded-xl transition cursor-pointer shadow-xs whitespace-nowrap"
+                      onClick={() => handleRecallOverdue(ord)}
+                      disabled={recallingOrderId === ord.orderId}
+                      className="bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-bold text-xs py-2 px-4 rounded-xl transition cursor-pointer shadow-xs whitespace-nowrap"
                     >
-                      Thu hồi & Giải phóng ngăn
+                      {recallingOrderId === ord.orderId ? 'Đang thu hồi...' : 'Thu hồi & Giải phóng ngăn'}
                     </button>
                   </div>
                 ))}

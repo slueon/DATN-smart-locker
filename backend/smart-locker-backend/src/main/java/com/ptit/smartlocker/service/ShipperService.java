@@ -55,17 +55,41 @@ public class ShipperService {
     private static final double MAX_OCCUPANCY_RATIO = 0.8;
 
     /**
-     * 1. Sinh mã QR định danh động cho Shipper (Hiệu lực chính xác 60 giây)
+     * GĐ15 — mốc "vĩnh viễn" cho mã QR định danh shipper.
+     *
+     * <p><b>Vì sao năm 9999 chứ không phải {@code null}:</b> cột {@code shipper_identity_tokens.expired_at}
+     * trong CSDL là {@code NOT NULL} và entity khai {@code nullable = false}. Dùng mốc rất xa giữ
+     * nguyên schema, không cần migration, và dữ liệu cũ vẫn đọc được bình thường.
+     *
+     * <p><b>Vì sao dùng mốc này lại không phải sửa truy vấn:</b>
+     * {@code ShipperIdentityTokenRepository.findActiveVerifiedTokensForLocker} lọc
+     * {@code expiredAt > :now} — với năm 9999 điều kiện đó luôn đúng, nên phiên mở tủ của shipper
+     * không bao giờ hết hạn mà không phải sửa một dòng JPQL nào.
+     */
+    private static final LocalDateTime PERPETUAL_EXPIRY = LocalDateTime.of(9999, 12, 31, 23, 59, 59);
+
+    /**
+     * 1. Sinh mã QR định danh cho Shipper — <b>KHÔNG có hạn</b> (GĐ15, user chốt).
+     *
+     * <p>Mã sinh một lần là dùng được mãi: hết hạn quét đã bị bỏ, nên quét lại cùng một mã (ở
+     * trạng thái chưa dùng) lúc nào cũng được.
+     *
+     * <p><b>RỦI RO ĐÃ ĐƯỢC USER CHẤP NHẬN:</b> bỏ hạn = <b>mất lớp chống Replay Attack</b>. Ai chụp
+     * được ảnh QR của shipper một lần thì dùng được mãi để mở tủ. Hai lớp bảo vệ CÒN LẠI (bắt buộc
+     * giữ, xem {@link #verifyDynamicToken}):
+     * <ol>
+     *   <li>{@code isVerified} — chặn quét lại ĐÚNG token đã dùng.</li>
+     *   <li>{@code lockerId} — token được gắn tủ lúc quét, không dùng chéo sang tủ khác được.</li>
+     * </ol>
      */
     @Transactional
     public ShipperDTO.GenerateTokenResponse generateDynamicToken(String shipperId) {
         String dynamicToken = "SHIP-" + UUID.randomUUID().toString();
-        LocalDateTime expiresAt = LocalDateTime.now().plusSeconds(60);
 
         ShipperIdentityToken token = ShipperIdentityToken.builder()
                 .shipperId(shipperId)
                 .dynamicToken(dynamicToken)
-                .expiredAt(expiresAt)
+                .expiredAt(PERPETUAL_EXPIRY)
                 .isVerified(false)
                 .build();
         tokenRepository.save(token);
@@ -73,22 +97,28 @@ public class ShipperService {
         return ShipperDTO.GenerateTokenResponse.builder()
                 .shipperId(shipperId)
                 .dynamicToken(dynamicToken)
-                .expiresAt(expiresAt)
-                .validitySeconds(60)
+                .expiresAt(PERPETUAL_EXPIRY)
+                .validitySeconds(0) // 0 = không giới hạn (trước đây 60)
                 .build();
     }
 
     /**
-     * 2. Tủ (đầu đọc GM65) quét và xác thực mã QR động của Shipper
+     * 2. Tủ (đầu đọc GM65) quét và xác thực mã QR định danh của Shipper.
+     *
+     * <p><b>GĐ15 — đã XOÁ khối kiểm hết hạn.</b> Không còn so {@code now} với {@code expiredAt};
+     * mã đã sinh là dùng được vĩnh viễn. Xem rủi ro trong {@link #generateDynamicToken}.
+     *
+     * <p><b>GIỮ NGUYÊN hai lớp bảo vệ còn lại — KHÔNG được bỏ:</b>
+     * <ul>
+     *   <li>{@code isVerified}: chặn quét lại cùng một mã đã dùng. Đây là lớp DUY NHẤT còn lại
+     *       chống việc phát lại đúng bản tin, bỏ nó là mất hoàn toàn khả năng chống quét lại.</li>
+     *   <li>{@code lockerId}: ghi tủ đã quét để không dùng chéo tủ.</li>
+     * </ul>
      */
     @Transactional
     public boolean verifyDynamicToken(String lockerId, String dynamicToken) {
         ShipperIdentityToken token = tokenRepository.findByDynamicToken(dynamicToken)
                 .orElseThrow(() -> new RuntimeException("Mã QR Shipper không hợp lệ!"));
-
-        if (LocalDateTime.now().isAfter(token.getExpiredAt())) {
-            throw new RuntimeException("Mã QR Shipper đã hết hạn (quá 60 giây). Vui lòng tạo lại mã mới trên Web!");
-        }
 
         if (Boolean.TRUE.equals(token.getIsVerified())) {
             throw new RuntimeException("Mã QR Shipper này đã được sử dụng!");
@@ -624,7 +654,7 @@ public class ShipperService {
         }
         LocalDateTime now = LocalDateTime.now();
         // GĐ12 — cùng quy tắc với `suggestLockers`: tủ ảo bỏ qua kiểm nhịp tim, tủ thật thì
-        // KHÔNG. Thiết bị `khuon_vien` im quá 5 phút thì shipper giao vào LOCKER_HN_01 sẽ nhận 409
+        // KHÔNG. Thiết bị `Tu_1` im quá 5 phút thì shipper giao vào LOCKER_HN_01 sẽ nhận 409
         // — đúng ý user: tủ thật phải theo dõi được có đang kết nối hay không.
         if (!Boolean.TRUE.equals(targetLocker.getIsVirtual())) {
             if (targetLocker.getLastHeartbeat() == null
@@ -787,10 +817,18 @@ public class ShipperService {
     @Transactional
     public void recallOverduePackage(String orderId) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
+                .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
+                        "Không tìm thấy đơn hàng: " + orderId));
 
+        // GĐ13 — lỗi trạng thái là vi phạm nghiệp vụ → BusinessException → 409, KHÔNG phải 400.
+        //
+        // Lý do quan trọng: nút "Thu hồi" trên web giờ gọi API thật. Nếu bấm lần thứ hai (đơn đã
+        // COMPLETED) mà server trả 400 thì client khó phân biệt "request sai" với "đơn này rồi".
+        // 409 = tài nguyên đang ở trạng thái không cho phép thao tác, đúng bản chất.
         if (!"OVERDUE".equalsIgnoreCase(order.getStatus())) {
-            throw new RuntimeException("Đơn hàng này không ở trạng thái quá hạn lưu kho!");
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Đơn " + orderId + " không ở trạng thái quá hạn lưu kho (hiện tại: "
+                            + order.getStatus() + "), không thể thu hồi.");
         }
 
         order.setStatus("COMPLETED");

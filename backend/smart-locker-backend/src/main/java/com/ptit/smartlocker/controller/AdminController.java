@@ -31,11 +31,14 @@ public class AdminController {
 
     private final OrderService orderService;
     private final com.ptit.smartlocker.service.LockerService lockerService;
+    private final com.ptit.smartlocker.service.OverdueSchedulerService overdueSchedulerService;
 
     public AdminController(OrderService orderService,
-                           com.ptit.smartlocker.service.LockerService lockerService) {
+                           com.ptit.smartlocker.service.LockerService lockerService,
+                           com.ptit.smartlocker.service.OverdueSchedulerService overdueSchedulerService) {
         this.orderService = orderService;
         this.lockerService = lockerService;
+        this.overdueSchedulerService = overdueSchedulerService;
     }
 
     /**
@@ -74,5 +77,23 @@ public class AdminController {
                 lockerService.getMaintenanceLogs(lockerId, limit);
         return ResponseEntity.ok(ApiResponse.ok(
                 "Lấy nhật ký bảo trì thành công (" + logs.size() + " bản ghi)", logs));
+    }
+
+    /**
+     * GĐ13 — chạy NGAY một lượt quét đơn quá hạn.
+     *
+     * <p><b>Vì sao cần:</b> nút "Quét đơn quá hạn" trên web trước đây gọi
+     * {@code store.checkAndScanOverdueOrders()} — quét một mảng trong {@code localStorage} rồi báo
+     * "phát hiện X đơn". Con số đó là của trình duyệt, không liên quan gì tới CSDL: bấm xong DB
+     * vẫn y nguyên, và số báo ra có thể khác hoàn toàn với số đơn quá hạn thật.
+     *
+     * <p>Endpoint gọi đúng tác vụ mà {@code @Scheduled} chạy mỗi 10 phút, nên kết quả là thật.
+     * CHỈ ADMIN: đây là thao tác hàng loạt đổi trạng thái đơn của toàn hệ thống.
+     */
+    @org.springframework.web.bind.annotation.PostMapping("/scan-overdue")
+    public ResponseEntity<ApiResponse<Integer>> scanOverdue() {
+        int changed = overdueSchedulerService.scanAndLockOverdueOrders();
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Đã quét đơn quá hạn: " + changed + " đơn vừa chuyển sang OVERDUE", changed));
     }
 }
