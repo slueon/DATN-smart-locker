@@ -162,6 +162,22 @@ export const shipperApi = {
     api.get('/shipper/suggest-lockers?orderId=' + encodeURIComponent(orderId)),
   assignLocker: (orderId, body) =>
     api.post('/shipper/orders/' + encodeURIComponent(orderId) + '/assign-locker', body),
+
+  /**
+   * GĐ17 — sự kiện Kiosk của tủ thật, nguồn của popup "theo dõi tủ".
+   *
+   * <p><b>Vì sao có tham số `after`:</b> web poll 1,5 giây/lần. Gửi `after=<seq>` vừa nhận thì
+   * backend chỉ trả sự kiện MỚI, nên popup không phát lại sự kiện cũ. Lần gọi ĐẦU bỏ trống
+   * `after` → backend trả `events: []` kèm `latestSeq`, nhờ vậy mở tab không hiện lại popup của
+   * lần test trước.
+   */
+  getKioskEvents: (lockerId, after) => {
+    const params = new URLSearchParams();
+    if (lockerId) params.set('lockerId', lockerId);
+    if (after != null) params.set('after', String(after));
+    const qs = params.toString();
+    return api.get(`/shipper/kiosk-events${qs ? `?${qs}` : ''}`);
+  },
 };
 
 export const pickupApi = {

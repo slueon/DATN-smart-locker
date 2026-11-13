@@ -10,7 +10,7 @@ import {
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
   DoorOpen, Weight, Layers, ArrowRight, User, PackageX,
   Barcode, ScanLine, Scan, Camera, Sparkles, ChevronRight,
-  Shield, Volume2, Cpu, Clock, PlusCircle
+  Shield, Volume2, Cpu, Clock, PlusCircle, Radio
 } from 'lucide-react';
 
 export default function ShipperTab({ currentUser, onNavigateToRecall }) {
@@ -27,6 +27,21 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   // Deposit Stepper State (1: Scan Barcode, 2: Solenoid Open, 3: Put & Close, 4: Dual Sensor)
   const [depositStep, setDepositStep] = useState(1);
   const [isDepositing, setIsDepositing] = useState(false);
+
+  /**
+   * GĐ17 — THEO DÕI SỰ KIỆN TỪ TỦ THẬT.
+   *
+   * <p><b>Vì sao bỏ thanh 4 bước cũ:</b> 4 bước đó là mô phỏng trên web (nút "Quét Mã Kiện" tự
+   * giả lập camera, nút "Mở Cửa" gọi API). Với tủ thật, shipper KHÔNG bấm gì trên web ở các
+   * bước này — firmware tự quét GM65, tự mở cửa. Web chỉ cần HIỆN kết quả tủ đã làm.
+   *
+   * <p><b>Vì sao `lastSeq`:</b> backend dùng `seq` tăng đơn điệu. Mỗi lần poll gửi `after=lastSeq`
+   * thì chỉ nhận sự kiện MỚI → popup không phát lại. Lần đầu `lastSeq = null` → backend trả
+   * `events: []` + `latestSeq`, nên mở tab không hiện lại popup của lần test trước.
+   */
+  const [kioskEvents, setKioskEvents] = useState([]);
+  const [lastSeq, setLastSeq] = useState(null);
+  const [kioskError, setKioskError] = useState(null);
 
   // GM65 Scanner State
   const [scannedBarcode, setScannedBarcode] = useState(null);
@@ -629,6 +644,65 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrder?.lockerId, activeOrder?.compartmentIndex, isDepositing, depositStep]);
 
+  /**
+   * GĐ17 — POLL sự kiện Kiosk của tủ thật mỗi 1,5 giây.
+   *
+   * <p>Chu kỳ 1,5 giây: firmware quét mã xong shipper nhìn màn hình tủ, web phải báo gần như
+   * cùng lúc. Nhanh hơn (0,5s) thì 3 request/giây cho mỗi shipper là lãng phí; chậm hơn (3s)
+   * thì shipper đã kịp bước sang bước sau.
+   *
+   * <p>Chỉ poll khi có đơn đang chọn — không có đơn thì không có gì để theo dõi.
+   *
+   * <p><b>Cleanup bắt buộc:</b> thiếu `clearInterval` thì chuyển tab xong vẫn gọi API mãi, và
+   * khi component unmount sẽ setState lên component đã chết (warning của React).
+   */
+  useEffect(() => {
+    if (!activeOrder?.lockerId) {
+      return undefined;
+    }
+
+    const lockerId = activeOrder.lockerId;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await shipperApi.getKioskEvents(lockerId, lastSeq);
+        if (cancelled) return;
+
+        const payload = res?.data?.data;
+        if (!payload) return;
+
+        const events = payload.events || [];
+        if (events.length > 0) {
+          // Nối vào đầu danh sách, chỉ giữ 20 sự kiện gần nhất để UI không phình.
+          setKioskEvents((prev) => [...events, ...prev].slice(0, 20));
+        }
+        // Luôn cập nhật latestSeq, kể cả khi không có sự kiện: nếu chỉ cập nhật khi có sự kiện
+        // thì lần poll sau vẫn hỏi từ mốc cũ → nhận lại đúng những sự kiện vừa xử lý.
+        if (payload.latestSeq != null) {
+          setLastSeq(payload.latestSeq);
+        }
+        setKioskError(null);
+      } catch (err) {
+        if (cancelled) return;
+        // Không xoá popup đã có; chỉ báo là đang không theo dõi được tủ.
+        setKioskError(
+          err?.response?.data?.message
+            || 'Không đọc được sự kiện từ tủ. Kiểm tra backend đang chạy.'
+        );
+      }
+    };
+
+    poll(); // đọc ngay 1 lần để không trống 1,5 giây đầu
+    const timer = setInterval(poll, 1500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrder?.lockerId, lastSeq]);
+
   return (
     <div className="space-y-5 notranslate select-none">
       {/* 4 KPI Metric Cards (Apple Liquid Glass Bento Grid) */}
@@ -1103,200 +1177,79 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
               </div>
               )}
 
-              {/* 4-Step Visual Progress Bar */}
-              <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                {[
-                  { step: 1, label: '1. Quét mã kiện' },
-                  { step: 2, label: '2. Mở cửa tủ' },
-                  { step: 3, label: '3. Bỏ kiện hàng' },
-                  { step: 4, label: '4. Kiểm tra cảm biến' },
-                ].map((s) => (
-                  <div
-                    key={s.step}
-                    className={`p-2.5 rounded-xl border text-[11px] font-bold transition-all ${
-                      depositStep === s.step
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/20'
-                        : depositStep > s.step
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : 'bg-slate-50 text-slate-400 border-slate-200'
-                    }`}
-                  >
-                    {s.label}
-                  </div>
-                ))}
-              </div>
-
-              {/* STEP 1: SCAN BARCODE (GM65 LASER SIMULATION) */}
-              {depositStep === 1 && (
-                <div className="p-5 rounded-2xl bg-slate-900 text-white border border-slate-800 space-y-4">
+              {/* GĐ17 — THEO DÕI TỦ THẬT (thay thanh 4 bước mô phỏng) */}
+              {!isDepositing && (
+                <div className="p-5 rounded-2xl bg-slate-900 text-white border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Camera className="w-5 h-5 text-blue-400" />
+                      <Radio className="w-5 h-5 text-emerald-400" />
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                        Camera Quét Mã Đang Hoạt Động
+                        Theo dõi tủ thật — {activeOrder.lockerName || activeOrder.lockerId}
                       </span>
                     </div>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  </div>
-
-                  {/* Laser Scanning Frame Viewport */}
-                  <div className="relative h-44 rounded-xl border-2 border-dashed border-slate-700 bg-slate-950 flex flex-col items-center justify-center overflow-hidden">
-                    {/* Laser Red Beam Line */}
-                    <div className="absolute inset-x-4 h-0.5 bg-gradient-to-r from-transparent via-red-500 to-transparent shadow-[0_0_12px_#ef4444] animate-laser-sweep" />
-
-                    <Barcode className="w-20 h-20 text-slate-600 opacity-60 mb-2" />
-                    <span className="text-xs font-mono text-slate-300 z-10 font-bold">
-                      {isScanningActive ? 'Đang nhận diện mã vạch...' : activeOrder.orderId}
-                    </span>
-                    <span className="text-[10px] text-slate-500 mt-1 z-10">
-                      Hướng mã vạch vào vùng quét
+                    <span className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Đang lắng nghe
                     </span>
                   </div>
 
-                  {scanError && (
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Thao tác trực tiếp trên màn hình cảm ứng của tủ. Web tự hiện kết quả khi tủ báo về
+                    — không cần bấm gì ở đây.
+                  </p>
+
+                  {kioskError && (
                     <div className="p-3 bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs rounded-xl flex items-center gap-2">
                       <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                      <span>{scanError}</span>
+                      <span>{kioskError}</span>
                     </div>
                   )}
 
-                  {isScanSuccess && (
-                    <div className="p-3 bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs rounded-xl flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                        <span>Nhận diện thành công: <strong>{scannedBarcode}</strong></span>
-                      </div>
-                      <span className="font-bold text-emerald-400">Khớp trạm tủ ✓</span>
+                  {kioskEvents.length === 0 ? (
+                    <div className="p-6 rounded-xl border-2 border-dashed border-slate-700 bg-slate-950 text-center">
+                      <ScanLine className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+                      <p className="text-xs text-slate-400 font-semibold">
+                        Chờ thao tác tại tủ…
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Bước 1: quét mã QR shipper tại tủ · Bước 2: quét mã vận đơn · Bước 3: chọn ngăn
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                      {kioskEvents.map((ev) => {
+                        // `type` là tên do backend đặt (SHIPPER_VERIFIED, ORDER_VALID, ...).
+                        const ok = /VERIFIED|VALID|SUCCESS|SELECTED/.test(ev.type || '');
+                        return (
+                          <div
+                            key={`${ev.seq}-${ev.type}`}
+                            className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+                              ok
+                                ? 'bg-emerald-950/40 border-emerald-500/40'
+                                : 'bg-rose-950/40 border-rose-500/40'
+                            }`}
+                          >
+                            {ok
+                              ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                              : <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />}
+                            <div className="min-w-0">
+                              <p className={`font-bold ${ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                {ev.message || ev.type}
+                              </p>
+                              <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                {ev.type}
+                                {ev.orderId ? ` · ${ev.orderId}` : ''}
+                                {ev.compartment ? ` · Ngăn #${ev.compartment}` : ''}
+                                {ev.at
+                                  ? ` · ${new Date(ev.at).toLocaleTimeString('vi-VN')}`
+                                  : ''}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleScanBarcode(activeOrder.orderId)}
-                      className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-blue-500/20"
-                    >
-                      <ScanLine className="w-4 h-4" />
-                      <span>Quét Mã Kiện ({activeOrder.orderId})</span>
-                    </button>
-                    {isScanSuccess && (
-                      <button
-                        type="button"
-                        onClick={() => handleProceedDepositStep(2, activeOrder)}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-5 rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <span>Tiếp Tục</span>
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 2: OPEN SOLENOID LOCK */}
-              {depositStep === 2 && (
-                <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-4">
-                  <div className="flex items-center gap-2.5 text-amber-900 font-bold text-xs uppercase">
-                    <DoorOpen className="w-5 h-5 text-amber-600" />
-                    <span>Bước 2: Mở cửa ngăn #{activeOrder.compartmentIndex}</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Mã kiện hợp lệ. Nhấn nút để mở chốt cửa ngăn #{activeOrder.compartmentIndex}.
-                  </p>
-
-                  <button
-                    onClick={() => handleOpenDoorAndDeposit(activeOrder)}
-                    disabled={isReserving}
-                    className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-                  >
-                    <DoorOpen className="w-4 h-4" />
-                    <span>
-                      {isReserving
-                        ? 'Đang gửi lệnh…'
-                        : `Mở Cửa Ngăn #${activeOrder.compartmentIndex}`}
-                    </span>
-                  </button>
-                  <p className="text-[10px] text-amber-800/80 leading-relaxed">
-                    Lệnh mở cửa được gửi qua API thật tới backend. Nếu báo lỗi, kiểm tra đã tạo mã QR
-                    shipper và đăng nhập tài khoản SHIPPER.
-                  </p>
-                </div>
-              )}
-
-              {/* STEP 3: PUT ITEM & CLOSE DOOR */}
-              {depositStep === 3 && (
-                <div className="p-5 rounded-2xl bg-blue-50/70 border border-blue-200 space-y-4">
-                  <div className="flex items-center gap-2.5 text-blue-900 font-bold text-xs uppercase">
-                    <Box className="w-5 h-5 text-blue-600" />
-                    <span>Bước 3: Bỏ kiện hàng vào ngăn và đóng kín cửa</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Đặt <strong className="text-slate-800">{activeOrder.productName}</strong> vào ngăn #{activeOrder.compartmentIndex} và đóng chặt cửa.
-                  </p>
-
-                  <button
-                    onClick={() => handleProceedDepositStep(4, activeOrder)}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>Xác Nhận Đã Đóng Cửa</span>
-                  </button>
-                </div>
-              )}
-
-              {/* STEP 4: DUAL-SENSOR VALIDATION & FINALIZE */}
-              {depositStep === 4 && (
-                <div className="p-5 rounded-2xl bg-emerald-50/70 border border-emerald-200 space-y-4">
-                  <div className="flex items-center gap-2.5 text-emerald-900 font-bold text-xs uppercase">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                    <span>Bước 4: Xác thực cảm biến ngăn tủ</span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
-                      <span className="text-[10px] text-slate-500 uppercase block font-semibold">Cảm biến cửa</span>
-                      {/* GĐ5 — ô này trước đây ghi cứng "Đã đóng kín cửa" cho MỌI trường hợp,
-                          nên nó luôn báo xanh kể cả khi cửa đang mở. Nay bám `sensor.doorClosed`
-                          (MC-38). Chưa có bản tin thì hiện "—" chứ không khẳng định bừa. */}
-                      {sensor.doorClosed == null ? (
-                        <span className="font-bold text-slate-500 flex items-center gap-1 mt-1">
-                          <AlertCircle className="w-3.5 h-3.5" /> Chưa có dữ liệu cảm biến
-                        </span>
-                      ) : sensor.doorClosed ? (
-                        <span className="font-bold text-emerald-600 flex items-center gap-1 mt-1">
-                          <Check className="w-3.5 h-3.5" /> Đã đóng kín cửa
-                        </span>
-                      ) : (
-                        <span className="font-bold text-rose-600 flex items-center gap-1 mt-1">
-                          <AlertTriangle className="w-3.5 h-3.5" /> Cửa đang MỞ
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
-                      <span className="text-[10px] text-slate-500 uppercase block font-semibold">Trọng lượng</span>
-                      {/* GĐ5 — bỏ số cứng "0.85 kg (Đã có hàng)": trước đây kiện nào cũng hiện
-                          0.85 kg nên bước "kiểm tra cảm biến kép" chỉ là trang trí. Nay đọc
-                          `sensor.weight` (kg, đã chia 1000 từ gram). Chưa có dữ liệu thì "—". */}
-                      <span
-                        className={`font-bold flex items-center gap-1 mt-1 ${
-                          sensor.weight != null && sensor.weight > 0 ? 'text-emerald-600' : 'text-slate-500'
-                        }`}
-                      >
-                        <Weight className="w-3.5 h-3.5" />
-                        {sensor.weight != null ? `${sensor.weight.toFixed(2)} kg` : '— kg'}
-                        {sensor.weight != null && sensor.weight > 0 ? ' (Đã có hàng)' : ''}
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleProceedDepositStep(5, activeOrder)}
-                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold py-3.5 px-4 rounded-xl text-xs transition shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Hoàn Tất & Gửi Thông Báo Khách</span>
-                  </button>
                 </div>
               )}
 

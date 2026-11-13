@@ -52,6 +52,8 @@ public class MqttService implements MqttCallbackExtended {
     private final DeviceEventRepository deviceEventRepository;
     private final ShipperService shipperService;
     private final PickupService pickupService;
+    /** Bộ đệm sự kiện Kiosk — nguồn popup của web shipper (xem {@link KioskEventService}). */
+    private final KioskEventService kioskEventService;
     private final ObjectMapper objectMapper;
 
     @Value("${mqtt.retain.enabled:true}")
@@ -106,6 +108,7 @@ public class MqttService implements MqttCallbackExtended {
             DeviceEventRepository deviceEventRepository,
             ShipperService shipperService,
             PickupService pickupService,
+            KioskEventService kioskEventService,
             @Autowired(required = false) ObjectMapper objectMapper) {
         this.mqttClient = mqttClient;
         this.lockerRepository = lockerRepository;
@@ -115,6 +118,7 @@ public class MqttService implements MqttCallbackExtended {
         this.deviceEventRepository = deviceEventRepository;
         this.shipperService = shipperService;
         this.pickupService = pickupService;
+        this.kioskEventService = kioskEventService;
         this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
     }
 
@@ -337,6 +341,26 @@ public class MqttService implements MqttCallbackExtended {
      *
      * <p>Chỉ coi là downlink khi phần sau device id thuộc nhóm lệnh của backend — vì firmware
      * thật cũng publish {@code {base}/{dev}/status} (heartbeat) và bản tin đó PHẢI xử lý.
+     *
+     * <h2>BUG ĐÃ SỬA (13/11) — {@code locker/*} không phải toàn bộ là downlink</h2>
+     *
+     * <p>Trước đây chỉ cần {@code seg[1] == "locker"} là coi downlink và bỏ qua. Nhưng dưới
+     * {@code locker/} có cả UPLINK do firmware gửi lên:
+     * <ul>
+     *   <li>{@code {dev}/locker/open} — <b>downlink</b> (backend ra lệnh mở).</li>
+     *   <li>{@code {dev}/locker/select_compartment} — <b>uplink</b> (shipper chọn ngăn trên TFT).</li>
+     *   <li>{@code {dev}/locker/scan_order_qr/request} — <b>uplink</b> (báo bắt đầu quét).</li>
+     * </ul>
+     *
+     * <p>Hệ quả khi chưa sửa: firmware đổi sang topic có {@code {dev}}
+     * ({@code ptit/Tu_1/locker/select_compartment}) thì bản tin bị nuốt im lặng — backend không
+     * gán ngăn cho đơn, không có sự kiện {@code COMPARTMENT_SELECTED} cho web, và log không có
+     * dòng nào. Không phát hiện được vì firmware cũ dùng topic phẳng
+     * {@code ptit/locker/select_compartment} (2 segment) nên rơi vào nhánh {@code seg.length < 3}.
+     *
+     * <p>Nay chỉ {@code locker/open} là downlink; mọi thứ khác dưới {@code locker/} đều xử lý
+     * như uplink. Tương tự với {@code maintenance/*} — bản tin retained do chính backend phát
+     * được chặn bằng {@link #isOwnEcho} chứ không bằng tên topic.
      */
     private boolean isDownlinkTopic(String topic) {
         if (topic == null) {
@@ -357,7 +381,19 @@ public class MqttService implements MqttCallbackExtended {
             return false;
         }
         String second = seg[1].toLowerCase(Locale.ROOT);
-        return second.equals("verified") || second.equals("locker") || second.equals("maintenance");
+
+        // UPLINK — firmware gửi lên, PHẢI xử lý. Đặt TRƯỚC nhánh "locker" để không bị nuốt.
+        if (second.equals("qr") || second.equals("receive") || second.equals("compartment")) {
+            return false;
+        }
+        if (second.equals("locker")) {
+            // Chỉ `locker/open` do backend phát. `select_compartment`, `scan_order_qr/request`
+            // và các topic khác dưới `locker/` là uplink của firmware.
+            String third = seg.length > 2 ? seg[2].toLowerCase(Locale.ROOT) : "";
+            return "open".equals(third);
+        }
+
+        return second.equals("verified") || second.equals("maintenance");
     }
 
     // ─────────────────────────── payload: JSON hoặc thuần ───────────────────────────
@@ -875,6 +911,13 @@ public class MqttService implements MqttCallbackExtended {
             log.warn("Kiểm tra Shipper Token thất bại (không hợp lệ): {}", ex.getMessage());
         }
         publishVerified(locker.getLockerId(), "shipper", verified ? "1" : "0");
+
+        // Sự kiện cho web: thiếu hai dòng này thì shipper quét QR ở tủ mà màn hình web im
+        // lặng, không biết tủ đã nhận hay từ chối mã.
+        kioskEventService.record(locker.getLockerId(),
+                verified ? KioskEventService.SHIPPER_VERIFIED : KioskEventService.SHIPPER_REJECTED,
+                null, null, null, null,
+                verified ? "Xác thực shipper thành công" : "QR shipper không hợp lệ");
     }
 
     /**
@@ -937,6 +980,30 @@ public class MqttService implements MqttCallbackExtended {
                         && "PENDING".equalsIgnoreCase(o.getStatus()));
 
         if (ready.isEmpty()) {
+            // ── Nhánh KHÔNG đặt trước (luồng firmware hiện tại) ──
+            // Đơn hợp lệ để nạp nhưng chưa giữ ngăn: TFT hiện ngăn trống, shipper chọn ngăn và
+            // firmware tự mở. Hợp đồng MQTT vẫn là `verified/order = 0` (MQTT_GUIDE.md:117 —
+            // 0 = TFT hiển thị các ngăn khả dụng), nên KHÔNG đổi payload; chỉ ghi thêm sự kiện
+            // để web hiện popup "Mã vận đơn hợp lệ".
+            Optional<Order> choKiosk = optOrder.filter(o ->
+                    "PENDING".equalsIgnoreCase(o.getStatus())
+                            && (o.getLocker() == null
+                                || lockerIdOfMessage.equalsIgnoreCase(o.getLocker().getLockerId()))
+                            && o.getShipperReservedAt() == null);
+            boolean coPhienShipper = hasActiveShipperVerification(lockerIdOfMessage);
+
+            if (choKiosk.isPresent() && coPhienShipper) {
+                Order o = choKiosk.get();
+                kioskEventService.record(lockerIdOfMessage, KioskEventService.ORDER_VALID,
+                        o.getOrderId(), scanned, null, Boolean.FALSE,
+                        "Chọn ngăn trên màn hình tủ");
+                publishVerified(lockerIdOfMessage, "order", "0");
+                log.info("✅ Quét mã '{}' → đơn {} hợp lệ tại tủ {} (chưa đặt trước) — "
+                        + "phát verified/order=0 để TFT hiện ngăn trống",
+                        scanned, o.getOrderId(), lockerIdOfMessage);
+                return;
+            }
+
             String reason;
             if (optOrder.isEmpty()) {
                 reason = "không tìm thấy đơn với mã '" + scanned + "' (đã tra tracking_code và order_id)";
@@ -947,7 +1014,8 @@ public class MqttService implements MqttCallbackExtended {
                 } else if (o.getCompartment() == null) {
                     reason = "đơn " + o.getOrderId() + " chưa được gán ngăn nào";
                 } else if (o.getShipperReservedAt() == null) {
-                    reason = "đơn " + o.getOrderId() + " CHƯA ĐƯỢC ĐẶT TRƯỚC"
+                    reason = (coPhienShipper ? "" : "chưa có shipper xác thực tại tủ (" + lockerIdOfMessage + "); ")
+                            + "đơn " + o.getOrderId() + " CHƯA ĐƯỢC ĐẶT TRƯỚC"
                             + " (ngăn " + o.getCompartment().getCompIndex()
                             + " do hệ thống gán lúc checkout) — shipper cần đặt trước trên web"
                             + " hoặc chọn ngăn trên màn hình tủ";
@@ -958,6 +1026,8 @@ public class MqttService implements MqttCallbackExtended {
                 }
             }
             log.warn("Quét mã đơn '{}' tại tủ {} → TỪ CHỐI: {}", scanned, lockerIdOfMessage, reason);
+            kioskEventService.record(lockerIdOfMessage, KioskEventService.ORDER_INVALID,
+                    optOrder.map(Order::getOrderId).orElse(null), scanned, null, null, reason);
             // R3: phát 0 THẬT, không im lặng.
             publishVerified(lockerIdOfMessage, "order", "0");
             return;
@@ -969,14 +1039,21 @@ public class MqttService implements MqttCallbackExtended {
 
         // Xác thực shipper vẫn bắt buộc trước khi mở cửa.
         if (!hasActiveShipperVerification(orderLockerId)) {
-            log.warn("Đơn {} hợp lệ để nạp nhưng chưa có shipper xác thực còn hiệu lực tại tủ {}",
-                    order.getOrderId(), orderLockerId);
+            String reason = "đơn " + order.getOrderId() + " đã đặt trước nhưng chưa có shipper"
+                    + " xác thực tại tủ (" + lockerIdOfMessage + ")";
+            log.warn("Quét mã '{}' → TỪ CHỐI: {}", scanned, reason);
+            kioskEventService.record(lockerIdOfMessage, KioskEventService.ORDER_INVALID,
+                    order.getOrderId(), scanned, comp.getCompIndex(), Boolean.TRUE, reason);
             publishVerified(lockerIdOfMessage, "order", "0");
             return;
         }
 
         publishVerified(orderLockerId, "order", "1");
         publishCommand(orderLockerId, comp.getCompIndex(), "OPEN_DOOR", "SHIPPER_DEPOSIT", order.getOrderId());
+        // Đơn ĐÃ đặt trước: tủ mở đúng ngăn đã giữ, shipper không phải chọn trên TFT.
+        kioskEventService.record(orderLockerId, KioskEventService.ORDER_VALID,
+                order.getOrderId(), scanned, comp.getCompIndex(), Boolean.TRUE,
+                "Đang mở ngăn #" + comp.getCompIndex() + " đã đặt trước");
         log.info("✅ Quét mã '{}' → đơn {} đã đặt trước ngăn {} tại tủ {} — phát verified/order=1 và mở ngăn",
                 scanned, order.getOrderId(), comp.getCompIndex(), orderLockerId);
     }
@@ -1067,14 +1144,29 @@ public class MqttService implements MqttCallbackExtended {
     /**
      * Chọn ngăn từ Kiosk. {@code compartment} trong payload là 0-based → lưu 1-based.
      *
-     * <p><b>Hàm này CHỈ GHI NHẬN, KHÔNG ra lệnh mở tủ.</b> Theo {@code MQTT_GUIDE.md} dòng 103
+     * <p><b>Hàm này CHỈ GHI NHẬN, KHÔNG ra lệnh mở tủ.</b> Theo {@code MQTT_GUIDE.md} dòng 71/127
      * và firmware ({@code main.c:136,146} gọi {@code open_lock(compartment_idx)}): tủ TỰ mở ngăn
      * bằng phần cứng rồi mới publish {@code locker/select_compartment} kèm QR đơn để backend lưu.
      * Backend gửi thêm {@code locker/open} ở nhánh này là sai thiết kế ngay từ gốc — và còn là
      * đường mở tủ từ xa vì gói tin này không đòi phiên shipper đã xác thực.
      *
      * <p>Vì vậy lỗi bảo mật ở đây được xử lý bằng cách BỎ HẲN đường ra lệnh, không phải bằng cách
-     * thêm kiểm tra quyền: không còn {@code publishCommand} thì không còn gì để mở tủ.
+     * thêm kiểm tra quyền: không còn {@code publishCommand} thì không còn gì để mở tủ. Các điều
+     * kiện dưới đây chỉ quyết định có GHI nhận hay không.
+     *
+     * <h3>Luồng KHÔNG đặt trước (firmware hiện tại)</h3>
+     * <p>Shipper quét QR shipper → quét mã vận đơn ({@code verified/order = 0}) → chọn ngăn trên
+     * TFT → firmware mở ngăn và publish hàm này. Vì vậy:
+     * <ul>
+     *   <li>Phải tra <b>mã vận đơn trước</b> ({@code findByTrackingCode}) rồi mới tới
+     *       {@code order_id}: firmware gửi mã trên nhãn, còn code cũ chỉ tra {@code order_id} nên
+     *       mọi ca thực tế đều rơi vào "không tìm thấy đơn".</li>
+     *   <li>Phải có phiên shipper còn hiệu lực tại đúng tủ: thiếu là ghi nhận đơn vào ngăn người
+     *       khác, không phải chuyện "tiện tay".</li>
+     *   <li>Đơn CHƯA đặt trước được phép ĐỔI ngăn (ngăn cũ do checkout gán chỉ là gợi ý), và gán
+     *       luôn tủ khi đơn chưa có tủ. Đơn ĐÃ đặt trước thì giữ nguyên hành vi cũ: từ chối ghi đè,
+     *       vì ngăn đó đã được giữ chỗ thật trên web.</li>
+     * </ul>
      */
     private void handleSelectCompartment(String topic, String rel, Payload payload, String payloadStr) {
         Locker locker = resolveLocker(deviceIdFromTopicOrPayload(rel, payload), rel, payloadStr);
@@ -1092,46 +1184,95 @@ public class MqttService implements MqttCallbackExtended {
 
         String qr = payload.str("qr");
         if (qr == null || qr.isBlank()) {
+            // Tủ vẫn mở ngăn bằng phần cứng, nhưng không biết đơn nào → không có gì để ghi.
             log.info("Kiosk chọn ngăn {} (0-based {}) tại tủ {} — không kèm QR đơn, chỉ ghi nhận",
                     oneBased, zeroBased, locker.getLockerId());
             return;
         }
+        String scanned = qr.trim();
 
-        Optional<Order> optOrder = orderRepository.findByIdWithCompartment(qr.trim());
+        // Bắt buộc có phiên shipper còn hiệu lực tại ĐÚNG tủ đang gửi bản tin.
+        if (!hasActiveShipperVerification(locker.getLockerId())) {
+            log.warn("select_compartment tại tủ {} (qr='{}', ngăn {}) bị bỏ qua: chưa có phiên shipper"
+                    + " xác thực còn hiệu lực tại tủ này", locker.getLockerId(), scanned, oneBased);
+            return;
+        }
+
+        // Tra mã vận đơn TRƯỚC, trượt thì tra order_id (đơn cũ chưa có mã vận đơn).
+        Optional<Order> optOrder = orderRepository.findByTrackingCode(scanned);
         if (optOrder.isEmpty()) {
-            log.warn("select_compartment nhận qr='{}' nhưng không tìm thấy đơn — chỉ ghi nhận", qr);
+            optOrder = orderRepository.findByIdWithCompartment(scanned);
+        }
+        if (optOrder.isEmpty()) {
+            log.warn("select_compartment nhận qr='{}' nhưng không tìm thấy đơn (đã tra tracking_code và"
+                    + " order_id) tại tủ {} — chỉ ghi nhận", scanned, locker.getLockerId());
             return;
         }
 
         Order order = optOrder.get();
-        String orderLockerId = (order.getLocker() != null && order.getLocker().getLockerId() != null)
-                ? order.getLocker().getLockerId()
-                : locker.getLockerId();
-
-        // Ngăn đích phải tồn tại và thuộc ĐÚNG tủ của đơn, nếu không thì đơn sẽ trỏ sang tủ khác.
-        Optional<Compartment> target = compartmentRepository
-                .findByLocker_LockerIdAndCompIndex(orderLockerId, oneBased);
-        if (target.isEmpty()) {
-            log.warn("select_compartment: ngăn {} không thuộc tủ {} của đơn {} — không cập nhật",
-                    oneBased, orderLockerId, order.getOrderId());
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+            log.warn("select_compartment: đơn {} đang ở trạng thái {} — không ghi ngăn {}",
+                    order.getOrderId(), order.getStatus(), oneBased);
+            return;
+        }
+        if (order.getLocker() != null
+                && !locker.getLockerId().equalsIgnoreCase(order.getLocker().getLockerId())) {
+            log.warn("select_compartment: đơn {} thuộc tủ {} nhưng bản tin đến từ tủ {} — không cập nhật",
+                    order.getOrderId(), order.getLocker().getLockerId(), locker.getLockerId());
             return;
         }
 
-        // Chống ghi đè: đơn đã gắn ngăn khác thì giữ nguyên và cảnh báo.
-        if (order.getCompartment() != null
-                && order.getCompartment().getCompIndex() != null
-                && !order.getCompartment().getCompIndex().equals(oneBased)) {
-            log.warn("select_compartment: đơn {} đã gắn ngăn {} — TỪ CHỐI ghi đè sang ngăn {}",
-                    order.getOrderId(), order.getCompartment().getCompIndex(), oneBased);
+        // Ngăn đích phải tồn tại trong ĐÚNG tủ đang gửi bản tin.
+        Optional<Compartment> target = compartmentRepository
+                .findByLocker_LockerIdAndCompIndex(locker.getLockerId(), oneBased);
+        if (target.isEmpty()) {
+            log.warn("select_compartment: ngăn {} không thuộc tủ {} của đơn {} — không cập nhật",
+                    oneBased, locker.getLockerId(), order.getOrderId());
             return;
+        }
+        String targetStatus = target.get().getStatus() == null
+                ? "" : target.get().getStatus().toUpperCase(Locale.ROOT);
+        if ("OCCUPIED".equals(targetStatus) || "OUT_OF_SERVICE".equals(targetStatus)) {
+            log.warn("select_compartment: ngăn {} của tủ {} đang {} — từ chối gán đơn {}",
+                    oneBased, locker.getLockerId(), targetStatus, order.getOrderId());
+            return;
+        }
+
+        Integer oldIndex = order.getCompartment() != null ? order.getCompartment().getCompIndex() : null;
+        boolean sameCompartment = oldIndex != null && oldIndex == oneBased;
+
+        // Đơn ĐÃ đặt trước và đã gắn ngăn khác: giữ nguyên hành vi cũ — từ chối ghi đè.
+        if (order.getShipperReservedAt() != null && oldIndex != null && !sameCompartment) {
+            log.warn("select_compartment: đơn {} đã đặt trước ngăn {} — TỪ CHỐI ghi đè sang ngăn {}",
+                    order.getOrderId(), oldIndex, oneBased);
+            return;
+        }
+
+        // Đơn CHƯA đặt trước: ngăn cũ do checkout gán chỉ là gợi ý → nhả về trống rồi gán ngăn mới.
+        if (!sameCompartment && order.getShipperReservedAt() == null && order.getCompartment() != null) {
+            Compartment old = order.getCompartment();
+            if ("RESERVED".equalsIgnoreCase(old.getStatus())) {
+                old.setStatus("EMPTY");
+                compartmentRepository.save(old);
+                log.info("select_compartment: nhả ngăn {} (RESERVED → EMPTY) của tủ {} vì đơn {} đổi sang ngăn {}",
+                        old.getCompIndex(), locker.getLockerId(), order.getOrderId(), oneBased);
+            }
         }
 
         order.setCompartment(target.get());
+        if (order.getLocker() == null) {
+            // Đơn tạo theo mô hình GĐ11 (khách chỉ nhận hàng) có thể chưa gán tủ.
+            order.setLocker(locker);
+        }
         orderRepository.save(order);
 
+        kioskEventService.record(locker.getLockerId(), KioskEventService.COMPARTMENT_SELECTED,
+                order.getOrderId(), scanned, oneBased, null,
+                "Đã mở ngăn #" + oneBased + " – bỏ hàng và đóng cửa");
+
         // KHÔNG publishCommand ở bất kỳ nhánh nào: tủ đã tự mở bằng phần cứng.
-        log.info("Kiosk chọn ngăn {} tại tủ {} cho đơn {} — chỉ ghi nhận, không ra lệnh mở",
-                oneBased, orderLockerId, order.getOrderId());
+        log.info("Kiosk chọn ngăn {} tại tủ {} cho đơn {} — đã ghi nhận, không ra lệnh mở",
+                oneBased, locker.getLockerId(), order.getOrderId());
     }
 
     private void handleCompartmentStatus(String topic, String rel, Payload payload, String payloadStr) {
@@ -1209,9 +1350,19 @@ public class MqttService implements MqttCallbackExtended {
                         ord.setExpiryDeadline(LocalDateTime.now().plusDays(2));
                         orderRepository.save(ord);
                         log.info("Đã chuyển đơn hàng {} sang trạng thái DEPOSITED", ord.getOrderId());
-                        break;
+                        // Sự kiện cho web: popup "Nạp hàng thành công" + tải lại danh sách đơn.
+                        kioskEventService.record(locker.getLockerId(), KioskEventService.DEPOSIT_SUCCESS,
+                                ord.getOrderId(), ord.getTrackingCode(), compIndex, null,
+                                "Nạp hàng thành công ngăn #" + compIndex);
+                        return;
                     }
                 }
+
+                // Tủ báo nạp xong nhưng không có đơn PENDING nào trỏ vào ngăn này (ví dụ đơn đã bị
+                // huỷ). Vẫn báo cho web biết phần cứng đã xong, chỉ thiếu mã đơn.
+                kioskEventService.record(locker.getLockerId(), KioskEventService.DEPOSIT_SUCCESS,
+                        null, null, compIndex, null,
+                        "Nạp hàng thành công ngăn #" + compIndex);
             });
         } else if ("pickup_success".equalsIgnoreCase(status)) {
             compartmentRepository.findByLocker_LockerIdAndCompIndex(locker.getLockerId(), compIndex).ifPresent(comp -> {

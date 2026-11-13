@@ -1,8 +1,10 @@
 package com.ptit.smartlocker.controller;
 
 import com.ptit.smartlocker.dto.ApiResponse;
+import com.ptit.smartlocker.dto.KioskEventDTO;
 import com.ptit.smartlocker.dto.OrderDTO;
 import com.ptit.smartlocker.dto.ShipperDTO;
+import com.ptit.smartlocker.service.KioskEventService;
 import com.ptit.smartlocker.service.ShipperService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,9 +16,11 @@ import java.util.List;
 public class ShipperController {
 
     private final ShipperService shipperService;
+    private final KioskEventService kioskEventService;
 
-    public ShipperController(ShipperService shipperService) {
+    public ShipperController(ShipperService shipperService, KioskEventService kioskEventService) {
         this.shipperService = shipperService;
+        this.kioskEventService = kioskEventService;
     }
 
     /**
@@ -144,6 +148,33 @@ public class ShipperController {
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
+    }
+
+    /**
+     * Sự kiện phát sinh tại Kiosk của tủ thật — nguồn của popup "theo dõi tủ thật".
+     *
+     * <p><b>Hợp đồng với web:</b>
+     * <ul>
+     *   <li>Lần gọi ĐẦU TIÊN bỏ trống {@code after} → {@code events} rỗng, chỉ có
+     *       {@code latestSeq}. Nhờ vậy mở tab không phát lại popup của lần test trước.</li>
+     *   <li>Các lần sau gửi {@code after=<latestSeq>} vừa nhận → chỉ nhận sự kiện MỚI.</li>
+     * </ul>
+     *
+     * <p><b>Quyền:</b> SHIPPER hoặc ADMIN (xem {@code SecurityConfig}). ADMIN cần đọc được vì
+     * cùng một màn hình giám sát được dùng khi trực ca.
+     *
+     * <p>Không lọc theo người dùng: bộ đệm gắn theo TỦ, và mọi shipper đứng cùng tủ đều phải
+     * thấy cùng sự kiện phần cứng.
+     */
+    @GetMapping("/kiosk-events")
+    public ResponseEntity<ApiResponse<KioskEventDTO>> getKioskEvents(
+            @RequestParam(required = false) String lockerId,
+            @RequestParam(required = false) Long after) {
+        KioskEventDTO payload = KioskEventDTO.builder()
+                .latestSeq(kioskEventService.latestSeq())
+                .events(kioskEventService.since(lockerId, after))
+                .build();
+        return ResponseEntity.ok(ApiResponse.ok("Lấy sự kiện Kiosk thành công", payload));
     }
 
     /**

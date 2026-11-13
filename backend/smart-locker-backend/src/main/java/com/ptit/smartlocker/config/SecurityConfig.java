@@ -198,6 +198,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/shipper/suggest-lockers").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/assign-locker").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.GET, "/api/shipper/overdue-orders").hasAnyRole("SHIPPER", "ADMIN")
+                // Sự kiện Kiosk của tủ thật (nguồn popup ở tab shipper). ADMIN đọc được vì cùng
+                // màn hình được dùng khi trực ca; thiếu dòng này là 403 vì denyAll() ở dưới.
+                .requestMatchers(HttpMethod.GET, "/api/shipper/kiosk-events")
+                        .hasAnyRole("SHIPPER", "ADMIN")
 
                 // --- Mặc định đóng ---
                 .anyRequest().denyAll());

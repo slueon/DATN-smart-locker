@@ -1,7 +1,9 @@
 package com.ptit.smartlocker;
 
+import com.ptit.smartlocker.dto.KioskEvent;
 import com.ptit.smartlocker.entity.*;
 import com.ptit.smartlocker.repository.*;
+import com.ptit.smartlocker.service.KioskEventService;
 import com.ptit.smartlocker.service.MqttService;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,6 +55,7 @@ class MqttTopicRoutingTests {
     @Autowired private CommandLogRepository commandLogRepository;
     @Autowired private DeviceEventRepository deviceEventRepository;
     @Autowired private ShipperIdentityTokenRepository tokenRepository;
+    @Autowired private KioskEventService kioskEventService;
 
     /**
      * Spy trên {@link MqttService} để bắt được các lần gọi {@code publishRawMessage}.
@@ -74,6 +77,21 @@ class MqttTopicRoutingTests {
     /** Gửi một bản tin MQTT giả vào đúng đường xử lý thật. */
     private void publish(String topic, String payload) {
         mqttService.messageArrived(topic, new MqttMessage(payload.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private Order taoDonCoMaVanDon(String orderId, String trackingCode, Integer compartmentIndex) {
+        Order order = taoDonPending(orderId, compartmentIndex);
+        order.setTrackingCode(trackingCode);
+        return orderRepository.save(order);
+    }
+
+    /** Các sự kiện Kiosk PHÁT SINH SAU mốc {@code moc} của đúng tủ này. */
+    private List<KioskEvent> suKienSau(long moc) {
+        return kioskEventService.since(locker.getLockerId(), moc);
+    }
+
+    private List<String> loaiSuKienSau(long moc) {
+        return suKienSau(moc).stream().map(KioskEvent::getType).collect(Collectors.toList());
     }
 
     private Order taoDonPending(String orderId, Integer compartmentIndex) {
@@ -137,6 +155,19 @@ class MqttTopicRoutingTests {
                 .shipperReservedAt(LocalDateTime.now().minusMinutes(1))
                 .build();
         return orderRepository.save(order);
+    }
+
+    /** Tạo token CHƯA quét (đúng trạng thái sau khi shipper bấm "Xem mã QR định danh"). */
+    private ShipperIdentityToken taoTokenChuaQuet(String dynamicToken) {
+        LocalDateTime now = LocalDateTime.now();
+        ShipperIdentityToken token = ShipperIdentityToken.builder()
+                .shipperId("shipper")
+                .dynamicToken(dynamicToken)
+                .createdAt(now)
+                .expiredAt(now.plusMinutes(5))
+                .isVerified(false)
+                .build();
+        return tokenRepository.save(token);
     }
 
     /** Tạo phiên shipper đã xác thực (60 giây) tại một tủ cụ thể. */
@@ -236,10 +267,13 @@ class MqttTopicRoutingTests {
     @DisplayName("select_compartment KHÔNG được phát lệnh mở tủ (tủ tự mở bằng phần cứng)")
     void selectCompartmentKhongPhatLenhMo() {
         Order don = taoDonPending("ORD-TEST-SELECT", null);
+        // Task 2: select_compartment chỉ được GHI NHẬN khi có phiên shipper còn hiệu lực tại đúng
+        // tủ. Test này kiểm "không phát lệnh mở", nên cần phiên hợp lệ để đi qua nhánh ghi nhận.
+        taoPhienShipper("SHIP-TEST-SELECT", locker.getLockerId());
         long cmdTruoc = demCommandLog();
 
         // Kể cả khi có shipper đã xác thực, backend vẫn KHÔNG được ra lệnh mở:
-        // theo MQTT_GUIDE.md dòng 103, firmware tự mở ngăn tại thao tác chọn.
+        // theo MQTT_GUIDE.md dòng 71/127, firmware tự mở ngăn tại thao tác chọn.
         publish("ptit/locker/select_compartment",
                 "{\"locker_id\":\"Tu_1\",\"compartment\":0,\"qr\":\"ORD-TEST-SELECT\"}");
 
@@ -362,8 +396,140 @@ class MqttTopicRoutingTests {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // 4c. SELECT_COMPARTMENT THEO MÃ VẬN ĐƠN + SỰ KIỆN KIOSK (task 2)
+    //
+    // Firmware gửi `qr` là mã IN TRÊN NHÃN, và chỉ gửi sau khi tự mở ngăn. Code cũ chỉ tra
+    // order_id nên mọi ca thật đều "không tìm thấy đơn"; nó cũng ghi ngăn kể cả khi không có
+    // phiên shipper. Năm test dưới đây khoá đúng hành vi mới.
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("select_compartment bằng MÃ VẬN ĐƠN + có phiên shipper: gắn đúng ngăn, không lệnh mở")
+    void selectCompartmentBangMaVanDonCoPhienShipperThiGanNgan() {
+        Order don = taoDonCoMaVanDon("ORD-SEL-A", "TRACK-SEL-A", null);
+        taoPhienShipper("SHIP-SEL-A", locker.getLockerId());
+        long cmdTruoc = demCommandLog();
+
+        publish("ptit/locker/select_compartment",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":1,\"qr\":\"TRACK-SEL-A\"}");
+
+        Order sau = orderRepository.findById(don.getOrderId()).orElseThrow();
+        assertNotNull(sau.getCompartment(),
+                "Tra bằng tracking_code phải ra đơn và gắn được ngăn");
+        assertEquals(2, sau.getCompartment().getCompIndex(),
+                "compartment trong payload là 0-based → DB 1-based, tức ngăn 2");
+        assertEquals(cmdTruoc, demCommandLog(),
+                "KHÔNG được phát lệnh mở: tủ đã tự mở bằng phần cứng");
+    }
+
+    @Test
+    @DisplayName("DOWNLINK vs UPLINK dưới {dev}/locker/: chỉ 'open' là downlink, còn lại phải xử lý")
+    void chiLockerOpenMoiLaDownlink() {
+        // BUG ĐÃ SỬA 13/11: trước đây `seg[1] == "locker"` là coi downlink và bỏ qua, nên firmware
+        // đổi sang topic có {dev} thì `select_compartment` bị nuốt im lặng — không gán ngăn, không
+        // có sự kiện COMPARTMENT_SELECTED cho web, log không một dòng.
+        //
+        // Test này dùng topic CÓ {dev} (khác các test cũ dùng topic phẳng) để bắt đúng lỗi đó.
+
+        // UPLINK: phải được xử lý → gắn được ngăn cho đơn.
+        Order don = taoDonCoMaVanDon("ORD-DEV-A", "TRACK-DEV-A", null);
+        taoPhienShipper("SHIP-DEV-A", locker.getLockerId());
+
+        publish("ptit/Tu_1/locker/select_compartment",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":0,\"qr\":\"TRACK-DEV-A\"}");
+
+        Order sau = orderRepository.findById(don.getOrderId()).orElseThrow();
+        assertNotNull(sau.getCompartment(),
+                "select_compartment có {dev} là UPLINK — phải xử lý, không được coi là downlink");
+        assertEquals(1, sau.getCompartment().getCompIndex(),
+                "compartment 0-based → ngăn 1");
+    }
+
+    @Test
+    @DisplayName("UPLINK khác dưới {dev}/locker/ (scan_order_qr/request) không bị nuốt")
+    void scanOrderQrRequestCoDevKhacKhongBiNuot() {
+        // `{dev}/locker/scan_order_qr/request` cũng là uplink. Kiểm bằng cách: sau khi xoá sạch
+        // lỗi, bản tin phải sinh event HW_MQTT (được router xử lý) chứ không bị return sớm.
+        long moc = demDeviceEvent();
+
+        publish("ptit/Tu_1/locker/scan_order_qr/request",
+                "{\"locker_id\":\"Tu_1\",\"action\":\"scan_order_qr\"}");
+
+        assertTrue(demDeviceEvent() > moc,
+                "scan_order_qr/request có {dev} phải vào router (sinh device_event), "
+                        + "không được bị coi là downlink rồi bỏ qua");
+    }
+
+    @Test
+    @DisplayName("select_compartment khi KHÔNG có phiên shipper: không ghi ngăn, không phát lệnh")
+    void selectCompartmentKhongCoPhienShipperThiKhongGhi() {
+        Order don = taoDonCoMaVanDon("ORD-SEL-B", "TRACK-SEL-B", null);
+        long cmdTruoc = demCommandLog();
+        long moc = kioskEventService.latestSeq();
+
+        publish("ptit/locker/select_compartment",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":0,\"qr\":\"TRACK-SEL-B\"}");
+
+        Order sau = orderRepository.findById(don.getOrderId()).orElseThrow();
+        assertNull(sau.getCompartment(), "Không có phiên shipper thì KHÔNG được ghi ngăn");
+        assertEquals(cmdTruoc, demCommandLog(), "Vẫn không phát lệnh mở ở nhánh này");
+        assertFalse(loaiSuKienSau(moc).contains(KioskEventService.COMPARTMENT_SELECTED),
+                "Không ghi nhận thì cũng không báo COMPARTMENT_SELECTED cho web");
+    }
+
+    @Test
+    @DisplayName("select_compartment đổi ngăn cho đơn CHƯA đặt trước: ngăn cũ RESERVED → EMPTY")
+    void selectCompartmentDoiNganDonChuaDatTruocThiNhaNganCu() {
+        // Ngăn cũ do checkout gán chỉ là gợi ý. Đơn chưa đặt trước được phép đổi ngăn, và ngăn cũ
+        // đang RESERVED phải nhả về EMPTY — nếu không ngăn đó bị khoá vĩnh viễn.
+        Compartment cu = compartmentRepository
+                .findByLocker_LockerIdAndCompIndex(locker.getLockerId(), 1).orElseThrow();
+        cu.setStatus("RESERVED");
+        compartmentRepository.save(cu);
+
+        Order don = taoDonCoMaVanDon("ORD-SEL-C", "TRACK-SEL-C", 1);
+        taoPhienShipper("SHIP-SEL-C", locker.getLockerId());
+
+        publish("ptit/locker/select_compartment",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":1,\"qr\":\"TRACK-SEL-C\"}");
+
+        Order sau = orderRepository.findById(don.getOrderId()).orElseThrow();
+        assertEquals(2, sau.getCompartment().getCompIndex(),
+                "Đơn chưa đặt trước phải được đổi sang ngăn Kiosk vừa chọn (1-based = 2)");
+        Compartment compCu = compartmentRepository
+                .findByLocker_LockerIdAndCompIndex(locker.getLockerId(), 1).orElseThrow();
+        assertEquals("EMPTY", compCu.getStatus(), "Ngăn cũ đang RESERVED phải được nhả về EMPTY");
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // 5. HEARTBEAT DẠNG CHUỖI THUẦN (firmware hiện tại đang gửi kiểu này)
     // ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Sau khi chọn ngăn, deposit_success chuyển đơn sang DEPOSITED và báo sự kiện")
+    void depositSuccessSauKhiChonNganThiDonDeposited() {
+        // Luồng đầy đủ của firmware: chọn ngăn → bỏ hàng, đóng cửa → cảm biến báo nạp xong.
+        Order don = taoDonCoMaVanDon("ORD-SEL-D", "TRACK-SEL-D", null);
+        taoPhienShipper("SHIP-SEL-D", locker.getLockerId());
+
+        publish("ptit/locker/select_compartment",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":1,\"qr\":\"TRACK-SEL-D\"}");
+
+        long moc = kioskEventService.latestSeq();
+        publish("ptit/compartment/2/event",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":2,\"status\":\"deposit_success\"}");
+
+        Order sau = orderRepository.findById(don.getOrderId()).orElseThrow();
+        assertEquals("DEPOSITED", sau.getStatus(),
+                "deposit_success trên ngăn 2 phải chuyển đơn (đang ở ngăn 2) sang DEPOSITED");
+        assertNotNull(sau.getDepositedAt(), "Phải ghi thời điểm nạp");
+
+        assertTrue(suKienSau(moc).stream()
+                        .anyMatch(e -> KioskEventService.DEPOSIT_SUCCESS.equals(e.getType())
+                                && don.getOrderId().equals(e.getOrderId())),
+                "Phải ghi DEPOSIT_SUCCESS kèm orderId để web hiện popup nạp xong; thực tế: "
+                        + loaiSuKienSau(moc));
+    }
 
     @Test
     @DisplayName("Heartbeat plaintext 'ONLINE' vẫn cập nhật nhịp tim (không được bỏ qua)")
@@ -414,5 +580,39 @@ class MqttTopicRoutingTests {
                 .orElseThrow();
         assertEquals(88.0, comp.getCurrentWeight(), 0.01,
                 "Payload thiếu locker_id phải được nhận qua cấu hình prefix chung2004");
+    }
+
+    @Test
+    @DisplayName("KioskEventService ghi đủ SHIPPER_VERIFIED / ORDER_VALID reserved=false / ORDER_INVALID")
+    void kioskEventGhiDungSuKien() {
+        Order don = taoDonCoMaVanDon("ORD-EVT", "TRACK-EVT", null);
+        long moc = kioskEventService.latestSeq();
+
+        // 1. Quét QR shipper hợp lệ → SHIPPER_VERIFIED. Token phải CHƯA quét (is_verified=false).
+        taoTokenChuaQuet("SHIP-EVT-1");
+        publish("ptit/qr/shipper",
+                "{\"locker_id\":\"Tu_1\",\"qr\":\"SHIP-EVT-1\"}");
+
+        // 2. Quét mã vận đơn của đơn CHƯA đặt trước → ORDER_VALID reserved=false.
+        publish("ptit/qr/order",
+                "{\"locker_id\":\"Tu_1\",\"qr\":\"TRACK-EVT\"}");
+
+        List<KioskEvent> suKien = suKienSau(moc);
+        List<String> loai = suKien.stream().map(KioskEvent::getType).collect(Collectors.toList());
+
+        assertTrue(loai.contains(KioskEventService.SHIPPER_VERIFIED),
+                "Quét QR shipper hợp lệ phải ghi SHIPPER_VERIFIED; thực tế: " + loai);
+        assertTrue(loai.contains(KioskEventService.ORDER_VALID),
+                "Quét mã vận đơn hợp lệ (chưa đặt trước + đã có phiên shipper) phải ghi ORDER_VALID; "
+                        + "thực tế: " + loai);
+
+        KioskEvent orderValid = suKien.stream()
+                .filter(e -> KioskEventService.ORDER_VALID.equals(e.getType()))
+                .reduce((a, b) -> b)
+                .orElseThrow();
+        assertEquals(Boolean.FALSE, orderValid.getReserved(),
+                "Đơn chưa đặt trước phải báo reserved=false để web hiện 'chọn ngăn trên màn hình tủ'");
+        assertEquals(don.getOrderId(), orderValid.getOrderId());
+        assertEquals("TRACK-EVT", orderValid.getTrackingCode());
     }
 }
