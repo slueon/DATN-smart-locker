@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import LockerMap from './LockerMap';
 import CircularTimer from './CircularTimer';
@@ -42,6 +42,24 @@ export default function CustomerPickupTab({ currentUser }) {
   // GĐ20 — mốc `seq` sự kiện Kiosk đã xử lý. `null` = chưa hỏi lần nào, lần poll đầu chỉ lấy
   // `latestSeq` để KHÔNG phát lại modal của lần trước.
   const [kioskSeq, setKioskSeq] = useState(null);
+
+  /**
+   * GĐ32 — thông tin popup "Lấy hàng thành công". `null` = không hiện.
+   *
+   * <p>Dùng POPUP có nút đóng chứ không phải toast 4 giây (điều cấm #3 của thẻ): user nói rõ
+   * "sau khi đơn hàng được lấy và đóng tủ hãy pop up thông báo lấy hàng thành công", và trước đây
+   * phải F5 mới thấy dữ liệu mới.
+   */
+  const [pickupDoneInfo, setPickupDoneInfo] = useState(null);
+
+  /**
+   * GĐ32 — các đơn CHÍNH PHIÊN NÀY đã từng ở trong tủ (`DEPOSITED`/`PICKUP_OPENED`).
+   *
+   * <p>Cần để poll tiếp được sau khi đơn chuyển `COMPLETED` (bắt sự kiện `PICKUP_SUCCESS`), mà
+   * KHÔNG poll vô hạn trên những đơn đã hoàn tất từ trước — xem effect poll bên dưới.
+   * `useRef` vì đây là bộ nhớ phụ, không cần render lại.
+   */
+  const daThayTrongTuRef = useRef(new Set());
 
   /**
    * GĐ26 — các `seq` sự kiện Kiosk đã tạo thông báo rồi.
@@ -378,27 +396,55 @@ export default function CustomerPickupTab({ currentUser }) {
 
   // GĐ5 — đọc cảm biến của ngăn chứa đơn đang xem, để hiển thị đúng cân nặng thật.
   // Chỉ đọc khi đơn đã có ngăn; đơn chưa nạp tủ thì không có gì để đọc.
-  useEffect(() => {
-    const lockerId = selectedOrder?.lockerId;
-    const compIndex = selectedOrder?.compartmentIndex;
+  //
+  // GĐ29 — TÁCH hàm đọc ra khỏi effect để gọi lại được theo nhịp, và **thêm `status`** vào state.
+  // Lý do: effect cũ chỉ phụ thuộc `[lockerId, compartmentIndex]`; sau khi shipper nạp hàng hai giá
+  // trị đó KHÔNG đổi nên effect không chạy lại, `compartmentSensor` giữ `status='EMPTY'`,
+  // `weight=0` ⇒ sơ đồ đứng yên ở "Ngăn Trống". Ngoài ra `LockerCabinetVisualizer` chưa từng nhận
+  // `status` của ngăn (xem chỗ truyền prop bên dưới) nên nhãn không có đường nào đúng.
+  const docCamBien = useCallback(async (lockerId, compIndex) => {
     if (!lockerId || compIndex == null) {
       setCompartmentSensor(null);
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await lockerApi.getCompartments(lockerId);
-        if (cancelled) return;
-        const comp = (res?.data?.data || []).find((c) => c.compIndex === compIndex);
-        setCompartmentSensor(comp || null);
-      } catch {
-        if (!cancelled) setCompartmentSensor(null); // mất mạng thì để trống, không bịa số
-      }
-    })();
-    return () => { cancelled = true; };
+    try {
+      const res = await lockerApi.getCompartments(lockerId);
+      const comp = (res?.data?.data || []).find((c) => c.compIndex === compIndex);
+      setCompartmentSensor(comp || null);
+    } catch {
+      // mất mạng thì để trống, không bịa số (điều cấm #2)
+      setCompartmentSensor(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    docCamBien(selectedOrder?.lockerId, selectedOrder?.compartmentIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrder?.lockerId, selectedOrder?.compartmentIndex]);
+
+  /**
+   * GĐ29 — ĐỌC LẠI CẢM BIẾN ĐỊNH KỲ KHI ĐƠN ĐANG Ở TRONG TỦ.
+   *
+   * <p>Nhịp 1,5 giây, cùng nhịp với poll Kiosk bên dưới (không tạo nhịp rời rạc mới — điều cấm #5).
+   *
+   * <p>Chỉ chạy khi đơn đang xem là {@code DEPOSITED}: lúc đó trạng thái ngăn và số cân mới còn
+   * thay đổi (shipper vừa nạp, khách vừa mở cửa lấy). Đơn {@code COMPLETED}/{@code CANCELLED}
+   * không có gì để theo dõi nên KHÔNG poll — đây là điều cấm #3 (không rò interval/request).
+   */
+  useEffect(() => {
+    const lockerId = selectedOrder?.lockerId;
+    const compIndex = selectedOrder?.compartmentIndex;
+    const orderStatus = selectedOrder?.status;
+    if (!lockerId || compIndex == null) return undefined;
+    if (orderStatus !== 'DEPOSITED') return undefined;
+
+    const timer = setInterval(() => {
+      docCamBien(lockerId, compIndex);
+    }, 1500);
+
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrder?.lockerId, selectedOrder?.compartmentIndex, selectedOrder?.status]);
 
   /**
    * GĐ20 — tự mở modal QR/OTP khi khách chọn cách nhận trên MÀN HÌNH TỦ.
@@ -420,7 +466,24 @@ export default function CustomerPickupTab({ currentUser }) {
   useEffect(() => {
     const lockerId = selectedOrder?.lockerId;
     const orderStatus = selectedOrder?.status;
-    if (!lockerId || orderStatus !== 'DEPOSITED') return undefined;
+    const orderId = selectedOrder?.orderId;
+
+    // GĐ32 — GHI NHỚ đơn nào đã từng "ở trong tủ" trong phiên này.
+    //
+    // Lý do: khi khách lấy hàng xong, đơn đổi sang `COMPLETED`. Nếu điều kiện poll chỉ nhận
+    // `DEPOSITED`/`PICKUP_OPENED` thì poll TẮT ngay đúng lúc sự kiện `PICKUP_SUCCESS` vừa được bắn
+    // → popup "Lấy hàng thành công" không bao giờ hiện, và khách lại phải F5 (đúng lỗi user báo).
+    //
+    // Nhưng KHÔNG thể poll mọi trạng thái: mở tab trên một đơn đã `COMPLETED` từ trước sẽ gọi API
+    // mãi (vi phạm phép thử 6 của GĐ29: đơn không còn hoạt động phải có 0 request).
+    // Vì vậy chỉ giữ poll thêm cho những đơn CHÍNH PHIÊN NÀY đã thấy ở trạng thái có hàng.
+    if (orderId && (orderStatus === 'DEPOSITED' || orderStatus === 'PICKUP_OPENED')) {
+      daThayTrongTuRef.current.add(orderId);
+    }
+    const conChoChot = orderId && daThayTrongTuRef.current.has(orderId);
+
+    if (!lockerId) return undefined;
+    if (orderStatus !== 'DEPOSITED' && orderStatus !== 'PICKUP_OPENED' && !conChoChot) return undefined;
 
     let cancelled = false;
 
@@ -460,6 +523,48 @@ export default function CustomerPickupTab({ currentUser }) {
               isRead: false,
             });
           }
+        }
+
+        // GĐ32 — KHÁCH ĐÃ LẤY HÀNG XONG.
+        //
+        // Backend bắn `PICKUP_SUCCESS` ở chỗ CHỐT (khi cảm biến xác nhận hàng đã ra), không phải
+        // lúc mở cửa — nên sự kiện này là bằng chứng đáng tin để hiện popup "Lấy hàng thành công".
+        //
+        // Ba việc phải làm, đúng thứ tự:
+        //  1. `loadOrders()` — đọc lại danh sách THẬT từ API (điều cấm #1: không tự sửa state).
+        //  2. Hiện POPUP có nút đóng (điều cấm #3: không phải toast 4 giây).
+        //  3. Reset lựa chọn: đóng modal QR/OTP, bỏ chọn đơn vừa nhận, xoá cảm biến.
+        // Chống trùng bằng `processedKioskSeqRef` (điều cấm #4) — poll 1,5 giây sẽ gặp lại sự kiện.
+        const pickDone = [...events]
+          .reverse()
+          .find((e) => e.type === 'PICKUP_SUCCESS'
+            && (!e.lockerId || e.lockerId === lockerId)
+            && !processedKioskSeqRef.current.has(e.seq));
+
+        if (pickDone) {
+          processedKioskSeqRef.current.add(pickDone.seq);
+          const doneOrderId = pickDone.orderId || selectedOrder?.orderId || null;
+          const doneOrder = orders.find((o) => o.orderId === doneOrderId) || selectedOrder;
+
+          await loadOrders();
+          setPickupDoneInfo({
+            orderId: doneOrderId,
+            compartmentIndex: pickDone.compartment ?? doneOrder?.compartmentIndex ?? null,
+            at: new Date(),
+          });
+          setQrModalOrder(null);
+          setOtpModalOrder(null);
+          setCompartmentSensor(null);
+          setSelectedOrderId(null);
+
+          store.addNotification({
+            type: 'PICKUP_SUCCESS',
+            orderId: doneOrderId,
+            title: 'Lấy hàng thành công',
+            message: `Kiện hàng${doneOrder?.productName ? ` "${doneOrder.productName}"` : ''} đã được lấy khỏi tủ.`,
+            phone: doneOrder?.customerPhone || currentUser?.phone,
+            isRead: false,
+          });
         }
 
         // Luôn cập nhật mốc, kể cả khi không có sự kiện — nếu chỉ cập nhật khi có sự kiện thì
@@ -543,6 +648,16 @@ export default function CustomerPickupTab({ currentUser }) {
         return (
           <span className="bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-slate-500" /> Đã nhận thành công
+          </span>
+        );
+      // GĐ31a — trạng thái TRUNG GIAN: khách đã xác thực mã và cửa đang/đã mở nhưng hệ thống
+      // CHƯA chốt là hàng đã ra (chờ cảm biến). Phải có nhãn riêng, nếu không badge sẽ trắng và
+      // khách không hiểu vì sao đơn không còn ở "Đã về tủ" mà cũng chưa "Đã nhận".
+      case 'PICKUP_OPENED':
+        return (
+          <span className="bg-sky-50 text-sky-800 border border-sky-200 text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 shadow-2xs">
+            <span className="w-2 h-2 rounded-full bg-sky-500 inline-block animate-pulse" />
+            Đang mở tủ để lấy hàng
           </span>
         );
       case 'OVERDUE':
@@ -808,7 +923,9 @@ export default function CustomerPickupTab({ currentUser }) {
               )}
 
               {/* Action Buttons if Ready to Pickup */}
-              {selectedOrder.status === 'DEPOSITED' && (
+              {/* GĐ31a — `PICKUP_OPENED` = khách đã mở cửa nhưng hệ thống chưa chốt là hàng đã ra.
+                  Vẫn phải hiện nút mở lại bằng CHÍNH mã cũ: đây đúng là ca khách quên lấy hàng. */}
+              {(selectedOrder.status === 'DEPOSITED' || selectedOrder.status === 'PICKUP_OPENED') && (
                 <div className="p-5 rounded-3xl liquid-glass-subtle border border-white/80 space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider block">
@@ -990,6 +1107,24 @@ export default function CustomerPickupTab({ currentUser }) {
                   lockerName={selectedOrder.lockerName || 'Trạm Tủ KTX A1'}
                   lockerId={selectedOrder.lockerId || 'LOCKER_HN_01'}
                   activeSlotId={selectedOrder.compartmentIndex || 2}
+                  // GĐ29 — TRUYỀN TRẠNG THÁI THẬT CỦA NGĂN.
+                  //
+                  // Trước GĐ29 prop này không được truyền ⇒ `LockerCabinetVisualizer:46` rơi về
+                  // `defaultSlots` (`status: 'AVAILABLE'`) nên nhãn luôn "Ngăn Trống" dù ngăn đã
+                  // `OCCUPIED`. Chỉ truyền khi đã đọc được cảm biến; chưa có thì `null` để component
+                  // dùng mặc định — KHÔNG tự đoán trạng thái (điều cấm #1).
+                  compartments={
+                    compartmentSensor?.status != null && compartmentSensor?.compIndex != null
+                      ? [{
+                          id: compartmentSensor.compIndex,
+                          status: compartmentSensor.status,
+                          weight: compartmentSensor.currentWeight != null
+                            ? Number(compartmentSensor.currentWeight) / 1000
+                            : 0,
+                          door: compartmentSensor.isDoorClosed === false ? 'OPEN' : 'CLOSED',
+                        }]
+                      : null
+                  }
                   doorState={compartmentSensor?.isDoorClosed != null
                     ? (compartmentSensor.isDoorClosed ? 'CLOSED' : 'OPEN')
                     : 'CLOSED'}
@@ -1103,6 +1238,61 @@ export default function CustomerPickupTab({ currentUser }) {
       )}
 
       {/* OTP Modal (Hiệu lực 5 phút) với CircularTimer */}
+      {/* GĐ32 — POPUP "LẤY HÀNG THÀNH CÔNG" (có nút đóng, KHÔNG tự tắt — điều cấm #3).
+          Hiện khi backend bắn `PICKUP_SUCCESS` ở chỗ chốt (cảm biến xác nhận hàng đã ra). */}
+      {pickupDoneInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-xl p-4 animate-in fade-in duration-200">
+          <div className="liquid-glass-card rounded-[28px] max-w-sm w-full p-6 text-center shadow-2xl relative border border-white/90 animate-in zoom-in-95 duration-200">
+            <button
+              onClick={() => setPickupDoneInfo(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer p-1.5 rounded-xl hover:bg-slate-100 transition"
+              aria-label="Đóng"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-emerald-200 shadow-2xs">
+              <CheckCircle2 className="w-7 h-7" />
+            </div>
+
+            <h3 className="text-base font-extrabold text-slate-900">Lấy hàng thành công</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Kiện hàng đã được lấy khỏi tủ và đơn đã hoàn tất.
+            </p>
+
+            <div className="mt-4 p-3 rounded-2xl bg-slate-50/80 border border-slate-200 text-left space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500 font-medium">Mã đơn</span>
+                <span className="font-mono font-bold text-slate-900">
+                  {pickupDoneInfo.orderId || '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500 font-medium">Ngăn</span>
+                <span className="font-bold text-slate-900">
+                  {pickupDoneInfo.compartmentIndex != null
+                    ? `#${pickupDoneInfo.compartmentIndex}`
+                    : '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500 font-medium">Thời điểm</span>
+                <span className="font-bold text-slate-900">
+                  {pickupDoneInfo.at ? pickupDoneInfo.at.toLocaleTimeString('vi-VN') : '—'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setPickupDoneInfo(null)}
+              className="mt-5 w-full py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold cursor-pointer transition shadow-md shadow-emerald-600/20 active:scale-95"
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
+
       {otpModalOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-xl p-4 animate-in fade-in duration-200">
           <div className="liquid-glass-card rounded-[28px] max-w-sm w-full p-6 text-center shadow-2xl relative border border-white/90 animate-in zoom-in-95 duration-200">

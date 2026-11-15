@@ -225,7 +225,12 @@ public class LockerService {
                         "Không tìm thấy tủ với mã: " + lockerId));
 
         if (lock) {
-            List<Order> pending = orderRepository.findByLocker_LockerIdAndStatus(lockerId, "PENDING");
+            // GĐ31b — gộp cả `PENDING_OPENED`: đơn đang trong phiên nạp (shipper vừa mở cửa) cũng
+            // là đơn chưa nạp xong. Chỉ lọc `PENDING` thì admin khoá được tủ đúng lúc shipper đang
+            // đứng ở tủ, hàng đã cầm trên tay mà không nạp được.
+            List<Order> pending = new java.util.ArrayList<>(
+                    orderRepository.findByLocker_LockerIdAndStatus(lockerId, "PENDING"));
+            pending.addAll(orderRepository.findByLocker_LockerIdAndStatus(lockerId, "PENDING_OPENED"));
             if (!pending.isEmpty()) {
                 String ids = pending.stream().map(Order::getOrderId).collect(java.util.stream.Collectors.joining(", "));
                 throw new com.ptit.smartlocker.exception.BusinessException(

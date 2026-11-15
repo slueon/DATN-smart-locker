@@ -44,12 +44,31 @@ async function viteUp() {
   return r.ok && r.status === 200;
 }
 
+/**
+ * Dòng "Kết nối MQTT Broker thành công tại: …" trong log backend GẦN NHẤT.
+ *
+ * <p><b>SỬA GĐ31a (minh bắt được):</b> bản cũ đọc cứng `backend-run.log` — file đó là bản **cũ từ
+ * 13/11**, nên `status` luôn in "chưa thấy log kết nối" dù MQTT đang chạy thật. Minh suýt bỏ toàn bộ
+ * phép thử MQTT vì tin dòng này (nó kiểm chéo: publish thử thì `device_events` tăng sau 0,7 giây).
+ *
+ * <p>Nay đọc file mới nhất trong `scripts/evidence/` khớp `backend*.log` — chọn theo `mtime`, nên
+ * đúng cả khi dùng `run-logged.ps1` (ghi `backend-live.log`) hay `devctl up` (không ghi log).
+ */
 async function mqttLine() {
-  const log = path.join(EVIDENCE, 'backend-run.log');
-  if (!fs.existsSync(log)) return null;
-  const txt = fs.readFileSync(log, 'utf8');
-  const m = txt.match(/Kết nối MQTT Broker thành công tại: (\S+)/g);
-  return m ? m[m.length - 1].replace('Kết nối MQTT Broker thành công tại: ', '') : null;
+  const candidates = fs
+    .readdirSync(EVIDENCE)
+    .filter((f) => /^backend.*\.log$/.test(f))
+    .map((f) => ({ f, mtime: fs.statSync(path.join(EVIDENCE, f)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  for (const { f } of candidates) {
+    const txt = fs.readFileSync(path.join(EVIDENCE, f), 'utf8');
+    const m = txt.match(/Kết nối MQTT Broker thành công tại: (\S+)/g);
+    if (m) {
+      return m[m.length - 1].replace('Kết nối MQTT Broker thành công tại: ', '') + '  (' + f + ')';
+    }
+  }
+  return null;
 }
 
 function portsListening() {

@@ -107,6 +107,11 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     weight: null,       // kg — null = chưa đọc được
     doorClosed: null,   // true/false — null = chưa có bản tin
     updatedAt: null,    // thời điểm đọc được lần cuối
+    // GĐ29 — trạng thái THẬT của ngăn + chỉ số ngăn. Trước GĐ29 hai field này không tồn tại nên
+    // sơ đồ ngăn tủ không có đường nào nhận `status`: `LockerCabinetVisualizer` rơi về
+    // `defaultSlots` (`status: 'AVAILABLE'`) và luôn hiện "Ngăn Trống" dù DB đã `OCCUPIED`.
+    status: null,       // EMPTY/OCCUPIED/RESERVED/OUT_OF_SERVICE — null = chưa đọc được
+    compIndex: null,    // ngăn đang đọc; đổi ngăn phải đọc lại, không giữ số của ngăn cũ
   });
 
   // Âm thanh Bíp nhận diện mã vạch của đầu đọc GM65
@@ -449,7 +454,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       const list = res?.data?.data || [];
       const comp = list.find((c) => c.compIndex === compIndex);
       if (!comp) {
-        setSensor({ weight: null, doorClosed: null, updatedAt: null });
+        setSensor({ weight: null, doorClosed: null, updatedAt: null, status: null, compIndex: null });
         return null;
       }
       const data = {
@@ -457,6 +462,9 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         weight: comp.currentWeight != null ? Number(comp.currentWeight) / 1000 : 0,
         doorClosed: comp.isDoorClosed != null ? Boolean(comp.isDoorClosed) : null,
         updatedAt: new Date(),
+        // GĐ29 — trạng thái thật của ngăn, để sơ đồ hiện đúng nhãn ("Đang Có Hàng" sau khi nạp).
+        status: comp.status || null,
+        compIndex: comp.compIndex != null ? comp.compIndex : null,
       };
       setSensor(data);
       return data;
@@ -669,6 +677,14 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         text: res?.data?.message || `Đã gửi kiện hàng ${order.orderId} vào ngăn.`,
       });
       await loadOrders();
+      // GĐ29 — ĐỌC LẠI CẢM BIẾN NGAY SAU KHI NẠP XONG.
+      //
+      // Trước GĐ29 chỗ này chỉ `await loadOrders()`. Poll cảm biến (`:711`) chỉ chạy khi
+      // `isDepositing && depositStep 2..4`, tức TRƯỚC lúc nạp; nạp xong là poll tắt, nên `sensor`
+      // giữ snapshot cũ (`status` chưa có, cân = 0) và sơ đồ đứng yên ở "Ngăn Trống".
+      // Backend đã ghi `compartments.status = 'OCCUPIED'` + `current_weight` trong cùng request,
+      // nên đọc lại ngay là thấy giá trị mới.
+      await loadCompartmentSensor(order.lockerId, order.compartmentIndex);
     } catch (err) {
       setReserveMessage({
         type: 'error',
@@ -679,8 +695,11 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     }
   };
 
-  const pendingOrders = orders.filter((o) => o.status === 'PENDING');
-  const depositedOrders = orders.filter((o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED');
+  // GĐ31b — `PENDING_OPENED` = đơn đang trong phiên nạp (cửa đã mở). Vẫn phải hiện trong danh
+  // sách chờ nạp, nếu không shipper mở cửa xong là đơn biến mất và không chốt được.
+  const pendingOrders = orders.filter((o) => o.status === 'PENDING' || o.status === 'PENDING_OPENED');
+  const depositedOrders = orders.filter((o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED'
+    || o.status === 'PICKUP_OPENED');
   const overdueOrders = orders.filter((o) => o.status === 'OVERDUE');
 
   const filteredPending = pendingOrders.filter((o) => {
@@ -703,17 +722,37 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrder?.orderId, activeOrder?.lockerId, activeOrder?.compartmentIndex]);
 
+  // GĐ29 — ĐỌC CẢM BIẾN NGAY KHI CHỌN ĐƠN / ĐỔI NGĂN.
+  //
+  // Trước GĐ29 cảm biến chỉ được đọc (a) trước khi gửi hàng, (b) trong lúc nạp (step 2..4) và
+  // (c) sau GĐ29 là sau khi nạp xong. Chỉ CHỌN đơn để xem thì không đọc gì ⇒ `sensor.status` null
+  // ⇒ sơ đồ rơi về mặc định "Ngăn Trống". Đọc ở đây để sơ đồ phản ánh trạng thái thật của ngăn
+  // ngay khi mở đơn, và đọc lại khi đổi sang ngăn khác (không giữ số của ngăn cũ).
+  useEffect(() => {
+    loadCompartmentSensor(activeOrder?.lockerId, activeOrder?.compartmentIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrder?.lockerId, activeOrder?.compartmentIndex]);
+
   // GĐ5-A1/A2 — POLL cảm biến thật mỗi 2 giây trong lúc shipper đang nạp hàng.
   //
-  // Chỉ poll khi đang ở bước 2..4 (đã mở cửa → đặt hàng → kiểm cảm biến), vì đó là lúc số cân
-  // và trạng thái cửa thực sự thay đổi. Tắt poll ở bước khác để không gọi API vô ích.
+  // GĐ29 — MỞ RỘNG: poll cả khi đơn đang xem đã `DEPOSITED`.
+  //
+  // Lý do: luồng nạp hàng thật có thể xảy ra ở phía TỦ/thiết bị (firmware báo `deposit_success`),
+  // không nhất thiết do chính nút trên web này bấm. Nếu chỉ đọc lại sau `depositPackage` của
+  // chính component thì khi hàng vào tủ bằng đường khác, sơ đồ vẫn đứng ở snapshot cũ. Poll khi
+  // đơn đã nằm trong tủ bảo đảm sơ đồ luôn khớp DB; đơn `COMPLETED`/`CANCELLED` thì KHÔNG poll
+  // (không có gì thay đổi) — điều cấm #3.
+  //
+  // Chỉ poll khi đang ở bước 2..4 hoặc đơn đã `DEPOSITED`, vì đó là lúc số cân và trạng thái cửa
+  // thực sự thay đổi. Tắt poll ở bước khác để không gọi API vô ích.
   // Có cleanup `clearInterval` — thiếu nó thì chuyển tab xong vẫn tiếp tục gọi API mãi.
   useEffect(() => {
     const compIndex = activeOrder?.compartmentIndex;
     if (!activeOrder?.lockerId || compIndex == null) return undefined;
 
-    const shouldPoll = isDepositing && depositStep >= 2 && depositStep <= 4;
-    if (!shouldPoll) return undefined;
+    const dangNap = isDepositing && depositStep >= 2 && depositStep <= 4;
+    const daNapXong = String(activeOrder?.status || '').toUpperCase() === 'DEPOSITED';
+    if (!dangNap && !daNapXong) return undefined;
 
     // Đọc ngay 1 lần rồi mới hẹn chu kỳ, để UI không trống 2 giây đầu.
     loadCompartmentSensor(activeOrder.lockerId, compIndex);
@@ -723,7 +762,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
 
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrder?.lockerId, activeOrder?.compartmentIndex, isDepositing, depositStep]);
+  }, [activeOrder?.lockerId, activeOrder?.compartmentIndex, activeOrder?.status, isDepositing, depositStep]);
 
   /**
    * GĐ17 — POLL sự kiện Kiosk của tủ thật mỗi 1,5 giây.
@@ -1418,6 +1457,22 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   lockerName={activeOrder.lockerName}
                   lockerId={activeOrder.lockerId}
                   activeSlotId={activeOrder.compartmentIndex}
+                  // GĐ29 — TRUYỀN TRẠNG THÁI THẬT CỦA NGĂN.
+                  //
+                  // Trước GĐ29 prop này không được truyền, nên `LockerCabinetVisualizer:46` rơi về
+                  // `defaultSlots` với `status: 'AVAILABLE'` ⇒ nhãn luôn là "Ngăn Trống" dù DB đã
+                  // `OCCUPIED`. Chỉ truyền khi ĐÃ đọc được cảm biến của ĐÚNG ngăn đang xem; chưa có
+                  // dữ liệu thì để `null` cho component dùng mặc định (không bịa trạng thái).
+                  compartments={
+                    sensor.status != null && sensor.compIndex === activeOrder.compartmentIndex
+                      ? [{
+                          id: sensor.compIndex,
+                          status: sensor.status,
+                          weight: sensor.weight != null ? sensor.weight : 0,
+                          door: sensor.doorClosed === false ? 'OPEN' : 'CLOSED',
+                        }]
+                      : null
+                  }
                   // GĐ5-A2 — CẢM BIẾN CỬA THẬT (MC-38) từ `isDoorClosed`.
                   //
                   // Chọn phương án (b) của thẻ: dùng dữ liệu thật, FALLBACK theo bước UI khi

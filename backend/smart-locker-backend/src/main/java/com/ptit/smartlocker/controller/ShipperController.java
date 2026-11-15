@@ -61,16 +61,19 @@ public class ShipperController {
     /**
      * Shipper quét mã vận đơn kiện hàng và hoàn tất gửi đồ vào tủ
      * Có tích hợp kiểm tra cảm biến kép: Công tắc từ MC-38 và Cảm biến cân nặng HX711
+     *
+     * <p><b>GĐ28 — không {@code catch} tại đây nữa.</b> Trước đây khối {@code catch (Exception e)}
+     * biến MỌI lỗi thành 400, nên chốt chặn "tủ đang bảo trì" (ném {@code BusinessException})
+     * cũng ra 400 và client không phân biệt được "tủ đang bảo trì" với "request sai cú pháp".
+     * Bỏ catch thì {@code GlobalExceptionHandler} ánh xạ đúng: {@code BusinessException} → 409,
+     * {@code IllegalArgumentException}/{@code RuntimeException} → 400 như cũ. Giống cách
+     * {@code PickupController} đã làm.
      */
     @PostMapping("/deposit")
     public ResponseEntity<ApiResponse<ShipperDTO.DepositResponse>> depositPackage(
             @RequestBody ShipperDTO.DepositPackageRequest request) {
-        try {
-            ShipperDTO.DepositResponse response = shipperService.depositPackage(request);
-            return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        ShipperDTO.DepositResponse response = shipperService.depositPackage(request);
+        return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
     }
 
     /**

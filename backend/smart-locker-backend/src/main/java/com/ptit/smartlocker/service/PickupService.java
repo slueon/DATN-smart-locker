@@ -38,6 +38,20 @@ public class PickupService {
     private final CompartmentRepository compartmentRepository;
     private final LockerSlotScheduleRepository slotScheduleRepository;
 
+    /**
+     * GĐ32 — bắn sự kiện cho web khách khi đơn chốt {@code COMPLETED}.
+     *
+     * <p>{@code required = false}: giữ nguyên khả năng khởi động khi service này không có mặt
+     * (giống cách {@code mqttService} đang được inject), và các test cũ dựng service trực tiếp
+     * không phải sửa constructor.
+     */
+    @Autowired(required = false)
+    private KioskEventService kioskEventService;
+
+    /** GĐ32 — chống trùng: mỗi đơn chỉ bắn 1 sự kiện, dù cả 2 đường cùng chốt. */
+    private final java.util.Set<String> daBaoPickupSuccess =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     @Autowired(required = false)
     @Lazy
     private MqttService mqttService;
@@ -161,8 +175,14 @@ public class PickupService {
         }
 
         // 4. Kiểm tra trạng thái đơn hàng
+        //
+        // GĐ31a — `PICKUP_OPENED` là trạng thái TRUNG GIAN: khách đã xác thực mã và cửa đang/đã
+        // mở nhưng CHƯA chốt là hàng đã ra. Phải cho đi tiếp (và cho phép mở lại bằng chính mã cũ)
+        // — nếu chặn như trước thì đúng ca lỗi user hỏi: quên lấy hàng, đóng cửa, và không còn
+        // đường nào mở lại.
         Order order = credential.getOrder();
-        if (!"DEPOSITED".equalsIgnoreCase(order.getStatus())) {
+        boolean dangMoNhan = "PICKUP_OPENED".equalsIgnoreCase(order.getStatus());
+        if (!"DEPOSITED".equalsIgnoreCase(order.getStatus()) && !dangMoNhan) {
             if ("PENDING".equalsIgnoreCase(order.getStatus())) {
                 throw new BusinessException("Kiện hàng chưa được nhân viên giao nạp vào tủ! Vui lòng chờ thông báo.");
             }
@@ -175,24 +195,50 @@ public class PickupService {
             throw new BusinessException("Đơn hàng không ở trạng thái sẵn sàng để lấy đồ (Trạng thái: " + order.getStatus() + ")!");
         }
 
-        // 5. Xác thực thành công: Reset số lần thử sai, cập nhật trạng thái đơn và giải phóng ngăn tủ
+        // 5. Xác thực thành công.
+        //
+        // GĐ31a — ĐÂY LÀ CHỖ SỬA CHÍNH CỦA TH2 (khách quên lấy hàng).
+        //
+        // Trước GĐ31a, hàm này chốt dứt điểm ngay khi mã khớp: `isUsed = true` (mã cũ vô hiệu VĨNH
+        // VIỄN), đơn `COMPLETED`, ngăn `EMPTY` — KHÔNG đọc cảm biến. Nếu khách quên hàng:
+        //   1. ngăn thành EMPTY ⇒ hệ thống cấp cho đơn khác ⇒ hai đơn một ngăn;
+        //   2. mã cũ không dùng lại được;
+        //   3. đơn COMPLETED nên `generateNewOtp` cũng chặn ⇒ khách MẤT HÀNG, không đường tự lấy lại.
+        //
+        // Nay chỉ mở phiên nhận: đơn sang `PICKUP_OPENED`, ngăn VẪN `OCCUPIED`, `isUsed` VẪN 0,
+        // và chỉ ghi `usedAt` để biết lần mở gần nhất. Trạng thái cuối do luồng chốt theo cảm biến
+        // quyết định (xem `MqttService.chotPhienLayHang`): hàng đã ra thật thì mới COMPLETED +
+        // isUsed=true; còn hàng thì quay về DEPOSITED và mã cũ dùng lại được.
         credential.setFailedAttempts(0);
-        credential.setIsUsed(true);
         credential.setUsedAt(LocalDateTime.now());
         credentialRepository.save(credential);
 
         clearLockerFailure(lockerId);
 
-        order.setStatus("COMPLETED");
-        orderRepository.save(order);
+        // `dangMoNhan` = đang mở lại bằng chính mã cũ ⇒ giữ nguyên phiên, chỉ gia hạn `usedAt`.
+        if (!dangMoNhan) {
+            order.setStatus("PICKUP_OPENED");
+            orderRepository.save(order);
+        }
 
         Compartment compartment = order.getCompartment();
-        if (compartment != null) {
-            // Khách đã lấy hàng: giải phóng trạng thái chiếm dụng. Cân nặng thật do HX711 báo
-            // qua MqttService.handleCompartmentStatus — không tự đặt 0 ở đây.
-            compartment.setStatus("EMPTY");
-            compartmentRepository.save(compartment);
-        }
+
+        // GĐ31a — KHÔNG chốt `COMPLETED` / không đặt ngăn `EMPTY` / không `isUsed = true` ở đây.
+        //
+        // Trạng thái cuối do luồng CẢM BIẾN quyết định (`MqttService.chotPhienLayHang`), vì chỉ
+        // cảm biến mới biết khách có thật sự lấy hàng hay không:
+        //   • cửa đóng + weight ≈ 0 + ir = 0  → COMPLETED + ngăn EMPTY + isUsed = true;
+        //   • cửa đóng mà CÒN HÀNG             → về DEPOSITED + mã cũ dùng lại được.
+        // Đây chính là điều cấm #1/#2 của thẻ.
+
+        // GĐ32 — BẮN SỰ KIỆN "ĐÃ MỞ NGĂN ĐỂ LẤY HÀNG".
+        //
+        // Lưu ý: đây là sự kiện "đã mở cửa", KHÔNG phải "lấy hàng thành công". Sự kiện
+        // `PICKUP_SUCCESS` chỉ được bắn ở chỗ CHỐT (khi cảm biến xác nhận hàng đã ra) — xem
+        // `MqttService.chotPhienLayHang`. Nếu bắn PICKUP_SUCCESS ở đây thì khách thấy popup
+        // "thành công" trong khi hàng còn trong tủ (đúng ràng buộc của thẻ GĐ32).
+        log.info("Mở phiên nhận hàng cho đơn {} tại tủ {} ngăn {} — chờ cảm biến xác nhận",
+                order.getOrderId(), lockerId, compartment != null ? compartment.getCompIndex() : "N/A");
 
         // Tự động giải phóng slot khả dụng trên lịch biểu ngày hôm nay
         if (order.getLocker() != null) {
@@ -227,6 +273,87 @@ public class PickupService {
     }
 
     /**
+     * GĐ31a — CHỐT PHIÊN LẤY HÀNG THEO CẢM BIẾN.
+     *
+     * <p>Gọi từ {@code MqttService} khi cửa ngăn ĐÓNG và ngăn đang thuộc một đơn ở trạng thái
+     * {@code PICKUP_OPENED}. Đây là chỗ DUY NHẤT được chốt {@code COMPLETED} — thay cho việc chốt
+     * ngay lúc mã khớp (lỗi TH2: khách quên hàng thì mất hàng).
+     *
+     * <p><b>Luật chốt:</b>
+     * <ul>
+     *   <li>Còn hàng ({@code conHang == true}) → đơn quay về {@code DEPOSITED}, ngăn vẫn
+     *       {@code OCCUPIED}, {@code isUsed = false}, {@code usedAt = null} ⇒ khách mở lại được bằng
+     *       CHÍNH mã cũ.</li>
+     *   <li>Hết hàng → {@code COMPLETED}, ngăn {@code EMPTY}, {@code isUsed = true}.</li>
+     * </ul>
+     *
+     * @return {@code true} nếu đã chốt hết hàng (COMPLETED), {@code false} nếu còn hàng (quay về
+     *         DEPOSITED) hoặc không có đơn nào đang mở phiên.
+     */
+    @Transactional
+    public boolean chotPhienLayHang(Order order, Compartment compartment, boolean conHang) {
+        if (order == null || !"PICKUP_OPENED".equalsIgnoreCase(order.getStatus())) {
+            return false;
+        }
+
+        credentialRepository.findByOrder_OrderId(order.getOrderId()).ifPresent(cred -> {
+            if (!conHang) {
+                cred.setIsUsed(true);
+                cred.setUsedAt(LocalDateTime.now());
+            } else {
+                // Còn hàng ⇒ mở lại được bằng đúng mã cũ: KHÔNG đánh dấu đã dùng.
+                cred.setIsUsed(false);
+                cred.setUsedAt(null);
+            }
+            credentialRepository.save(cred);
+        });
+
+        if (conHang) {
+            order.setStatus("DEPOSITED");
+            orderRepository.save(order);
+            if (compartment != null) {
+                compartment.setStatus("OCCUPIED");
+                compartmentRepository.save(compartment);
+            }
+            log.info("Khách CHƯA lấy hết hàng ở đơn {} — đơn về DEPOSITED, mã cũ dùng lại được",
+                    order.getOrderId());
+            if (kioskEventService != null && order.getLocker() != null) {
+                kioskEventService.record(order.getLocker().getLockerId(), "PICKUP_LEFT_BEHIND",
+                        order.getOrderId(), order.getTrackingCode(),
+                        compartment != null ? compartment.getCompIndex() : null, null,
+                        "Bạn chưa lấy kiện hàng — cửa đã đóng nhưng hàng vẫn trong tủ. Bấm để mở lại.");
+            }
+            return false;
+        }
+
+        order.setStatus("COMPLETED");
+        orderRepository.save(order);
+        if (compartment != null) {
+            compartment.setStatus("EMPTY");
+            compartmentRepository.save(compartment);
+        }
+        log.info("Khách đã lấy hàng xong đơn {} — COMPLETED, ngăn EMPTY", order.getOrderId());
+
+        // GĐ32 — sự kiện "lấy hàng thành công" bắn ở ĐÂY (chỗ chốt thật), không phải lúc mở cửa.
+        if (kioskEventService != null && order.getLocker() != null
+                && daBaoPickupSuccess.add(order.getOrderId())) {
+            kioskEventService.record(order.getLocker().getLockerId(), KioskEventService.PICKUP_SUCCESS,
+                    order.getOrderId(), order.getTrackingCode(),
+                    compartment != null ? compartment.getCompIndex() : null, null,
+                    "Lấy hàng thành công" + (compartment != null ? " ngăn #" + compartment.getCompIndex() : ""));
+        }
+        return true;
+    }
+
+    /**
+     * GĐ32 — chống trùng khi cả API lẫn firmware cùng chốt một đơn: mỗi đơn chỉ bắn MỘT sự kiện
+     * {@code PICKUP_SUCCESS}. Đặt ở đây để {@code MqttService} gọi được khi nó tự chốt.
+     */
+    public boolean danhDauDaBaoPickupSuccess(String orderId) {
+        return orderId != null && daBaoPickupSuccess.add(orderId);
+    }
+
+    /**
      * Khách hàng ấn "Mã OTP" trên app: Sinh mã OTP mới (Hiệu lực đúng 5 phút).
      * Ràng buộc chặt chẽ:
      * - Chỉ cho phép tạo khi đơn hàng đang ở trạng thái DEPOSITED (đã vào tủ).
@@ -247,7 +374,11 @@ public class PickupService {
         }
 
         // Ràng buộc trạng thái đơn hàng
-        if (!"DEPOSITED".equalsIgnoreCase(order.getStatus())) {
+        //
+        // GĐ31a — `PICKUP_OPENED` vẫn phải TẠO ĐƯỢC mã mới: đơn đang trong phiên nhận (khách quên
+        // hàng rồi đóng cửa) nên khách cần mã mới nếu mã cũ hết hạn. `COMPLETED` vẫn chặn như cũ.
+        if (!"DEPOSITED".equalsIgnoreCase(order.getStatus())
+                && !"PICKUP_OPENED".equalsIgnoreCase(order.getStatus())) {
             if ("PENDING".equalsIgnoreCase(order.getStatus())) {
                 throw new BusinessException("Kiện hàng chưa được nhân viên nạp vào tủ! Vui lòng chờ sau khi nạp hàng để nhận mã OTP.");
             }

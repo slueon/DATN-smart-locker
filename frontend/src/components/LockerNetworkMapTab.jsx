@@ -335,10 +335,22 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
     setMaintenanceMsg(null);
     try {
       const body = { lock, reasonCode: maintenanceForm.reasonCode, note: maintenanceForm.note || null };
+      let lockerResp = null;
       if (scope === 'locker') {
-        await lockerApi.setLockerMaintenance(detail.locker.lockerId, body);
+        // GĐ28 — endpoint trả về CHÍNH entity `Locker` sau khi lưu, nên `connectionStatus` trong
+        // response là giá trị THẬT backend đã ghi. Dùng nó cập nhật state NGAY để nhãn nút đổi
+        // tức thì, không phải chờ vòng `getAll()` bên dưới (trước GĐ28 nhãn chỉ đổi nếu vòng đó
+        // kịp trả về — và nếu backend bị nhịp tim ghi đè thì nhãn đứng yên ở "Bảo trì toàn tủ").
+        // KHÔNG tự đoán `!isMaint` rồi set cứng 'MAINTENANCE': giá trị lấy từ response.
+        const res = await lockerApi.setLockerMaintenance(detail.locker.lockerId, body);
+        lockerResp = res?.data?.data || null;
       } else {
         await lockerApi.setCompartmentMaintenance(detail.locker.lockerId, compIndex, body);
+      }
+      if (lockerResp && lockerResp.connectionStatus) {
+        setDetail((prev) => (prev && prev.locker.lockerId === detail.locker.lockerId
+          ? { ...prev, locker: { ...prev.locker, ...lockerResp } }
+          : prev));
       }
       setMaintenanceMsg({
         type: 'success',

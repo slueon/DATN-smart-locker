@@ -97,30 +97,63 @@ public class ShipperService {
     private static final LocalDateTime PERPETUAL_EXPIRY = LocalDateTime.of(9999, 12, 31, 23, 59, 59);
 
     /**
-     * 1. Sinh mã QR định danh cho Shipper — <b>KHÔNG có hạn</b> (GĐ15, user chốt).
+     * 1. Sinh mã QR định danh cho Shipper — <b>KHÔNG có hạn</b> (GĐ15) và <b>CỐ ĐỊNH theo shipper</b>
+     * (GĐ33, user chốt: "ấn mấy lần thì cũng chỉ có 1 mã đó").
      *
-     * <p>Mã sinh một lần là dùng được mãi: hết hạn quét đã bị bỏ, nên quét lại cùng một mã (ở
-     * trạng thái chưa dùng) lúc nào cũng được.
+     * <p><b>GĐ33 — một dòng token / một shipper, {@code isVerified} là cờ PHIÊN:</b>
+     * <ul>
+     *   <li>Đã có token cũ ({@link ShipperIdentityTokenRepository#findTopByShipperIdOrderByCreatedAtDesc}) →
+     *       <b>KHÔNG tạo dòng mới</b>, chỉ <b>reset {@code isVerified = false}</b> + {@code lockerId = null}
+     *       (mở phiên mới) và trả về <b>đúng mã cũ</b>.</li>
+     *   <li>Chưa có → tạo mới như trước.</li>
+     * </ul>
      *
-     * <p><b>RỦI RO ĐÃ ĐƯỢC USER CHẤP NHẬN:</b> bỏ hạn = <b>mất lớp chống Replay Attack</b>. Ai chụp
-     * được ảnh QR của shipper một lần thì dùng được mãi để mở tủ. Hai lớp bảo vệ CÒN LẠI (bắt buộc
-     * giữ, xem {@link #verifyDynamicToken}):
+     * <p><b>Vì sao BẮT BUỘC phải reset {@code isVerified}:</b> {@link #verifyDynamicToken} chặn
+     * quét lại token đã dùng. Nếu chỉ đổi mã thành cố định mà không reset cờ thì shipper quét được
+     * <b>đúng 1 lần trong cả đời tài khoản</b>, mọi lần sau nhận "Mã QR Shipper này đã được sử dụng!".
+     * Nay mỗi lần bấm lấy QR = mở phiên mới (cờ về false) → quét được 1 lần → cờ true → hết phiên.
+     * {@code verifyDynamicToken} <b>không đổi một dòng nào</b>.
+     *
+     * <p><b>RỦI RO ĐÃ ĐƯỢC USER CHẤP NHẬN TƯỜNG MINH:</b> mã <b>cố định</b> nên ai chụp được ảnh QR
+     * của shipper một lần thì <b>dùng được ở MỌI phiên shipper mở sau này</b> (trước GĐ33 thì ảnh
+     * chụp vô dụng vì mã đổi mỗi lần). Cộng thêm GĐ15 đã bỏ hạn 60 giây.
+     * Ba lớp giảm thiểu CÒN LẠI (bắt buộc giữ, xem {@link #verifyDynamicToken}):
      * <ol>
-     *   <li>{@code isVerified} — chặn quét lại ĐÚNG token đã dùng.</li>
-     *   <li>{@code lockerId} — token được gắn tủ lúc quét, không dùng chéo sang tủ khác được.</li>
+     *   <li>{@code isVerified} — mỗi phiên chỉ quét được MỘT lần (chống phát lại trong phiên).</li>
+     *   <li>{@code lockerId} — token gắn tủ lúc quét, không dùng chéo sang tủ khác.</li>
+     *   <li>Phải đăng nhập tài khoản SHIPPER mới mở được phiên (endpoint có xác thực).</li>
      * </ol>
+     * Ghi trong {@code docs/GIOI-HAN-BAOMAT.md} mục 6 cùng chỗ với ghi chú QR vĩnh viễn.
+     *
+     * <p><b>Dữ liệu cũ KHÔNG bị xoá:</b> trước GĐ33 mỗi lần bấm sinh một dòng, nên DB có thể có
+     * nhiều token/shipper. Chỉ dùng dòng MỚI NHẤT; các dòng cũ thành lịch sử, không ảnh hưởng vì UI
+     * chỉ hiện mã backend trả về (điều cấm #3 của thẻ: cấm xoá token cũ).
      */
     @Transactional
     public ShipperDTO.GenerateTokenResponse generateDynamicToken(String shipperId) {
-        String dynamicToken = "SHIP-" + UUID.randomUUID().toString();
+        // GĐ33 — dùng lại token của chính shipper này nếu đã có.
+        java.util.Optional<ShipperIdentityToken> cu =
+                tokenRepository.findTopByShipperIdOrderByCreatedAtDesc(shipperId);
 
-        ShipperIdentityToken token = ShipperIdentityToken.builder()
-                .shipperId(shipperId)
-                .dynamicToken(dynamicToken)
-                .expiredAt(PERPETUAL_EXPIRY)
-                .isVerified(false)
-                .build();
-        tokenRepository.save(token);
+        String dynamicToken;
+        if (cu.isPresent()) {
+            ShipperIdentityToken token = cu.get();
+            dynamicToken = token.getDynamicToken();
+            // Mở PHIÊN MỚI: cho phép quét lại đúng mã này một lần nữa, và bỏ ràng buộc tủ của phiên
+            // trước (shipper có thể giao ở tủ khác).
+            token.setIsVerified(false);
+            token.setLockerId(null);
+            token.setExpiredAt(PERPETUAL_EXPIRY);
+            tokenRepository.save(token);
+        } else {
+            dynamicToken = "SHIP-" + UUID.randomUUID();
+            tokenRepository.save(ShipperIdentityToken.builder()
+                    .shipperId(shipperId)
+                    .dynamicToken(dynamicToken)
+                    .expiredAt(PERPETUAL_EXPIRY)
+                    .isVerified(false)
+                    .build());
+        }
 
         return ShipperDTO.GenerateTokenResponse.builder()
                 .shipperId(shipperId)
@@ -196,7 +229,11 @@ public class ShipperService {
         Order order = orderRepository.findById(request.getOrderId())
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + request.getOrderId()));
 
-        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+        // GĐ31b — nhận cả `PENDING_OPENED`: đó là đơn đang trong phiên nạp (cửa đã mở) mà shipper
+        // bấm xác nhận nạp trên web. Chặn ở đây sẽ khiến shipper không chốt được đúng lúc hàng
+        // đã vào tủ.
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())
+                && !"PENDING_OPENED".equalsIgnoreCase(order.getStatus())) {
             throw new RuntimeException("Đơn hàng không ở trạng thái chờ gửi (Hiện tại: " + order.getStatus() + ")");
         }
 
@@ -204,15 +241,78 @@ public class ShipperService {
             throw new RuntimeException("Đơn hàng này không được phân bổ tới tủ: " + request.getLockerId());
         }
 
+        // GĐ28 — CHẶN NẠP HÀNG VÀO TỦ ĐANG BẢO TRÌ.
+        //
+        // Đây là đường shipper gửi hàng THẬT. Trước GĐ28 hàm này chỉ kiểm token/đơn PENDING/đúng
+        // tủ/còn ngăn/cửa đóng/có cân — KHÔNG kiểm `MAINTENANCE`, nên shipper vẫn nạp được hàng vào
+        // tủ admin vừa khoá để sửa chữa (ảnh user 15/11: `qviet` vẫn OPEN_DOOR sau khi khoá tủ).
+        // `suggestLockers` và `assignLocker` đã kiểm từ trước; chỗ lọt đúng là ở đây.
+        //
+        // 409 (BusinessException) chứ không phải 400: trạng thái hiện tại của tủ không cho phép
+        // thao tác, client cần biết để hiện "tủ đang bảo trì" chứ không phải "request sai".
+        if ("MAINTENANCE".equalsIgnoreCase(order.getLocker().getConnectionStatus())) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Tủ " + order.getLocker().getLockerId() + " đang bảo trì nên không thể nạp hàng. "
+                            + "Vui lòng liên hệ admin mở khoá bảo trì hoặc chuyển đơn sang tủ khác.");
+        }
+
+        // GĐ30 — CHẶN NẠP HÀNG VÀO TỦ THẬT ĐANG MẤT NHỊP TIM.
+        //
+        // Đây là bước DUY NHẤT thực sự đưa hàng vào tủ, mà trước GĐ30 lại là bước duy nhất KHÔNG
+        // kiểm nhịp tim: `suggestLockers` (:642) loại tủ thật mất nhịp khỏi gợi ý, `assignLocker`
+        // (:747) trả 409 khi chốt tủ, nhưng `depositPackage` vẫn cho nạp. Đo thật 15/11/2026:
+        // `LOCKER_HN_01` (tủ thật, `is_virtual=0`) mất nhịp **130 phút** → `POST /api/shipper/deposit`
+        // trả **200**, đơn `PENDING → DEPOSITED`, ngăn `EMPTY → OCCUPIED`. Tức hàng vào một tủ
+        // không ai điều khiển được: không mở được cửa, không xác nhận được cửa đã đóng.
+        //
+        // Cố ý để THÀNH KHỐI RIÊNG, không gộp vào khối `MAINTENANCE` bên trên (điều cấm #4): hai lý
+        // do khác hẳn nhau và shipper phải phân biệt được "chờ admin mở khoá bảo trì" với "chờ tủ
+        // có mạng trở lại".
+        //
+        // Tủ ẢO (`is_virtual = 1`) BỎ QUA hoàn toàn (điều cấm #1): 9 tủ khai báo trong CSDL không
+        // có thiết bị nên không bao giờ gửi nhịp tim, chặn là mất 9/10 tủ — đúng luật GĐ12.
+        //
+        // `lastHeartbeat == null` bị coi là CHẾT (điều cấm #2): "chưa từng gửi nhịp tim" không thể
+        // suy ra "vừa sống".
+        //
+        // Dùng lại `HEARTBEAT_FRESH_MINUTES` (:80), không tạo hằng số mới (điều cấm #3).
+        if (!Boolean.TRUE.equals(order.getLocker().getIsVirtual())) {
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime hb = order.getLocker().getLastHeartbeat();
+            if (hb == null || hb.isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) {
+                String matBaoLau = (hb == null)
+                        ? "chưa từng gửi nhịp tim"
+                        : "mất nhịp tim " + java.time.Duration.between(hb, now).toMinutes() + " phút";
+                // GĐ30b — `lockers.name` ĐÃ bắt đầu bằng "Tủ" ("Tủ Giao Nhận KTX A1…"), nên ghép
+                // thêm "Tủ " ở đây ra "Tủ Tủ Giao Nhận…" (minh bắt được khi nghiệm thu GĐ30).
+                // Dùng thẳng `getName()` để câu chữ đúng, giữ `lockerId` trong ngoặc để shipper
+                // đối chiếu được với mã tủ trên nhãn vật lý.
+                throw new com.ptit.smartlocker.exception.BusinessException(
+                        order.getLocker().getName() + " (" + order.getLocker().getLockerId() + ") đang "
+                                + matBaoLau + ", không thể nạp hàng. Tủ này là tủ thật nên phải có nhịp tim "
+                                + "trong " + HEARTBEAT_FRESH_MINUTES + " phút gần đây; vui lòng kiểm tra nguồn "
+                                + "điện/mạng của tủ hoặc chuyển đơn sang tủ khác.");
+            }
+        }
+
         Compartment compartment = order.getCompartment();
         if (compartment == null) {
-            // Tự động tìm ngăn tủ còn EMPTY tại trạm để nạp hàng nếu lúc đặt chưa gán
+            // Tự động tìm ngăn tủ còn EMPTY tại trạm để nạp hàng nếu lúc đặt chưa gán.
+            // GĐ28 — ghi rõ: `EMPTY` tự loại `OUT_OF_SERVICE`/`OCCUPIED`/`RESERVED` nên nhánh này
+            // không thể chọn nhầm ngăn đang bảo trì; nhánh dưới mới là chỗ cần kiểm tay.
             List<Compartment> empties = compartmentRepository.findByLocker_LockerIdAndStatus(request.getLockerId(), "EMPTY");
             if (empties.isEmpty()) {
                 throw new RuntimeException("Tủ " + request.getLockerId() + " hiện tại không còn ngăn trống để nạp hàng!");
             }
             compartment = empties.get(0);
             order.setCompartment(compartment);
+        } else if ("OUT_OF_SERVICE".equalsIgnoreCase(compartment.getStatus())) {
+            // GĐ28 — ngăn ĐÃ GÁN mà đang bảo trì thì không được đặt hàng vào. Trước đây chỉ kiểm
+            // `compartment == null`, nên ngăn `OUT_OF_SERVICE` lọt qua và bị đổi thành `OCCUPIED`,
+            // tức là bảo trì ngăn bị vô hiệu hoá đúng ở đường nạp hàng.
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Ngăn #" + compartment.getCompIndex() + " của tủ " + request.getLockerId()
+                            + " đang bảo trì nên không thể nạp hàng. Vui lòng chọn ngăn khác.");
         }
 
         // Kiểm tra điều kiện Cảm biến kép:
@@ -482,6 +582,62 @@ public class ShipperService {
     }
 
     /**
+     * GĐ31b — CHỐT PHIÊN NẠP HÀNG THEO CẢM BIẾN (TH1: shipper mở tủ rồi đóng lại không bỏ hàng).
+     *
+     * <p>Trước GĐ31b, nếu shipper mở cửa rồi đóng mà không bỏ hàng thì KHÔNG ai làm gì: đơn vẫn
+     * {@code PENDING}, ngăn vẫn {@code RESERVED} tới hết hạn đặt trước (1-2 giờ). Không mất dữ
+     * liệu nhưng ngăn bị khoá vô ích và shipper không được báo gì.
+     *
+     * <p>Gọi từ {@code MqttService} khi cửa ngăn ĐÓNG và đơn đang ở {@code PENDING_OPENED}:
+     * <ul>
+     *   <li>Có hàng ({@code conHang}) → {@code DEPOSITED} + ngăn {@code OCCUPIED} (như nạp thành
+     *       công bình thường).</li>
+     *   <li>Không có hàng → nhả ngăn về {@code EMPTY}, xoá {@code shipper_reserved_at} +
+     *       {@code reserve_expires_at}, đơn về {@code PENDING} để shipper chọn lại tủ/ngăn ngay,
+     *       và bắn thông báo cho shipper.</li>
+     * </ul>
+     *
+     * @return {@code true} nếu đã nạp được hàng, {@code false} nếu ngăn được nhả (không có hàng).
+     */
+    @Transactional
+    public boolean chotPhienNapHang(Order order, Compartment compartment, boolean conHang) {
+        if (order == null || !"PENDING_OPENED".equalsIgnoreCase(order.getStatus())) {
+            return false;
+        }
+
+        if (conHang) {
+            order.setStatus("DEPOSITED");
+            LocalDateTime now = LocalDateTime.now();
+            order.setDepositedAt(now);
+            order.setExpiryDeadline(LocalDateTime.of(now.toLocalDate().plusDays(1), java.time.LocalTime.MAX));
+            orderRepository.save(order);
+
+            if (compartment != null) {
+                compartment.setStatus("OCCUPIED");
+                compartmentRepository.save(compartment);
+            }
+            credentialRepository.findByOrder_OrderId(order.getOrderId()).ifPresent(cred -> {
+                cred.setExpiredAt(order.getExpiryDeadline());
+                credentialRepository.save(cred);
+            });
+            return true;
+        }
+
+        // Không có hàng: nhả ngăn NGAY (không bắt shipper chờ hết hạn đặt trước).
+        order.setStatus("PENDING");
+        order.setShipperReservedAt(null);
+        order.setReserveExpiresAt(null);
+        order.setCompartment(null);
+        orderRepository.save(order);
+
+        if (compartment != null && !"OCCUPIED".equalsIgnoreCase(compartment.getStatus())) {
+            compartment.setStatus("EMPTY");
+            compartmentRepository.save(compartment);
+        }
+        return false;
+    }
+
+    /**
      * T3 — Huỷ đặt trước: ngăn về {@code EMPTY}, đơn bỏ ngăn, hoàn 1 slot.
      *
      * <p>Chỉ cộng {@code available_slots} khi ngăn THẬT SỰ về {@code EMPTY} — nếu ngăn đang
@@ -714,7 +870,7 @@ public class ShipperService {
 
         if ("MAINTENANCE".equalsIgnoreCase(targetLocker.getConnectionStatus())) {
             throw new com.ptit.smartlocker.exception.BusinessException(
-                    "Tủ " + targetLocker.getName() + " đang bảo trì, vui lòng chọn tủ khác.");
+                    targetLocker.getName() + " đang bảo trì, vui lòng chọn tủ khác.");
         }
         LocalDateTime now = LocalDateTime.now();
         // GĐ12 — cùng quy tắc với `suggestLockers`: tủ ảo bỏ qua kiểm nhịp tim, tủ thật thì
@@ -724,7 +880,7 @@ public class ShipperService {
             if (targetLocker.getLastHeartbeat() == null
                     || targetLocker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) {
                 throw new com.ptit.smartlocker.exception.BusinessException(
-                        "Tủ " + targetLocker.getName() + " không có nhịp tim trong "
+                        targetLocker.getName() + " không có nhịp tim trong "
                                 + HEARTBEAT_FRESH_MINUTES + " phút gần đây, không thể giao hàng vào tủ này.");
             }
         }
@@ -758,7 +914,7 @@ public class ShipperService {
             target = empties.stream()
                     .findFirst()
                     .orElseThrow(() -> new com.ptit.smartlocker.exception.BusinessException(
-                            "Tủ " + targetLocker.getName() + " đã hết ngăn trống. Vui lòng chọn tủ khác."));
+                            targetLocker.getName() + " đã hết ngăn trống. Vui lòng chọn tủ khác."));
         }
 
         target.setStatus("RESERVED");

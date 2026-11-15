@@ -54,6 +54,9 @@ public class MqttService implements MqttCallbackExtended {
     private final PickupService pickupService;
     /** Bộ đệm sự kiện Kiosk — nguồn popup của web shipper (xem {@link KioskEventService}). */
     private final KioskEventService kioskEventService;
+
+    /** GĐ32 — đánh dấu mã nhận hàng đã dùng khi chốt `COMPLETED` từ đường MQTT. */
+    private final com.ptit.smartlocker.repository.PickupCredentialRepository credentialRepository;
     private final ObjectMapper objectMapper;
 
     @Value("${mqtt.retain.enabled:true}")
@@ -109,6 +112,7 @@ public class MqttService implements MqttCallbackExtended {
             ShipperService shipperService,
             PickupService pickupService,
             KioskEventService kioskEventService,
+            com.ptit.smartlocker.repository.PickupCredentialRepository credentialRepository,
             @Autowired(required = false) ObjectMapper objectMapper) {
         this.mqttClient = mqttClient;
         this.lockerRepository = lockerRepository;
@@ -119,6 +123,7 @@ public class MqttService implements MqttCallbackExtended {
         this.shipperService = shipperService;
         this.pickupService = pickupService;
         this.kioskEventService = kioskEventService;
+        this.credentialRepository = credentialRepository;
         this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
     }
 
@@ -895,7 +900,22 @@ public class MqttService implements MqttCallbackExtended {
         }
 
         locker.setLastHeartbeat(LocalDateTime.now());
-        locker.setConnectionStatus(connectionStatus);
+
+        // GĐ28 — KHÔNG để heartbeat ghi đè trạng thái BẢO TRÌ.
+        //
+        // `MAINTENANCE` là quyết định của ADMIN (admin khoá tủ để sửa chữa), không phải trạng thái
+        // kết nối. Firmware thật gửi `ptit/status` liên tục vài chục giây một lần; nếu ở đây ghi
+        // thẳng `ONLINE` thì mọi lần khoá bảo trì đều bị xoá sau ~15 giây. Đo thật 15/11/2026:
+        // đặt MAINTENANCE 21:41:19 → 1 heartbeat ONLINE → 21:41:33 DB đã về ONLINE.
+        //
+        // Nhịp tim VẪN được ghi (dòng trên) để dashboard biết thiết bị còn sống; chỉ trạng thái
+        // là giữ nguyên. Muốn mở khoá phải qua `LockerService.setLockerMaintenance(lock=false)`.
+        if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
+            log.debug("Tủ {} đang MAINTENANCE — giữ nguyên trạng thái bảo trì, chỉ cập nhật nhịp tim.",
+                    locker.getLockerId());
+        } else {
+            locker.setConnectionStatus(connectionStatus);
+        }
         lockerRepository.save(locker);
         saveEvent(locker, "HW_MQTT_STATUS", payloadStr);
     }
@@ -1372,10 +1392,114 @@ public class MqttService implements MqttCallbackExtended {
                 }
             }
 
+            // GĐ31b — MỞ PHIÊN NẠP HÀNG KHI CỬA VỪA MỞ.
+            //
+            // ⚠️ PHẢI chạy TRƯỚC khối `has_item` bên dưới: khối đó quyết định có giữ nguyên trạng
+            // thái ngăn hay không dựa trên đơn `PENDING_OPENED`. Nếu mở phiên sau, lúc kiểm đơn vẫn
+            // còn `PENDING` → ngăn bị đặt `EMPTY` theo `has_item:0` → mất chỗ giữ của shipper.
+            //
+            // Đơn `PENDING` đã được shipper đặt trước ngăn này mà cửa vừa mở ⇒ đánh dấu
+            // `PENDING_OPENED` để lúc cửa đóng biết phải đọc cảm biến mà chốt. Nếu không có bước
+            // này thì ca "mở cửa rồi đóng mà không bỏ hàng" rơi vào khoảng lặng: đơn vẫn PENDING,
+            // ngăn vẫn RESERVED tới hết hạn đặt trước dù biết chắc ngăn trống.
+            if (Boolean.FALSE.equals(doorClosed) && shipperService != null) {
+                List<Order> dangChoNap = orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PENDING");
+                for (Order ord : dangChoNap) {
+                    if (ord.getCompartment() == null
+                            || !comp.getCompartmentId().equals(ord.getCompartment().getCompartmentId())) {
+                        continue;
+                    }
+                    // Chỉ đơn ĐÃ ĐƯỢC SHIPPER ĐẶT TRƯỚC mới mở phiên: đơn chưa đặt trước thì việc
+                    // mở cửa không phải do shipper này thao tác.
+                    if (ord.getShipperReservedAt() == null) {
+                        continue;
+                    }
+                    ord.setStatus("PENDING_OPENED");
+                    orderRepository.save(ord);
+                    log.info("Cửa ngăn {} tủ {} vừa mở — đơn {} sang PENDING_OPENED",
+                            compIndex, locker.getLockerId(), ord.getOrderId());
+                    break;
+                }
+            }
+
             if (hasItem != null) {
-                comp.setStatus(hasItem ? "OCCUPIED" : "EMPTY");
+                // GĐ31a — KHÔNG để bản tin cảm biến tự đặt trạng thái ngăn khi ngăn đang thuộc
+                // một đơn "có hàng trong tủ".
+                //
+                // Trước GĐ31a dòng này đặt thắng `OCCUPIED`/`EMPTY` theo `has_item`. Hệ quả: một
+                // bản tin `has_item:0` (kể cả bản tin nhiễu, hoặc kiện nhẹ IR=1 mà firmware tính
+                // has_item=0) đẩy ngăn về `EMPTY` **bất kể** đơn đang `DEPOSITED`/`PICKUP_OPENED`
+                // ⇒ ngăn bị cấp cho đơn khác = đúng lỗ "hai đơn một ngăn" mà GĐ31a phải chặn.
+                //
+                // Nay: chỉ luồng CHỐT (đọc đủ `weight` + `ir_detected` + `door_closed`) được đổi
+                // trạng thái ngăn. Vẫn LUÔN ghi weight/ir/is_door_closed ở trên — dữ liệu cảm biến
+                // là thật, cấm bỏ qua (điều cấm bổ sung của Chief).
+                boolean coDonTrongNgan = orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "DEPOSITED").stream()
+                        .anyMatch(o -> o.getCompartment() != null && o.getCompartment().getCompIndex().equals(compIndex))
+                        || orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PICKUP_OPENED").stream()
+                        .anyMatch(o -> o.getCompartment() != null && o.getCompartment().getCompIndex().equals(compIndex))
+                        // GĐ31b — đơn đang trong phiên NẠP cũng phải giữ nguyên trạng thái ngăn
+                        // (`RESERVED`): nếu để `has_item:0` đặt `EMPTY` thì ngăn bị cấp cho đơn
+                        // khác đúng lúc shipper đang mở cửa nạp hàng.
+                        || orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PENDING_OPENED").stream()
+                        .anyMatch(o -> o.getCompartment() != null && o.getCompartment().getCompIndex().equals(compIndex));
+
+                if (coDonTrongNgan) {
+                    // Trạng thái ngăn do luồng chốt quyết định; ở đây chỉ ghi nhận dữ liệu cảm biến.
+                    log.debug("Ngăn {} tủ {} đang thuộc một đơn có hàng — không tự đặt trạng thái theo has_item={}",
+                            compIndex, locker.getLockerId(), hasItem);
+                } else {
+                    comp.setStatus(hasItem ? "OCCUPIED" : "EMPTY");
+                }
             }
             compartmentRepository.save(comp);
+
+            // GĐ31a — CHỐT PHIÊN LẤY HÀNG KHI CỬA ĐÓNG.
+            //
+            // Đây là chỗ DUY NHẤT biết "khách có thật sự lấy hàng hay không": đọc cả `weight` và
+            // `ir_detected` cùng `door_closed`. Chỉ khi cửa ĐÃ ĐÓNG mới chốt, vì lúc đang mở thì
+            // khách có thể mới thò tay vào.
+            //
+            // Còn hàng  → đơn về DEPOSITED, mã cũ dùng lại được (khách mở lại ngay).
+            // Hết hàng  → COMPLETED + ngăn EMPTY + mã đánh dấu đã dùng.
+            if (Boolean.TRUE.equals(doorClosed) && pickupService != null) {
+                List<Order> dangMoNhan = orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PICKUP_OPENED");
+                for (Order ord : dangMoNhan) {
+                    if (ord.getCompartment() == null
+                            || !comp.getCompartmentId().equals(ord.getCompartment().getCompartmentId())) {
+                        continue;
+                    }
+                    // "Còn hàng" = cân trên ngưỡng (gram, 5 g như `depositPackage`) HOẶC IR báo có
+                    // vật. IR là cứu cánh cho kiện quá nhẹ mà cân đọc 0 (GĐ22).
+                    boolean conHang = (weight != null && weight > 5.0) || Boolean.TRUE.equals(irDetected);
+                    pickupService.chotPhienLayHang(ord, comp, conHang);
+                    break;
+                }
+            }
+
+            // GĐ31b — CHỐT PHIÊN NẠP HÀNG KHI CỬA ĐÓNG (TH1: shipper mở tủ rồi đóng không bỏ hàng).
+            //
+            // Trước GĐ31b ca này rơi vào khoảng lặng: đơn vẫn PENDING, ngăn vẫn RESERVED tới hết
+            // hạn đặt trước (1-2 giờ) dù biết chắc ngăn trống. Nay đọc cảm biến để chốt ngay:
+            // có hàng → DEPOSITED; không có hàng → nhả ngăn + đơn về PENDING + báo cho shipper.
+            if (Boolean.TRUE.equals(doorClosed) && shipperService != null) {
+                List<Order> dangNap = orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PENDING_OPENED");
+                for (Order ord : dangNap) {
+                    if (ord.getCompartment() == null
+                            || !comp.getCompartmentId().equals(ord.getCompartment().getCompartmentId())) {
+                        continue;
+                    }
+                    boolean conHang = (weight != null && weight > 5.0) || Boolean.TRUE.equals(irDetected);
+                    shipperService.chotPhienNapHang(ord, comp, conHang);
+                    break;
+                }
+            }
         });
 
         locker.setLastHeartbeat(LocalDateTime.now());
@@ -1437,9 +1561,19 @@ public class MqttService implements MqttCallbackExtended {
             });
         } else if ("pickup_success".equalsIgnoreCase(status)) {
             compartmentRepository.findByLocker_LockerIdAndCompIndex(locker.getLockerId(), compIndex).ifPresent(comp -> {
-                comp.setStatus("EMPTY");
-                comp.setCurrentWeight(0.0);
-                compartmentRepository.save(comp);
+                // GĐ31a — `pickup_success` chỉ là firmware BÁO ĐÃ MỞ/lấy; KHÔNG đủ để chốt là hàng
+                // đã ra. Chốt thật do `handleCompartmentStatus` làm khi cửa đóng + đọc cảm biến.
+                // Giữ nguyên nhánh cũ cho đơn KHÔNG ở phiên PICKUP_OPENED để không phá luồng cũ.
+                boolean coPhienMoNhan = orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PICKUP_OPENED").stream()
+                        .anyMatch(o -> o.getCompartment() != null
+                                && o.getCompartment().getCompIndex().equals(compIndex));
+
+                if (!coPhienMoNhan) {
+                    comp.setStatus("EMPTY");
+                    comp.setCurrentWeight(0.0);
+                    compartmentRepository.save(comp);
+                }
 
                 List<Order> depositedOrders = orderRepository
                         .findByLockerAndStatusWithCompartment(locker.getLockerId(), "DEPOSITED");
@@ -1447,6 +1581,25 @@ public class MqttService implements MqttCallbackExtended {
                     if (ord.getCompartment() != null && ord.getCompartment().getCompIndex().equals(compIndex)) {
                         ord.setStatus("COMPLETED");
                         orderRepository.save(ord);
+                        // GĐ32 — đánh dấu mã đã dùng, khớp với đường API (`chotPhienLayHang`).
+                        // Thiếu bước này thì đơn `COMPLETED` mà `is_used = 0` — dữ liệu mâu thuẫn:
+                        // mã vẫn "còn hiệu lực" trong khi hàng đã ra khỏi tủ.
+                        credentialRepository.findByOrder_OrderId(ord.getOrderId()).ifPresent(cred -> {
+                            cred.setIsUsed(true);
+                            cred.setUsedAt(LocalDateTime.now());
+                            credentialRepository.save(cred);
+                        });
+                        // GĐ32 — BẮN SỰ KIỆN cho web khách tự cập nhật + hiện popup.
+                        //
+                        // Nhánh `deposit_success` ngay trên đã bắn `DEPOSIT_SUCCESS` từ GĐ17, nhưng
+                        // nhánh này trước GĐ32 KHÔNG bắn gì ⇒ web khách không bao giờ biết hàng đã
+                        // ra và phải F5 (đúng lỗi user báo). Đo thật trước khi sửa: đơn `COMPLETED`,
+                        // ngăn `EMPTY`, mà `kiosk-events` trả `events: []`.
+                        //
+                        // `trackingCode` + `orderId` để web đối chiếu đúng đơn, không đoán theo ngăn.
+                        kioskEventService.record(locker.getLockerId(), KioskEventService.PICKUP_SUCCESS,
+                                ord.getOrderId(), ord.getTrackingCode(), compIndex, null,
+                                "Lấy hàng thành công ngăn #" + compIndex);
                         log.info("Đã chuyển đơn hàng {} sang trạng thái COMPLETED", ord.getOrderId());
                         break;
                     }

@@ -160,26 +160,48 @@ toàn hạn này** theo yêu cầu của người dùng ("QR vĩnh viễn, KHÔN
 - Khối kiểm `now.isAfter(expiredAt)` trong `verifyDynamicToken` đã **bị xoá**.
 - `GenerateTokenResponse.validitySeconds` trả `0` (nghĩa: không giới hạn).
 
+### 6.1 GĐ33 — mã QR nay **CỐ ĐỊNH** cho mỗi shipper (tăng rủi ro thêm một mức)
+
+**Người dùng yêu cầu:** "ấn mấy lần thì cũng chỉ có 1 mã đó hiện".
+
+**Thay đổi:** `generateDynamicToken` không còn sinh `"SHIP-" + UUID.randomUUID()` mỗi lần nữa.
+Nay nó lấy token của chính shipper (`findTopByShipperIdOrderByCreatedAtDesc`):
+- đã có → **không tạo dòng mới**, chỉ reset `isVerified = false` + `lockerId = null` (mở phiên
+  mới) và trả lại **đúng mã cũ**;
+- chưa có → tạo mới một lần.
+
+`verifyDynamicToken` **không đổi** — `isVerified` trở thành cờ **theo phiên**: mỗi lần bấm lấy QR
+là mở phiên mới (quét được 1 lần), quét xong thì hết phiên.
+
+**Vì sao bắt buộc phải reset `isVerified`:** nếu chỉ đổi mã thành cố định mà không reset, shipper
+quét được **đúng 1 lần trong cả đời tài khoản** — mọi lần sau nhận "Mã QR Shipper này đã được sử
+dụng!". Đó là lỗi chức năng, không phải lỗi bảo mật.
+
 **Tác động — phải nói rõ, không được giấu**
 
 - **KHÔNG còn chống Replay Attack bằng hạn thời gian.** Ai **chụp ảnh** màn hình QR của shipper
   một lần là giữ được mã đó **vĩnh viễn**, dùng lại bất kỳ lúc nào.
+- **Từ GĐ33 rủi ro này TĂNG:** vì mã **cố định**, ảnh QR chụp được ở bất kỳ lần nào cũng dùng được
+  ở **mọi phiên shipper mở sau đó** — không chỉ "mã cũ vẫn còn hiệu lực" mà là "mã duy nhất, không
+  bao giờ đổi". Trước GĐ33, ảnh chụp cũ chỉ dùng được nếu token đó chưa từng bị quét.
 - Nếu ảnh QR rò rỉ (chụp trộm, ảnh đăng nhóm chat, ảnh trong log màn hình), kẻ đó có thể tới
   tủ và mở quyền nạp hàng dưới danh nghĩa shipper thật.
 - Đây là **đánh đổi có ý thức** của người dùng để tiện demo/trình diễn; nó **không phù hợp cho
   môi trường thật**.
 
-**Hai lớp bảo vệ CÒN LẠI (bắt buộc giữ, đã kiểm hoạt động)**
+**Ba lớp bảo vệ CÒN LẠI (bắt buộc giữ, đã kiểm hoạt động)**
 
-1. **`isVerified`** — mỗi token chỉ quét được **đúng một lần**. Quét lại cùng token → lỗi
-   "Mã QR Shipper này đã được sử dụng!". Đây là lớp DUY NHẤT còn lại chặn phát lại đúng một mã;
-   **bỏ nó là mất hoàn toàn khả năng chống quét lại**.
+1. **`isVerified`** — mỗi **phiên** chỉ quét được **đúng một lần**. Quét lại cùng token mà không
+   bấm lấy QR lại → lỗi "Mã QR Shipper này đã được sử dụng!". Đây là lớp DUY NHẤT còn lại chặn
+   phát lại trong một phiên; **bỏ nó là mất hoàn toàn khả năng chống quét lại**.
 2. **`lockerId`** — token được gắn tủ lúc quét. Token xác thực ở tủ A **không** mở được cửa tủ B
    (`findActiveVerifiedTokensForLocker` lọc theo `lockerId`), nên không dùng chéo tủ được.
+3. **Đăng nhập SHIPPER** — endpoint sinh mã yêu cầu tài khoản SHIPPER; người ngoài không tự mở
+   được phiên để lấy mã.
 
-**Lưu ý về thiết kế hiện tại:** mỗi lần bấm "Xem mã QR định danh" lại sinh một token MỚI; token
-cũ **không bị thu hồi** và vẫn dùng được. Vì vậy số mã có hiệu lực tăng dần theo số lần bấm —
-càng nhiều ảnh QR từng phát ra thì càng nhiều mã còn dùng được.
+**Dữ liệu cũ — không xoá:** trước GĐ33 mỗi lần bấm sinh một dòng trong `shipper_identity_tokens`
+(nên một shipper có thể có hàng chục dòng). Các dòng đó **giữ nguyên** làm lịch sử; code chỉ dùng
+dòng **mới nhất**. Không có migration, không xoá dữ liệu người dùng.
 
 **Hướng khắc phục (nếu cần đưa lên môi trường thật)**
 
@@ -187,10 +209,13 @@ càng nhiều ảnh QR từng phát ra thì càng nhiều mã còn dùng đượ
 2. Hoặc dùng QR một-lần ký bằng khoá bí mật, có `nonce` + hạn, để vừa chống chụp lại vừa chống
    phát lại.
 3. Hoặc gắn mã với phiên đăng nhập + thiết bị, thu hồi mã cũ khi sinh mã mới.
+4. (Khuyến nghị nếu giữ mã cố định) Thêm mã PIN/khoá phụ đổi theo phiên để ảnh QR một mình không
+   đủ mở tủ.
 
 **Ghi chú:** tài liệu này **trước đây không còn câu nào nói "đã chống Replay Attack nhờ QR 60s"**.
 Nếu ở bất kỳ bản nháp/tài liệu nào khác còn câu đó thì **câu đó SAI** — hạn 60 giây chỉ làm giảm
-cửa sổ tấn công, và từ GĐ15 nó đã bị bỏ hẳn.
+cửa sổ tấn công, và từ GĐ15 nó đã bị bỏ hẳn. Tương tự, **không được nói** "QR shipper đổi mỗi lần
+nên ảnh chụp vô dụng" — từ GĐ33 điều đó **không còn đúng**.
 
 ---
 

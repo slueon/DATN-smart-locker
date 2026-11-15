@@ -58,6 +58,21 @@ public class KioskEventService {
      */
     public static final String CUSTOMER_METHOD_CHOSEN = "CUSTOMER_METHOD_CHOSEN";
 
+    /**
+     * GĐ32 — khách đã lấy hàng xong (đơn chốt {@code COMPLETED}, ngăn về {@code EMPTY}).
+     *
+     * <p><b>Vì sao cần:</b> nhánh {@code deposit_success} đã bắn {@code DEPOSIT_SUCCESS} từ GĐ17,
+     * nhưng nhánh {@code pickup_success} thì <b>không</b> bắn gì. Web khách vì thế không biết hàng
+     * đã ra, phải F5 mới thấy dữ liệu mới (user báo 16/11). Đo thật: publish
+     * {@code pickup_success} → đơn {@code COMPLETED}, ngăn {@code EMPTY}, nhưng
+     * {@code kiosk-events} trả {@code events: []}.
+     *
+     * <p><b>Chỉ bắn khi trạng thái ĐÃ CHỐT</b>, không bắn lúc mở cửa — nếu không khách sẽ thấy
+     * popup "Lấy hàng thành công" trong khi hàng còn trong tủ (đúng ràng buộc của thẻ GĐ32 khi
+     * GĐ31 thêm trạng thái trung gian {@code PICKUP_OPENED}).
+     */
+    public static final String PICKUP_SUCCESS = "PICKUP_SUCCESS";
+
     private final AtomicLong seq = new AtomicLong(0L);
     private final Deque<KioskEvent> events = new ArrayDeque<>(MAX_EVENTS);
 
