@@ -24,7 +24,15 @@ public class OrderDTO {
         private String paymentMethod; // "ONLINE_VIETQR", "ONLINE_MOMO", "ONLINE_VNPAY", "COD"
         private String paymentStatus; // "PAID", "UNPAID"
         private String productName;   // Tên hoặc mô tả bưu kiện
-        private String requiredSize;  // Kích thước ngăn tủ yêu cầu: "S", "M", "L"
+        /**
+         * GĐ18 — <b>KHÔNG còn dùng để quyết định</b> chọn ngăn nào.
+         *
+         * <p>Hệ thống đã bỏ phân biệt size: mọi ngăn trống đều nhận được mọi kiện
+         * ({@code OrderService.selectSuitableCompartment} lấy ngăn EMPTY đầu tiên). Field này
+         * <b>giữ lại để không vỡ contract</b> — frontend vẫn gửi lên và đọc được, tránh phải sửa
+         * đồng loạt; giá trị nhận vào bị bỏ qua.
+         */
+        private String requiredSize;  // Giữ cho tương thích — GĐ18: không còn dùng
         private BigDecimal totalAmount;
 
         public CheckoutRequest() {
@@ -57,8 +65,23 @@ public class OrderDTO {
         private String lockerId;
         private String lockerName;
         private Integer compartmentIndex;
+        /**
+         * GĐ18 — cỡ của ngăn đơn đang trỏ tới, <b>chỉ để hiển thị/tương thích</b>.
+         *
+         * <p>Không còn là tiêu chí chọn ngăn hay điều kiện kiểm tra: mọi ngăn đều nhận được mọi
+         * kiện. Giữ field vì frontend và các màn báo cáo còn đọc; cột {@code compartments.size}
+         * vẫn còn trong DB.
+         */
         private String compartmentSize;
         private Boolean isShipperReserved;
+        /**
+         * GĐ21 — hạn giữ chỗ của RIÊNG lần đặt trước này (shipper chọn 1 hoặc 2 giờ).
+         *
+         * <p>{@code null} = đơn chưa đặt trước, hoặc là đơn cũ trước GĐ21 (khi đó backend dùng
+         * công thức 120 phút). Web dùng giá trị này để hiện "giữ đến HH:mm" thay vì tự cộng giờ —
+         * client tự cộng sẽ lệch khi đồng hồ máy khác máy chủ.
+         */
+        private LocalDateTime reserveExpiresAt;
         private LocalDate expectedDate;
         private LocalDateTime depositedAt;
         private LocalDateTime expiryDeadline;
@@ -119,13 +142,27 @@ public class OrderDTO {
     public static class ReserveRequest {
         private String trackingCode;
         private Integer compartmentIndex;
+        /**
+         * GĐ21 — số giờ giữ chỗ shipper chọn: <b>chỉ 1 hoặc 2</b>. Bỏ trống = 2 giờ (mặc định cũ).
+         * Giá trị khác bị backend từ chối bằng 400 kèm message, KHÔNG âm thầm kẹp về 1.
+         */
+        private Integer reserveHours;
 
         public ReserveRequest() {
         }
 
-        public ReserveRequest(String trackingCode, Integer compartmentIndex) {
+        /**
+         * Constructor đủ field — {@code @Builder} của Lombok cần bản bao trùm MỌI field, thiếu là
+         * không biên dịch được (đã dính đúng lỗi này khi thêm {@code reserveHours}).
+         */
+        public ReserveRequest(String trackingCode, Integer compartmentIndex, Integer reserveHours) {
             this.trackingCode = trackingCode;
             this.compartmentIndex = compartmentIndex;
+            this.reserveHours = reserveHours;
+        }
+
+        public ReserveRequest(String trackingCode, Integer compartmentIndex) {
+            this(trackingCode, compartmentIndex, null);
         }
     }
 }

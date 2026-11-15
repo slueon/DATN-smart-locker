@@ -742,7 +742,8 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                   <div key={c.compartmentId ?? c.compIndex} className={`p-2.5 rounded-xl border ${toneClass}`}>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-bold">#{c.compIndex}</span>
-                      <span className="text-[9px] font-mono">{c.size}</span>
+                      {/* GĐ18 — bỏ `{c.size}`: mọi ngăn đều dùng được như nhau, hiện cỡ chỉ gây
+                          hiểu nhầm là còn phân biệt size. */}
                     </div>
                     <div className="text-[10px] font-semibold mt-0.5">{st || 'N/A'}</div>
                     <div className="text-[10px] mt-0.5">

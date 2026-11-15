@@ -462,7 +462,8 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                         <MapPin className="w-3.5 h-3.5 text-blue-500" /> {ord.lockerName}
                       </span>
                       <span className="font-bold text-rose-700 bg-rose-50/80 px-2 py-0.5 rounded-md text-[10px] border border-rose-200">
-                        Ngăn #{ord.compartmentIndex} ({ord.compartmentSize})
+                        {/* GĐ19 — bỏ `({compartmentSize})`: mọi ngăn dùng được như nhau (GĐ18). */}
+                        Ngăn #{ord.compartmentIndex}
                       </span>
                     </div>
                   </div>
@@ -495,7 +496,8 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                 <div className="text-right bg-white/60 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-white/80 shadow-2xs">
                   <span className="text-[10px] text-slate-500 block font-semibold">Vị trí ngăn tủ</span>
                   <span className="text-rose-600 font-extrabold text-sm">
-                    Ngăn #{activeRecallOrder.compartmentIndex} ({activeRecallOrder.compartmentSize})
+                    {/* GĐ19 — bỏ cỡ ngăn, xem ghi chú phía trên. */}
+                    Ngăn #{activeRecallOrder.compartmentIndex}
                   </span>
                 </div>
               </div>

@@ -17,6 +17,14 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [orders, setOrders] = useState([]);
   const [allLockers, setAllLockers] = useState([]);
   const [sampleToast, setSampleToast] = useState(null);
+
+  // GĐ21 — danh sách khách để chọn khi tạo đơn hộ. TRƯỚC ĐÂY hàm tạo đơn ghi cứng
+  // "Đoàn Viết Hoàng / 0988123456" nên mọi đơn tạo từ màn shipper đều gán cho đúng một người,
+  // bất kể khách thật là ai. Nay đọc từ `GET /api/shipper/customers`.
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
+  const [loadingCustomers, setLoadingCustomers] = useState(true);
+  const [customersError, setCustomersError] = useState(null);
   const [selectedLockerFilter, setSelectedLockerFilter] = useState('ALL');
   const [selectedOrderId, setSelectedOrderId] = useState(null);
 
@@ -55,6 +63,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [reserveCompIndex, setReserveCompIndex] = useState(null);
   const [reserveTrackingCode, setReserveTrackingCode] = useState('');
   const [reserveMessage, setReserveMessage] = useState(null);
+  // GĐ21 — thời hạn giữ chỗ shipper chọn. Mặc định 2 giờ (giữ đúng hành vi cũ 120 phút).
+  const [reserveHours, setReserveHours] = useState(2);
   const [isReserving, setIsReserving] = useState(false);
   const [isLoadingCompartments, setIsLoadingCompartments] = useState(false);
   // Đơn đã đặt trước hay chưa: backend KHÔNG trả `shipperReservedAt`, nên suy ra từ
@@ -71,6 +81,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [isLoadingSuggest, setIsLoadingSuggest] = useState(false);
   const [showSuggestPanel, setShowSuggestPanel] = useState(false);
   // Bấm thẻ tủ lần 1 chỉ mở hộp xác nhận (0 request); bấm "Xác nhận" mới gọi API.
+  // GĐ23 — thời hạn giữ chỗ cho luồng CHỌN TỦ (mặc định 2 giờ = hành vi cũ 120 phút).
+  const [assignReserveHours, setAssignReserveHours] = useState(2);
   const [pendingAssignLocker, setPendingAssignLocker] = useState(null);
   const [isAssigning, setIsAssigning] = useState(false);
   const [assignMessage, setAssignMessage] = useState(null);
@@ -123,6 +135,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     // `shipperApi.getOverdueOrders` (dùng ở tab Thu hồi).
     loadOrders();
     setAllLockers(store.getLockers());
+    // GĐ21 — nạp danh sách khách MỘT LẦN cho hộp chọn "+ Thêm đơn" (không gọi lại mỗi lần bấm).
+    loadCustomers();
 
     const handleUpdate = () => {
       loadOrders();
@@ -187,6 +201,36 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     }
   };
 
+  /**
+   * GĐ21 — nạp danh sách khách MỘT LẦN khi mở tab.
+   *
+   * <p>Mặc định chọn khách ĐẦU TIÊN backend trả — không tự chọn tên ai trong code. Nếu API lỗi
+   * hoặc danh sách rỗng thì để `customersError` bật cờ, nút "+ Thêm đơn" sẽ bị tắt kèm lý do;
+   * TUYỆT ĐỐI không rơi về một tên mặc định (đó chính là lỗi thẻ này muốn bỏ).
+   */
+  const loadCustomers = async () => {
+    setLoadingCustomers(true);
+    try {
+      const res = await shipperApi.getCustomers();
+      const list = res?.data?.data || [];
+      setCustomers(list);
+      setCustomersError(list.length === 0 ? 'Hệ thống chưa có tài khoản khách hàng nào.' : null);
+      setSelectedCustomerId((prev) => {
+        if (prev != null && list.some((c) => c.userId === prev)) return prev;
+        return list.length > 0 ? list[0].userId : null;
+      });
+    } catch (err) {
+      setCustomers([]);
+      setSelectedCustomerId(null);
+      setCustomersError(
+        err?.response?.data?.message
+          || 'Không tải được danh sách khách hàng. Kiểm tra backend đang chạy và đăng nhập SHIPPER.'
+      );
+    } finally {
+      setLoadingCustomers(false);
+    }
+  };
+
   const handleCreateSampleOrder = async () => {
     const sampleProducts = [
       { name: 'Áo Hoodie PTIT Sinh Viên 2026', price: 280000, size: 'S' },
@@ -199,17 +243,30 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     ];
     const randProd = sampleProducts[Math.floor(Math.random() * sampleProducts.length)];
 
+    // GĐ21 — bắt buộc có khách được chọn. Không có thì dừng hẳn, KHÔNG rơi về tên mặc định.
+    const chosen = customers.find((c) => c.userId === selectedCustomerId) || null;
+    if (!chosen) {
+      setSampleToast(
+        customersError
+          ? `Không tạo được đơn: ${customersError}`
+          : 'Không tạo được đơn: chưa chọn khách hàng. Vui lòng chọn khách trong danh sách.'
+      );
+      setTimeout(() => setSampleToast(null), 5000);
+      return;
+    }
+
     try {
       // 1. Gửi request tạo đơn hàng thật vào Backend CSDL
       const today = new Date().toISOString().split('T')[0];
       const res = await orderApi.checkout({
-        customerName: 'Đoàn Viết Hoàng',
-        customerPhone: '0988123456',
+        customerName: chosen.fullName,
+        customerPhone: chosen.phone,
         deliveryType: 'LOCKER',
         lockerId: 'LOCKER_HN_01',
         deliveryDate: today,
         productName: randProd.name,
-        requiredSize: randProd.size,
+        // GĐ21 (1c) — KHÔNG gửi `requiredSize` nữa: GĐ18 đã bỏ phân biệt size nên field này
+        // không còn tác dụng. Backend vẫn nhận (giữ tương thích) nhưng gửi lên chỉ gây hiểu nhầm.
         totalAmount: randProd.price,
         paymentMethod: 'ONLINE_VIETQR',
         paymentStatus: 'PAID',
@@ -225,7 +282,10 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         // Đơn mới hiện ra bằng `await loadOrders()` ngay bên dưới — đọc thẳng từ API.
         await loadOrders();
         setSelectedOrderId(ord.orderId);
-        setSampleToast(`Đã tạo đơn THẬT ${ord.orderId} cho Đoàn Viết Hoàng (0988123456) trên máy chủ.`);
+        // GĐ21 — thông báo nêu TÊN KHÁCH VỪA CHỌN, không ghi cứng tên ai.
+        setSampleToast(
+          `Đã tạo đơn THẬT ${ord.orderId} cho ${chosen.fullName} (${chosen.phone}) trên máy chủ.`
+        );
         setTimeout(() => setSampleToast(null), 3500);
         return;
       }
@@ -451,12 +511,20 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     try {
       const res = await shipperApi.assignLocker(activeOrder.orderId, {
         lockerId: pendingAssignLocker.lockerId,
+        // GĐ23 — thời hạn giữ chỗ cho luồng CHỌN TỦ. Trước đây luồng này không gửi hạn nên mọi
+        // đơn chọn tủ bị khoá cứng 120 phút, shipper không chọn được 1 giờ.
+        reserveHours: assignReserveHours,
       });
       const data = res?.data?.data;
+      // Hiện giờ hết hạn THẬT từ backend, không tự cộng giờ ở client (đồng hồ máy có thể lệch).
+      const expText = data?.reserveExpiresAt
+        ? ` · Giữ đến ${new Date(data.reserveExpiresAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`
+        : '';
       setAssignMessage({
         type: 'success',
         text: `Đã chốt tuyến: ${data?.lockerName || pendingAssignLocker.name}`
-          + (data?.compartmentIndex ? ` · Ngăn #${data.compartmentIndex}` : ''),
+          + (data?.compartmentIndex ? ` · Ngăn #${data.compartmentIndex}` : '')
+          + ` (${assignReserveHours} giờ)${expText}`,
       });
       setPendingAssignLocker(null);
       setShowSuggestPanel(false);
@@ -477,7 +545,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   };
 
   /** T3 — đặt trước ngăn cho đơn đang chọn. */
-  const handleReserve = async () => {    if (!activeOrder) return;
+  const handleReserve = async () => {
+    if (!activeOrder) return;
     if (!reserveCompIndex) {
       setReserveMessage({ type: 'error', text: 'Vui lòng chọn một ngăn trống trước khi đặt trước.' });
       return;
@@ -488,11 +557,23 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       const body = {
         trackingCode: (reserveTrackingCode || activeOrder.trackingCode || activeOrder.orderId || '').trim(),
         compartmentIndex: reserveCompIndex,
+        // GĐ21 — thời hạn giữ chỗ do shipper chọn (1 hoặc 2 giờ). Hạn được lưu RIÊNG trên đơn.
+        reserveHours: reserveHours,
       };
       const res = await shipperApi.reserveCompartment(activeOrder.orderId, body);
-      const compIdx = res?.data?.data?.compartmentIndex || reserveCompIndex;
+      const data = res?.data?.data;
+      const compIdx = data?.compartmentIndex || reserveCompIndex;
       setReservedOrderIds((prev) => ({ ...prev, [activeOrder.orderId]: compIdx }));
-      setReserveMessage({ type: 'success', text: `Đã đặt trước ngăn #${compIdx}` });
+      // GĐ21 — hiện giờ hết hạn THẬT lấy từ backend, KHÔNG tự cộng giờ ở client (đồng hồ máy
+      // khách lệch máy chủ là chuyện thường, tự cộng sẽ hứa sai giờ).
+      const exp = data?.reserveExpiresAt;
+      const expText = exp
+        ? ` Giữ đến ${new Date(exp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}.`
+        : '';
+      setReserveMessage({
+        type: 'success',
+        text: `Đã đặt trước ngăn #${compIdx} (${reserveHours} giờ).${expText}`,
+      });
       setReserveCompIndex(null);
       await loadOrders();
       await loadReserveCompartments(activeOrder.lockerId);
@@ -787,11 +868,33 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
               Hàng Chờ Nạp ({filteredPending.length})
             </span>
             <div className="flex items-center gap-2">
+              {/* GĐ21 — CHỌN KHÁCH HÀNG cho đơn tạo hộ.
+                  Trước đây không có hộp này và hàm tạo đơn ghi cứng "Đoàn Viết Hoàng", nên mọi
+                  đơn tạo từ màn shipper đều gán cho đúng một khách dù khách thật là ai. */}
+              <select
+                value={selectedCustomerId ?? ''}
+                onChange={(e) => setSelectedCustomerId(Number(e.target.value))}
+                disabled={loadingCustomers || customers.length === 0}
+                className="text-[11px] bg-white/90 backdrop-blur-md border border-slate-200/90 rounded-xl px-2 py-1.5 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs cursor-pointer max-w-[190px] truncate disabled:opacity-50"
+                title={customersError || 'Chọn khách hàng sẽ nhận đơn này'}
+              >
+                {loadingCustomers && <option value="">Đang tải khách…</option>}
+                {!loadingCustomers && customers.length === 0 && (
+                  <option value="">Không có khách hàng</option>
+                )}
+                {customers.map((c) => (
+                  <option key={c.userId} value={c.userId}>
+                    {c.fullName} · {c.phone}
+                  </option>
+                ))}
+              </select>
+
               <button
                 type="button"
                 onClick={handleCreateSampleOrder}
-                className="ios-btn text-[11px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95 transition"
-                title="Tạo thêm 1 đơn hàng chờ nạp mẫu cho Shipper"
+                disabled={loadingCustomers || customers.length === 0}
+                className="ios-btn text-[11px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                title={customersError || 'Tạo thêm 1 đơn hàng chờ nạp cho khách đã chọn'}
               >
                 <PlusCircle className="w-3.5 h-3.5" />
                 <span>+ Thêm đơn</span>
@@ -879,7 +982,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                         <MapPin className="w-3.5 h-3.5 text-blue-500" /> {ord.lockerName}
                       </span>
                       <span className="font-bold text-slate-700 bg-white/70 px-2 py-0.5 rounded-md text-[10px] border border-white/80">
-                        Ngăn #{ord.compartmentIndex} ({ord.compartmentSize})
+                        {/* GĐ18 — bỏ cỡ ngăn: mọi ngăn đều dùng được, hiện size chỉ gây hiểu nhầm. */}
+                        Ngăn #{ord.compartmentIndex}
                       </span>
                     </div>
                   </div>
@@ -913,7 +1017,9 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   <span className="text-[10px] text-slate-400 block font-semibold">Vị trí ngăn chỉ định</span>
                   <span className={`font-extrabold text-sm ${activeOrder.lockerId ? 'text-blue-600' : 'text-amber-600'}`}>
                     {activeOrder.lockerId
-                      ? `Ngăn #${activeOrder.compartmentIndex} (Size ${activeOrder.compartmentSize || (activeOrder.compartmentIndex === 1 ? 'S' : 'L')})`
+                      // GĐ18 — bỏ "(Size …)": mọi ngăn đều nhận được mọi kiện nên cỡ không còn
+                      // là thông tin quyết định; hiện ra chỉ khiến shipper tưởng phải chọn tủ khác.
+                      ? `Ngăn #${activeOrder.compartmentIndex}`
                       : 'Chưa gán tủ'}
                   </span>
                 </div>
@@ -1039,6 +1145,31 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                                     đơn giữ nguyên tủ cũ.
                                   </span>
                                 </p>
+                                {/* GĐ23 — chọn thời hạn giữ chỗ ngay trong hộp xác nhận chọn tủ. */}
+                                <div>
+                                  <span className="text-[10px] text-slate-500 font-semibold uppercase block mb-1">
+                                    Giữ chỗ trong
+                                  </span>
+                                  <div className="flex gap-1.5">
+                                    {[1, 2].map((h) => {
+                                      const on = assignReserveHours === h;
+                                      return (
+                                        <button
+                                          key={h}
+                                          type="button"
+                                          onClick={() => setAssignReserveHours(h)}
+                                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                                            on
+                                              ? 'bg-emerald-600 text-white border-emerald-600'
+                                              : 'bg-white text-slate-700 border-slate-300 hover:border-emerald-400'
+                                          }`}
+                                        >
+                                          {h} giờ
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                                 <div className="flex gap-2">
                                   <button
                                     type="button"
@@ -1102,6 +1233,33 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   />
                 </div>
 
+                {/* GĐ21 — CHỌN THỜI HẠN GIỮ CHỖ. Hạn được lưu RIÊNG trên từng đơn; trước đây
+                    mọi đơn dùng chung một hằng số 120 phút nên không ai chọn được. */}
+                <div>
+                  <span className="text-[10px] text-slate-600 font-semibold uppercase block mb-1">
+                    Thời hạn giữ chỗ
+                  </span>
+                  <div className="flex gap-1.5">
+                    {[1, 2].map((h) => {
+                      const on = reserveHours === h;
+                      return (
+                        <button
+                          key={h}
+                          type="button"
+                          onClick={() => setReserveHours(h)}
+                          className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                            on
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                              : 'bg-white text-slate-700 border-indigo-200 hover:border-indigo-400'
+                          }`}
+                        >
+                          {h} giờ
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div>
                   <span className="text-[10px] text-slate-600 font-semibold uppercase block mb-1">
                     Chọn ngăn trống
@@ -1126,7 +1284,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                                 : 'bg-white text-slate-700 border-indigo-200 hover:border-indigo-400'
                             }`}
                           >
-                            #{idx}{c.size ? ` · ${c.size}` : ''}
+                            {/* GĐ18 — chỉ hiện số ngăn, bỏ "· S/L" (mọi ngăn dùng được như nhau). */}
+                            #{idx}
                           </button>
                         );
                       })}

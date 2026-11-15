@@ -7,7 +7,7 @@ import { store } from '../services/store';
 import { pickupApi, orderApi, lockerApi } from '../services/api';
 import {
   Package, Clock, CheckCircle2, AlertTriangle, QrCode,
-  Search, MapPin, X, AlertCircle, Timer,
+  Search, MapPin, X, XCircle, AlertCircle, Timer,
   RefreshCw, ShieldCheck, Key, ChevronRight, Check,
   Calendar, Layers, ArrowUpRight, Copy, Sparkles,
   Shield, Smartphone, ExternalLink
@@ -38,6 +38,10 @@ export default function CustomerPickupTab({ currentUser }) {
   // Trước đây là số cứng `0.85` nên khách nào cũng thấy cùng một con số dù kiện nặng nhẹ khác nhau.
   // DB lưu GRAM (`MqttService:1069`), `LockerCabinetVisualizer` hiểu KG → chia 1000 tại chỗ truyền.
   const [compartmentSensor, setCompartmentSensor] = useState(null);
+
+  // GĐ20 — mốc `seq` sự kiện Kiosk đã xử lý. `null` = chưa hỏi lần nào, lần poll đầu chỉ lấy
+  // `latestSeq` để KHÔNG phát lại modal của lần trước.
+  const [kioskSeq, setKioskSeq] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -313,6 +317,86 @@ export default function CustomerPickupTab({ currentUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrder?.lockerId, selectedOrder?.compartmentIndex]);
 
+  /**
+   * GĐ20 — tự mở modal QR/OTP khi khách chọn cách nhận trên MÀN HÌNH TỦ.
+   *
+   * <p>Luồng: khách đứng ở tủ bấm "nhận bằng QR/OTP" trên TFT → firmware phát
+   * {@code ptit/{dev}/receive/method} → backend ghi sự kiện Kiosk → web khách poll 1,5 giây và
+   * mở đúng modal. Nhờ vậy khách không phải bấm thêm lần nữa trên điện thoại.
+   *
+   * <p><b>Ba ràng buộc quan trọng:</b>
+   * <ol>
+   *   <li>Chỉ poll khi đơn đang xem có {@code lockerId} và đã {@code DEPOSITED} — chưa nạp kiện
+   *       thì không có gì để nhận, mở modal chỉ gây hoang mang.</li>
+   *   <li>Lần poll ĐẦU bỏ trống {@code after} → backend trả {@code events: []} + {@code latestSeq}.
+   *       Nếu gửi {@code after} cũ thì mở tab là modal bật lên vì sự kiện của lần test trước.</li>
+   *   <li>Chỉ phản ứng với sự kiện {@code CUSTOMER_METHOD_CHOSEN} của ĐÚNG tủ đang xem (backend đã
+   *       lọc theo {@code lockerId}, đây là lớp kiểm thứ hai).</li>
+   * </ol>
+   */
+  useEffect(() => {
+    const lockerId = selectedOrder?.lockerId;
+    const orderStatus = selectedOrder?.status;
+    if (!lockerId || orderStatus !== 'DEPOSITED') return undefined;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await pickupApi.getKioskEvents(lockerId, kioskSeq);
+        if (cancelled) return;
+        const payload = res?.data?.data;
+        if (!payload) return;
+
+        const events = payload.events || [];
+        // Tìm sự kiện MỚI NHẤT thuộc loại "khách chọn cách nhận" của đúng tủ này.
+        const chosen = [...events]
+          .reverse()
+          .find((e) => e.type === 'CUSTOMER_METHOD_CHOSEN'
+            && (!e.lockerId || e.lockerId === lockerId));
+
+        if (chosen) {
+          const method = String(chosen.message || '').toLowerCase();
+          if (method === 'qr') {
+            handleOpenQrModal(selectedOrder);
+          } else if (method === 'otp') {
+            // SỬA GĐ20 (minh bắt ở vòng 1): trước đây gọi `handleGenerateOtp` — hàm đó tạo OTP
+            // rồi chỉ báo toast, KHÔNG mở modal, vì modal OTP là state riêng `otpModalOrder`.
+            // Nút "Phóng to" ở khối OTP mới là chỗ set state đó.
+            // Nay: mở modal NGAY (để khách thấy ngay như khi chọn QR), rồi tạo OTP nếu chưa có.
+            setOtpModalOrder(selectedOrder);
+            if (!getOtpStatus(selectedOrder).isGenerated) {
+              handleGenerateOtp(selectedOrder);
+            }
+          }
+        }
+
+        // Luôn cập nhật mốc, kể cả khi không có sự kiện — nếu chỉ cập nhật khi có sự kiện thì
+        // lần poll sau vẫn hỏi từ mốc cũ và xử lý lại đúng sự kiện vừa rồi.
+        if (payload.latestSeq != null) {
+          setKioskSeq(payload.latestSeq);
+        }
+      } catch {
+        // Không có quyền / mất mạng: im lặng bỏ qua nhịp này. Đây là tiện ích phụ, không được
+        // làm phiền khách bằng banner lỗi khi họ vẫn mở được mã bằng nút bấm tay.
+      }
+    };
+
+    poll(); // đọc ngay, không để trống 1,5 giây đầu
+    const timer = setInterval(poll, 1500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrder?.lockerId, selectedOrder?.status, selectedOrder?.orderId, kioskSeq]);
+
+  // Đổi đơn đang xem thì phải quên mốc cũ, nếu không sẽ so sánh nhầm với seq của tủ khác.
+  useEffect(() => {
+    setKioskSeq(null);
+  }, [selectedOrder?.orderId]);
+
   const getStatusBadge = (status) => {
     switch (status) {
       case 'DEPOSITED':
@@ -340,8 +424,22 @@ export default function CustomerPickupTab({ currentUser }) {
             <AlertTriangle className="w-3.5 h-3.5 text-rose-600" /> Quá hạn lưu kho
           </span>
         );
+      // BUG ĐÃ SỬA: trước đây thiếu nhánh CANCELLED nên rơi vào `default: return null`.
+      // Hậu quả: đơn đã huỷ hiện trong danh sách của khách với KHÔNG nhãn trạng thái và
+      // KHÔNG có cách nhận — khách tưởng hệ thống lỗi, không hiểu vì sao không nhận được.
+      // API trả cả đơn CANCELLED (chủ ý, để khách tra được lịch sử), nên phải có nhãn.
+      case 'CANCELLED':
+        return (
+          <span className="bg-slate-100 text-slate-600 border border-slate-300 text-xs font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+            <XCircle className="w-3.5 h-3.5 text-slate-500" /> Đơn đã huỷ
+          </span>
+        );
       default:
-        return null;
+        return (
+          <span className="bg-slate-100 text-slate-500 border border-slate-200 text-xs font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+            {status || 'Không rõ'}
+          </span>
+        );
     }
   };
 
@@ -594,6 +692,14 @@ export default function CustomerPickupTab({ currentUser }) {
                     </span>
                   </div>
 
+                  {/* GĐ20 — nói rõ cho khách biết phải thao tác trên màn hình tủ; bấm chọn ở tủ
+                      thì modal dưới đây sẽ TỰ mở. Nếu không có dòng này khách không hiểu vì sao
+                      hệ thống "tự mở" modal. */}
+                  <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 leading-snug">
+                    Tủ đang chờ bạn chọn cách nhận: hãy bấm <strong>QR</strong> hoặc <strong>OTP</strong> trên
+                    màn hình tủ — mã tương ứng sẽ tự hiện ở đây. Bạn cũng có thể bấm nút bên dưới.
+                  </p>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     {/* Method 1: QR 60s */}
                     <button
@@ -713,6 +819,34 @@ export default function CustomerPickupTab({ currentUser }) {
                 </div>
               )}
 
+              {/* Vì sao đơn này KHÔNG có nút nhận hàng — trước đây khách chỉ thấy trống trơn
+                  và tưởng hệ thống lỗi. Nêu đúng lý do theo từng trạng thái. */}
+              {selectedOrder.status !== 'DEPOSITED' && (
+                <div className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200 flex items-start gap-3">
+                  <AlertCircle className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  <div className="text-[11px] text-slate-600 space-y-1">
+                    <p className="font-bold text-slate-800">
+                      {selectedOrder.status === 'PENDING' && 'Chưa thể nhận hàng: shipper chưa nạp kiện vào tủ.'}
+                      {selectedOrder.status === 'CANCELLED' && 'Đơn đã bị huỷ nên không nhận được tại tủ.'}
+                      {selectedOrder.status === 'COMPLETED' && 'Đơn đã được nhận xong trước đó.'}
+                      {selectedOrder.status === 'OVERDUE' && 'Đơn quá hạn lưu kho, đã được thu hồi khỏi tủ.'}
+                      {!['PENDING', 'CANCELLED', 'COMPLETED', 'OVERDUE'].includes(selectedOrder.status)
+                        && `Trạng thái hiện tại: ${selectedOrder.status || 'không rõ'}.`}
+                    </p>
+                    <p>
+                      {selectedOrder.status === 'PENDING'
+                        && 'Mã QR và OTP chỉ mở được sau khi kiện đã nằm trong ngăn tủ.'}
+                      {selectedOrder.status === 'CANCELLED'
+                        && 'Nếu bạn vẫn cần kiện hàng này, liên hệ bưu cục để tạo đơn mới.'}
+                      {selectedOrder.status === 'COMPLETED'
+                        && 'Xem lại lịch sử ở bộ lọc "Đã nhận".'}
+                      {selectedOrder.status === 'OVERDUE'
+                        && 'Liên hệ bưu cục để được hỗ trợ nhận lại kiện.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Interactive Visual Locker Cabinet */}
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -720,7 +854,8 @@ export default function CustomerPickupTab({ currentUser }) {
                     Sơ Đồ Ngăn Tủ & Cảm Biến
                   </span>
                   <span className="text-[11px] font-mono text-blue-600 font-bold bg-blue-50/80 px-2.5 py-0.5 rounded-full border border-blue-200">
-                    Vị Trí: Ngăn #{selectedOrder.compartmentIndex || 2} ({selectedOrder.compartmentSize || (selectedOrder.compartmentIndex === 1 ? 'S' : 'L')})
+                    {/* GĐ18 — bỏ phần "({size})": mọi ngăn dùng được như nhau. */}
+                    Vị Trí: Ngăn #{selectedOrder.compartmentIndex || 2}
                   </span>
                 </div>
 
@@ -755,7 +890,8 @@ export default function CustomerPickupTab({ currentUser }) {
                   </div>
 
                   <span className="bg-blue-50/90 text-blue-700 font-bold px-3 py-1 rounded-xl border border-blue-200 text-xs">
-                    Ngăn #{selectedOrder.compartmentIndex || 2} (Size {selectedOrder.compartmentSize || (selectedOrder.compartmentIndex === 1 ? 'S' : 'L')})
+                    {/* GĐ18 — bỏ "(Size …)": mọi ngăn dùng được như nhau. */}
+                    Ngăn #{selectedOrder.compartmentIndex || 2}
                   </span>
                 </div>
 
@@ -892,7 +1028,8 @@ export default function CustomerPickupTab({ currentUser }) {
 
                   <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-3 text-xs text-slate-700 text-left space-y-1">
                     <p><strong>Trạm tủ:</strong> {otpModalOrder.lockerName}</p>
-                    <p><strong>Vị trí:</strong> Ngăn #{otpModalOrder.compartmentIndex} ({otpModalOrder.compartmentSize})</p>
+                    {/* GĐ19 — bỏ `({compartmentSize})`: mọi ngăn dùng được như nhau (GĐ18). */}
+                    <p><strong>Vị trí:</strong> Ngăn #{otpModalOrder.compartmentIndex}</p>
                     <p className="text-[10px] text-slate-500">Bảo vệ chống dò mã: Khóa 2 phút nếu sai quá 5 lần.</p>
                   </div>
 

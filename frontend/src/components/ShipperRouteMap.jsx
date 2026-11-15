@@ -751,7 +751,9 @@ export default function ShipperRouteMap({ currentUser }) {
                           key={c.compartmentId ?? c.compIndex}
                           className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${cls}`}
                         >
-                          #{c.compIndex} · {c.size} · {st || 'N/A'}
+                          {/* GĐ18 — bỏ `· {c.size}`: mọi ngăn dùng được như nhau, hiện cỡ chỉ
+                              khiến shipper tưởng phải chờ ngăn "đúng cỡ". */}
+                          #{c.compIndex} · {st || 'N/A'}
                         </span>
                       );
                     })}

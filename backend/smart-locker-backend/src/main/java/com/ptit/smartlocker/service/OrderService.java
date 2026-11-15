@@ -141,8 +141,11 @@ public class OrderService {
 
                 Compartment assignedComp = selectSuitableCompartment(lockedEmptyComps, requiredSize);
                 if (assignedComp == null) {
-                    throw new RuntimeException("Tủ " + locker.getName() + " hiện không còn ngăn tủ trống phù hợp với kích thước kiện hàng (Size " 
-                            + requiredSize + "). Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
+                    // GĐ18 — KHÔNG còn nhắc "kích thước": mọi ngăn đều dùng được, nên lý do duy
+                    // nhất có thể là tủ hết ngăn trống. Nói sai lý do sẽ khiến người dùng đi chọn
+                    // tủ khác để "vừa cỡ" trong khi vấn đề là tủ đã kín.
+                    throw new RuntimeException("Tủ " + locker.getName() + " đã hết ngăn trống. "
+                            + "Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
                 }
 
                 assignedComp.setStatus("RESERVED");
@@ -329,30 +332,26 @@ public class OrderService {
     }
 
     /**
-     * Thuật toán lựa chọn ngăn tủ phù hợp theo kích cỡ (Size Matching Strategy):
-     * - Ưu tiên 1: Chọn đúng kích thước yêu cầu (Exact Match: S -> S, M -> M, L -> L)
-     * - Ưu tiên 2: Nâng cấp ngăn lớn hơn nếu hết ngăn chuẩn (Size Upgrade: S -> M -> L, M -> L)
-     * - Trả về null nếu không có ngăn nào đủ sức chứa
+     * Chọn ngăn cho một đơn — GĐ18: <b>mọi ngăn đều dùng được như nhau</b>.
+     *
+     * <p><b>Vì sao bỏ phân biệt size:</b> user chốt hệ thống chỉ có 2 cỡ ngăn (S/L) nhưng việc
+     * phân biệt không mang lại lợi ích thực tế — nó chỉ làm đơn bị từ chối ("hết ngăn phù hợp kích
+     * thước") trong khi tủ vẫn còn ngăn trống, và buộc phải bảo trì thêm logic "nâng cấp S→L".
+     *
+     * <p><b>Hành vi mới:</b> lấy <b>ngăn EMPTY ĐẦU TIÊN</b> trong danh sách (danh sách đã được
+     * truy vấn sắp theo {@code compIndex} ASC), không đọc {@code size} để quyết định gì nữa.
+     *
+     * <p><b>Tham số {@code requiredSize} giữ lại nhưng KHÔNG dùng:</b> giữ chữ ký để không phải
+     * sửa mọi chỗ gọi, và vì {@code requiredSize} vẫn còn trong DTO để tương thích frontend.
+     * Cột {@code compartments.size} <b>vẫn giữ trong DB</b> — dữ liệu cũ phải đọc được, chỉ là
+     * không còn là tiêu chí chọn.
+     *
+     * @return ngăn EMPTY đầu tiên, hoặc {@code null} nếu không còn ngăn nào
      */
     private Compartment selectSuitableCompartment(List<Compartment> emptyComps, String requiredSize) {
         if (emptyComps == null || emptyComps.isEmpty()) {
             return null;
         }
-
-        // 1. Khớp chính xác kích thước
-        for (Compartment comp : emptyComps) {
-            if (comp.getSize() != null && comp.getSize().equalsIgnoreCase(requiredSize)) {
-                return comp;
-            }
-        }
-
-        // 2. Nâng cấp lên ngăn lớn (Size L) nếu ngăn nhỏ (Size S) đã kín chỗ
-        if ("S".equalsIgnoreCase(requiredSize) || "M".equalsIgnoreCase(requiredSize)) {
-            for (Compartment comp : emptyComps) {
-                if ("L".equalsIgnoreCase(comp.getSize())) return comp;
-            }
-        }
-
-        return null;
+        return emptyComps.get(0);
     }
 }

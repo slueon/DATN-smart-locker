@@ -644,7 +644,9 @@ export default function AdminTab() {
                   lockerId={locker.lockerId}
                   compartments={locker.compartments?.map((comp) => ({
                     id: comp.compIndex,
-                    name: `Ngăn #${comp.compIndex} (${comp.size === 'S' ? 'Size S - Nhỏ' : 'Size L - Lớn'})`,
+                    // GĐ18 — bỏ phần "(Size …)" khỏi name; visualizer không đọc `name` nữa nhưng
+                    // giữ chuỗi có size ở đây là mầm để chỗ khác hiện lại cỡ ngăn.
+                    name: `Ngăn #${comp.compIndex}`,
                     size: comp.size,
                     status: (comp.status === 'EMPTY' || !comp.status) ? 'AVAILABLE' : comp.status,
                     // GĐ5 — DB lưu GRAM (`MqttService:1069` ghi thẳng payload loadcell),
@@ -687,9 +689,8 @@ export default function AdminTab() {
                         >
                           <div className="flex items-center justify-between text-xs">
                             <span className="font-bold text-slate-900 font-mono text-sm">#{comp.compIndex}</span>
-                            <span className="text-[10px] bg-white text-slate-600 px-2 py-0.5 rounded-md font-mono font-bold border border-slate-200">
-                              Size {comp.size}
-                            </span>
+                            {/* GĐ18 — bỏ badge "Size {comp.size}": mọi ngăn dùng được như nhau,
+                                hiện cỡ chỉ khiến ADMIN tưởng còn phân biệt size. */}
                           </div>
 
                           <div className="py-0.5">

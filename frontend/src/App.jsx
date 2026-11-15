@@ -8,7 +8,9 @@ import ShipperRecallTab from './components/ShipperRecallTab';
 import AdminTab from './components/AdminTab';
 import LockerNetworkMapTab from './components/LockerNetworkMapTab';
 import ShipperRouteMap from './components/ShipperRouteMap';
-import IoTDock from './components/IoTDock';
+// GĐ18 — đã xoá component dock telemetry ESP32 ở góc dưới phải (user yêu cầu bỏ khỏi giao diện).
+// Dock đó poll `/api/mqtt/recent-logs` mỗi 6 giây và chỉ để trình diễn; endpoint backend VẪN GIỮ
+// (ADMIN còn xem lịch sử mở tủ), chỉ frontend không còn gọi.
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
@@ -152,9 +154,6 @@ export default function App() {
           )}
         </main>
       </div>
-
-      {/* Floating ESP32 Telemetry Terminal Dock (Dynamic Island style) */}
-      <IoTDock />
     </div>
   );
 }

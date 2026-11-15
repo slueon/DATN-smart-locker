@@ -23,7 +23,7 @@ export default function LockerCabinetVisualizer({
   const defaultSlots = [
     {
       id: 1,
-      name: 'Ngăn 1 (Size S - Nhỏ)',
+      name: 'Ngăn 1',
       size: 'S',
       dimensions: '15 x 30 x 40 cm',
       status: 'AVAILABLE',
@@ -33,7 +33,7 @@ export default function LockerCabinetVisualizer({
     },
     {
       id: 2,
-      name: 'Ngăn 2 (Size L - Lớn)',
+      name: 'Ngăn 2',
       size: 'L',
       dimensions: '40 x 45 x 55 cm',
       status: 'AVAILABLE',
@@ -75,7 +75,7 @@ export default function LockerCabinetVisualizer({
         </div>
       </div>
 
-      {/* Compartment Rack Grid (2 Ngăn: Size S & Size L) */}
+      {/* Compartment Rack Grid — GĐ18: bỏ phân biệt size, 2 ngăn dùng như nhau */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {slotsToRender.map((slot) => {
           const isTarget = slot.id === activeSlotId;
@@ -116,7 +116,7 @@ export default function LockerCabinetVisualizer({
                       #{slot.id}
                     </span>
                     <span className="text-xs font-bold text-slate-800">
-                      Ngăn #{slot.id} ({slot.size === 'S' ? 'Size S - Nhỏ' : 'Size L - Lớn'})
+                      Ngăn #{slot.id}
                     </span>
                   </div>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusBadge.bg}`}>

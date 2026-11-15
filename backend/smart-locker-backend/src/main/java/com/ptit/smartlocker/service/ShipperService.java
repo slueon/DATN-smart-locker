@@ -26,6 +26,7 @@ public class ShipperService {
     private final DeviceEventRepository deviceEventRepository;
     private final LockerSlotScheduleRepository slotScheduleRepository;
     private final LockerRepository lockerRepository;
+    private final UserRepository userRepository;
 
     @Autowired(required = false)
     @Lazy
@@ -38,7 +39,8 @@ public class ShipperService {
             PickupCredentialRepository credentialRepository,
             DeviceEventRepository deviceEventRepository,
             LockerSlotScheduleRepository slotScheduleRepository,
-            LockerRepository lockerRepository) {
+            LockerRepository lockerRepository,
+            UserRepository userRepository) {
         this.tokenRepository = tokenRepository;
         this.orderRepository = orderRepository;
         this.compartmentRepository = compartmentRepository;
@@ -46,6 +48,32 @@ public class ShipperService {
         this.deviceEventRepository = deviceEventRepository;
         this.slotScheduleRepository = slotScheduleRepository;
         this.lockerRepository = lockerRepository;
+        this.userRepository = userRepository;
+    }
+
+    /**
+     * GĐ21 — danh sách KHÁCH HÀNG để shipper chọn khi tạo đơn hộ.
+     *
+     * <p><b>Vì sao phải là endpoint chứ không hard-code:</b> trước đây nút "+ Thêm đơn" ghi cứng
+     * tên/SĐT của một khách, nên mọi đơn tạo từ màn shipper đều gán cho đúng người đó bất kể khách
+     * thật là ai. Danh sách phải đọc từ CSDL để tài khoản tạo thêm sau này cũng hiện ra.
+     *
+     * <p>Chỉ trả {@code userId}, {@code fullName}, {@code phone} — <b>không</b> {@code password},
+     * {@code role}, {@code createdAt}. Sắp theo tên để hộp chọn có thứ tự ổn định.
+     */
+    @Transactional(readOnly = true)
+    public List<ShipperDTO.CustomerOptionResponse> getCustomerOptions() {
+        return userRepository.findByRole("CUSTOMER").stream()
+                .sorted(java.util.Comparator
+                        .comparing((User u) -> u.getFullName() == null ? "" : u.getFullName(),
+                                java.util.Comparator.naturalOrder())
+                        .thenComparing(u -> u.getId() == null ? 0L : u.getId()))
+                .map(u -> ShipperDTO.CustomerOptionResponse.builder()
+                        .userId(u.getId())
+                        .fullName(u.getFullName())
+                        .phone(u.getPhone())
+                        .build())
+                .toList();
     }
 
     /** GĐ11 — ngưỡng "tủ còn sống": nhịp tim cũ hơn 5 phút thì không cho shipper chọn. */
@@ -311,12 +339,23 @@ public class ShipperService {
      * tủ: hai shipper bấm cùng lúc thì chỉ một người giành được ngăn, người kia nhận lỗi.
      */
     @Transactional
-    public OrderDTO.OrderResponse reserveCompartment(String orderId, String trackingCode, Integer compartmentIndex) {
+    public OrderDTO.OrderResponse reserveCompartment(String orderId, String trackingCode,
+                                                     Integer compartmentIndex, Integer reserveHours) {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("Thiếu mã đơn hàng cần đặt trước!");
         }
         if (compartmentIndex == null || compartmentIndex < 1) {
             throw new IllegalArgumentException("Chỉ số ngăn không hợp lệ (phải từ 1 trở lên)!");
+        }
+        // GĐ21 — thời hạn giữ chỗ do shipper chọn: chỉ 1 hoặc 2 giờ. Thiếu thì mặc định 2 giờ.
+        // Giá trị khác bị TỪ CHỐI rõ ràng, KHÔNG âm thầm kẹp về 1 — kẹp im lặng là kiểu lỗi khiến
+        // shipper tưởng đã giữ 5 giờ trong khi chỉ được 1.
+        if (reserveHours == null) {
+            reserveHours = 2;
+        }
+        if (reserveHours != 1 && reserveHours != 2) {
+            throw new IllegalArgumentException(
+                    "Thời hạn đặt trước chỉ nhận 1 hoặc 2 giờ (nhận được: " + reserveHours + ").");
         }
 
         Order order = orderRepository.findByIdWithCompartment(orderId.trim())
@@ -398,7 +437,11 @@ public class ShipperService {
         order.setCompartment(target);
         order.setTrackingCode(finalTracking);
         // Dấu hiệu DUY NHẤT cho biết shipper đã chủ động đặt trước (Q4).
-        order.setShipperReservedAt(LocalDateTime.now());
+        LocalDateTime reservedAt = LocalDateTime.now();
+        order.setShipperReservedAt(reservedAt);
+        // GĐ21 — lưu hạn RIÊNG của đơn này (1h hoặc 2h). ReservationTimeoutService đọc cột này
+        // trước; đơn cũ để NULL và rơi về công thức 120 phút.
+        order.setReserveExpiresAt(reservedAt.plusHours(reserveHours));
         orderRepository.save(order);
 
         // KHÔNG đụng available_slots (R2).
@@ -424,6 +467,9 @@ public class ShipperService {
                 .compartmentIndex(target.getCompIndex())
                 .compartmentSize(target.getSize())
                 .isShipperReserved(order.getShipperReservedAt() != null)
+                // GĐ21 — trả hạn giữ chỗ để web hiện "giữ đến HH:mm" mà KHÔNG tự cộng giờ ở client
+                // (client cộng giờ sẽ lệch nếu đồng hồ máy khác máy chủ).
+                .reserveExpiresAt(order.getReserveExpiresAt())
                 .expectedDate(order.getExpectedDate())
                 .status(order.getStatus())
                 .productName(order.getProductName())
@@ -484,6 +530,10 @@ public class ShipperService {
         order.setCompartment(null);
         // Xoá dấu đặt trước → đơn trở về trạng thái "ngăn do hệ thống/khách", quét nhãn sẽ ra 0.
         order.setShipperReservedAt(null);
+        // GĐ21 — phải xoá CẢ hạn giữ chỗ của đơn. Nếu để lại, đơn đã huỷ vẫn mang
+        // `reserve_expires_at` của lần đặt trước cũ; lần đặt trước sau (nếu có) sẽ ghi đè, nhưng
+        // dữ liệu giữa hai lần đó là mâu thuẫn: có hạn mà không có dấu đặt trước.
+        order.setReserveExpiresAt(null);
         orderRepository.save(order);
 
         // R2: chỉ cộng slot khi ngăn thật sự chuyển về EMPTY ở lần huỷ này.
@@ -527,9 +577,10 @@ public class ShipperService {
      * vì bảng {@code orders} không lưu toạ độ khách. Đây là hạng mục phát triển tiếp theo; đừng
      * trình bày là đã có.
      *
-     * <p><b>Cỡ kiện:</b> {@code orders} cũng không lưu cỡ kiện (chỉ {@code CheckoutRequest} có
-     * {@code requiredSize} lúc tạo đơn). Vì vậy cỡ được suy từ ngăn đơn đang trỏ tới nếu có;
-     * không có ngăn thì coi là {@code S} — tức chấp nhận mọi cỡ ngăn, KHÔNG bịa cỡ kiện.
+     * <p><b>Cỡ kiện — GĐ18: KHÔNG còn dùng để lọc gì.</b> Hệ thống bỏ phân biệt size: mọi ngăn
+     * {@code EMPTY} đều nhận được mọi kiện, nên {@code availableCompartments} đếm <b>tất cả</b> ngăn
+     * trống chứ không chỉ ngăn "vừa cỡ". Cột {@code compartments.size} vẫn còn trong DB nhưng chỉ
+     * để đọc/hiển thị, không tham gia quyết định.
      *
      * <p><b>N+1:</b> chỉ 2 câu query — {@link CompartmentRepository#findAllWithLocker()} nạp toàn
      * bộ ngăn kèm tủ, và {@code lockerRepository.findAll()}. Không truy vấn trong vòng lặp.
@@ -542,9 +593,6 @@ public class ShipperService {
         Order order = orderRepository.findByIdWithCompartment(orderId.trim())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
 
-        String requiredSize = order.getCompartment() != null && order.getCompartment().getSize() != null
-                ? order.getCompartment().getSize().trim().toUpperCase()
-                : "S";
         String currentLockerId = order.getLocker() != null ? order.getLocker().getLockerId() : null;
 
         // 1 câu query cho toàn bộ ngăn của mọi tủ (JOIN FETCH locker) rồi gom theo lockerId.
@@ -575,9 +623,14 @@ public class ShipperService {
             List<Compartment> comps = compsByLocker.getOrDefault(locker.getLockerId(), List.of());
             if (comps.isEmpty()) continue;
 
+            // GĐ18 — KHÔNG lọc theo size nữa: mọi ngăn EMPTY đều dùng được.
+            //
+            // Trước đây dòng này còn `&& sizeFits(requiredSize, c.getSize())`, nên một tủ còn 2
+            // ngăn trống cỡ S vẫn bị coi là "0 ngăn trống" cho đơn cỡ L → shipper bị chặn giao dù
+            // tủ còn chỗ. Cột `compartments.size` vẫn giữ trong DB, chỉ không còn là tiêu chí.
             int available = 0;
             for (Compartment c : comps) {
-                if ("EMPTY".equalsIgnoreCase(c.getStatus()) && sizeFits(requiredSize, c.getSize())) {
+                if ("EMPTY".equalsIgnoreCase(c.getStatus())) {
                     available++;
                 }
             }
@@ -626,12 +679,23 @@ public class ShipperService {
      * shipper chốt một ngăn vật lý đã có sẵn, không phải một suất mới trên lịch biểu.
      */
     @Transactional
-    public OrderDTO.OrderResponse assignLocker(String orderId, String lockerId, Integer compartmentIndex) {
+    public OrderDTO.OrderResponse assignLocker(String orderId, String lockerId, Integer compartmentIndex,
+                                              Integer reserveHours) {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("Thiếu mã đơn hàng cần chọn tủ!");
         }
         if (lockerId == null || lockerId.isBlank()) {
             throw new IllegalArgumentException("Vui lòng chọn tủ cần giao!");
+        }
+        // GĐ23 — thời hạn giữ chỗ: validate GIỐNG HỆT `reserveCompartment` để hai luồng không lệch
+        // luật. Chỉ {1,2}, thiếu thì mặc định 2 (giữ hành vi 120 phút cũ). Giá trị khác bị TỪ CHỐI
+        // rõ ràng, không âm thầm kẹp — kẹp im lặng làm shipper tưởng đã giữ 5 giờ.
+        if (reserveHours == null) {
+            reserveHours = 2;
+        }
+        if (reserveHours != 1 && reserveHours != 2) {
+            throw new IllegalArgumentException(
+                    "Thời hạn đặt trước chỉ nhận 1 hoặc 2 giờ (nhận được: " + reserveHours + ").");
         }
 
         // Khoá bi quan dòng đơn: đổi tủ chạy song song với tác vụ tự nhả ngăn quá hạn.
@@ -688,15 +752,13 @@ public class ShipperService {
                             "Ngăn " + compartmentIndex + " của tủ " + targetLocker.getLockerId()
                                     + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác."));
         } else {
-            String requiredSize = old != null && old.getSize() != null
-                    ? old.getSize().trim().toUpperCase()
-                    : "S";
+            // GĐ18 — không chọn theo size: lấy ngăn EMPTY ĐẦU TIÊN (đã sắp theo compIndex).
+            // Message lỗi cũng không nhắc "kích thước" nữa — mọi ngăn đều dùng được, nên lý do
+            // duy nhất là tủ đã hết ngăn trống.
             target = empties.stream()
-                    .filter(c -> sizeFits(requiredSize, c.getSize()))
                     .findFirst()
                     .orElseThrow(() -> new com.ptit.smartlocker.exception.BusinessException(
-                            "Tủ " + targetLocker.getName() + " không còn ngăn trống phù hợp với kích thước kiện (Size "
-                                    + requiredSize + "). Vui lòng chọn tủ khác."));
+                            "Tủ " + targetLocker.getName() + " đã hết ngăn trống. Vui lòng chọn tủ khác."));
         }
 
         target.setStatus("RESERVED");
@@ -713,6 +775,9 @@ public class ShipperService {
         order.setCompartment(target);
         // Dấu hiệu "shipper đã chốt tuyến", phân biệt với tủ do hệ thống đề xuất lúc tạo đơn.
         order.setShipperReservedAt(now);
+        // GĐ23 — ghi hạn RIÊNG của lần chọn tủ này. Thiếu dòng này thì mọi đơn chọn tủ bị khoá
+        // cứng theo hằng số toàn cục 120 phút, shipper không chọn được 1 giờ (đúng lỗi thẻ này vá).
+        order.setReserveExpiresAt(now.plusHours(reserveHours));
         orderRepository.save(order);
 
         DeviceEvent event = DeviceEvent.builder()
@@ -738,6 +803,8 @@ public class ShipperService {
                 .compartmentIndex(target.getCompIndex())
                 .compartmentSize(target.getSize())
                 .isShipperReserved(true)
+                // GĐ23 — trả hạn giữ chỗ để web hiện "giữ đến HH:mm" mà không tự cộng giờ ở client.
+                .reserveExpiresAt(order.getReserveExpiresAt())
                 .expectedDate(order.getExpectedDate())
                 .status(order.getStatus())
                 .productName(order.getProductName())
@@ -747,17 +814,6 @@ public class ShipperService {
                 .createdAt(order.getCreatedAt())
                 .trackingCode(tracking)
                 .build();
-    }
-
-    /** Cỡ ngăn {@code compartmentSize} có chứa được kiện cỡ {@code requiredSize} hay không. */
-    private boolean sizeFits(String requiredSize, String compartmentSize) {
-        if (compartmentSize == null) return false;
-        String need = requiredSize == null ? "S" : requiredSize.trim().toUpperCase();
-        String have = compartmentSize.trim().toUpperCase();
-        if (need.equals(have)) return true;
-        if ("S".equals(need)) return "M".equals(have) || "L".equals(have);
-        if ("M".equals(need)) return "L".equals(have);
-        return false;
     }
 
     /**

@@ -179,59 +179,81 @@ class LockerOverbookingTests {
     // ─────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("CHỐT NGĂN VẬT LÝ: còn slot nhưng không có ngăn đúng size thì bị từ chối bằng 'không còn ngăn'")
-    void hetNganPhuHopTheoKichThuoc() {
-        // Seed: LOCKER_HN_01 có ngăn 1 = S, ngăn 2 = L.
-        // Chiếm ngăn L (size L) để chỉ còn ngăn S trống.
-        int daChiem = 0;
+    @DisplayName("GĐ18: kiện size L ĐƯỢC cấp ngăn size S — không còn phân biệt size")
+    void kienSizeLDuocCapNganS() {
+        // GĐ18 — test cũ `hetNganPhuHopTheoKichThuoc` kiểm hành vi ĐÃ BỊ BỎ: "còn ngăn S mà xin
+        // ngăn L thì từ chối". Nay mọi ngăn dùng được như nhau, nên kỳ vọng đảo lại: phải CẤP
+        // được ngăn S cho kiện L. Đây chính là phép thử chứng minh đã bỏ phân biệt size thật sự.
+        //
+        // Chiếm hết ngăn L trước, để chắc chắn ngăn được cấp là ngăn S.
+        //
+        // KHÔNG dùng createOrder để chiếm: từ GĐ18 createOrder bỏ qua size nên nó sẽ lấy luôn
+        // ngăn S đầu tiên, còn ngăn L vẫn trống — fixture không dựng được điều kiện cần. Đặt
+        // thẳng status ở tầng repository: đây là dựng dữ liệu test, không phải đường nghiệp vụ.
+        int soLChiem = 0;
         for (Compartment c : compartmentRepository
                 .findByLocker_LockerIdAndStatus(locker.getLockerId(), "EMPTY")) {
             if ("L".equalsIgnoreCase(c.getSize())) {
-                try {
-                    orderService.createOrder(taoRequest("095555000" + c.getCompIndex(), "L", LocalDate.now()));
-                    daChiem++;
-                } catch (RuntimeException e) {
-                    khangDinhTuChoiNghiepVu(e, DAU_HIEU_HET_CHO,
-                            "Chiếm ngăn L chuẩn bị fixture (không được nổ lỗi lập trình)");
-                }
+                c.setStatus("OCCUPIED");
+                compartmentRepository.save(c);
+                soLChiem++;
             }
         }
-        assertTrue(daChiem > 0, "Fixture phải chiếm được ít nhất 1 ngăn size L");
-        assertTrue(soNganTrong() > 0,
-                "Fixture cần CÒN ngăn trống (size S) để chốt lịch biểu không chặn trước");
+        assertTrue(soLChiem > 0, "Fixture cần ít nhất 1 ngăn L đang trống để chiếm");
 
-        // Xin ngăn L nữa: còn slot, còn ngăn trống, nhưng KHÔNG có ngăn size L nào.
-        RuntimeException ex = assertThrows(RuntimeException.class,
-                () -> orderService.createOrder(taoRequest("0966666666", "L", LocalDate.now())),
-                "Hết ngăn L thì phải từ chối, không được cấp ngăn S cho kiện size L");
+        List<Compartment> conTrong = compartmentRepository
+                .findByLocker_LockerIdAndStatus(locker.getLockerId(), "EMPTY");
+        assertTrue(!conTrong.isEmpty(),
+                "Fixture cần CÒN ngăn trống (size S) để chứng minh ngăn S nhận được kiện L");
+        // Nếu còn ngăn L trống thì ngăn được cấp có thể là L, và test sẽ không chứng minh được gì.
+        for (Compartment c : conTrong) {
+            assertEquals("S", c.getSize(),
+                    "Sau fixture, mọi ngăn còn trống phải là size S");
+        }
 
-        // Nếu ai bỏ chốt `assignedComp == null`, code nổ NPE ngay tại đây → FAIL.
-        khangDinhTuChoiNghiepVu(ex, DAU_HIEU_KHONG_CON_NGAN,
-                "Không có ngăn đúng kích thước (chốt assignedComp == null)");
+        // Xin size L khi chỉ còn ngăn S → PHẢI THÀNH CÔNG (trước GĐ18 là từ chối).
+        OrderDTO.OrderResponse res = orderService.createOrder(
+                taoRequest("0966666666", "L", LocalDate.now()));
+        assertNotNull(res, "Kiện size L phải được cấp ngăn dù chỉ còn ngăn size S");
+
+        // Chứng minh ngăn được cấp thực sự là size S — nếu không, test không nói lên điều gì.
+        String assignedId = res.getOrderId();
+        Compartment assigned = orderRepository.findById(assignedId)
+                .map(o -> o.getCompartment())
+                .orElse(null);
+        assertNotNull(assigned, "Đơn phải có ngăn được gán");
+        assertEquals("S", assigned.getSize(),
+                "Ngăn được cấp phải là size S — đây là bằng chứng đã bỏ phân biệt size");
     }
 
     @Test
-    @DisplayName("Chốt kích thước: kiện lớn hơn mọi ngăn trống phải bị từ chối kèm thông báo nghiệp vụ")
-    void kichThuocQuaLonBiTuChoi() {
-        // Chiếm hết ngăn L để chỉ còn S, rồi xin L.
+    @DisplayName("GĐ18: hết SẠCH ngăn trống thì báo 'Tủ đã hết ngăn trống' (không nhắc size)")
+    void hetSachNganTrongBaoHetNgan() {
+        // GĐ18 — test cũ `kichThuocQuaLonBiTuChoi` chiếm hết ngăn L rồi xin L và mong bị từ chối.
+        // Nay ngăn S nhận được kiện L, nên muốn từ chối thì phải chiếm HẾT mọi ngăn trống.
+        int chiemDuoc = 0;
         for (Compartment c : compartmentRepository
                 .findByLocker_LockerIdAndStatus(locker.getLockerId(), "EMPTY")) {
-            if ("L".equalsIgnoreCase(c.getSize())) {
-                try {
-                    orderService.createOrder(taoRequest("095555111" + c.getCompIndex(), "L", LocalDate.now()));
-                } catch (RuntimeException e) {
-                    // Chỉ chấp nhận từ chối nghiệp vụ, không nuốt NPE.
-                    khangDinhTuChoiNghiepVu(e, DAU_HIEU_HET_CHO,
-                            "Chiếm ngăn L chuẩn bị fixture");
-                }
+            try {
+                // Kích thước KHÔNG còn quan trọng — dùng "L" cho mọi lượt để thấy rõ điều đó.
+                orderService.createOrder(taoRequest("095555111" + c.getCompIndex(), "L", LocalDate.now()));
+                chiemDuoc++;
+            } catch (RuntimeException e) {
+                khangDinhTuChoiNghiepVu(e, DAU_HIEU_HET_CHO, "Chiếm hết ngăn trống");
             }
         }
+        assertTrue(chiemDuoc > 0, "Fixture phải chiếm được ít nhất 1 ngăn");
+        assertEquals(0, soNganTrong(), "Fixture phải chiếm SẠCH ngăn trống");
 
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> orderService.createOrder(taoRequest("0966667777", "L", LocalDate.now())),
-                "Hết ngăn L thì phải từ chối");
-        khangDinhTuChoiNghiepVu(ex, DAU_HIEU_KHONG_CON_NGAN,
-                "Kiện size L khi không còn ngăn L");
+                "Hết ngăn trống thì phải từ chối");
+        khangDinhTuChoiNghiepVu(ex, DAU_HIEU_HET_CHO,
+                "Hết sạch ngăn trống (không phải lý do kích thước)");
+        // Message mới không được nhắc tới size nữa.
+        String msg = String.valueOf(ex.getMessage());
+        assertFalse(msg.toLowerCase().contains("kích thước"),
+                "Message không được nhắc 'kích thước' vì mọi ngăn dùng được như nhau: " + msg);
     }
 
     // ─────────────────────────────────────────────────────────────

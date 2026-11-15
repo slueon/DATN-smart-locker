@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS compartments (
     status VARCHAR(20) NOT NULL DEFAULT 'EMPTY', -- EMPTY, OCCUPIED, RESERVED, OUT_OF_SERVICE
     current_weight DOUBLE DEFAULT 0.0,
     is_door_closed BOOLEAN NOT NULL DEFAULT TRUE,
+    -- GĐ22: cảm biến HỒNG NGOẠI báo có vật cản (payload `ir_detected`).
+    -- NULL = CHƯA TỪNG nhận thông tin IR (firmware cũ / 20 ngăn có sẵn trước GĐ22).
+    -- CỐ Ý NULL-able: NOT NULL sẽ làm ddl-auto không thêm được cột trên DB đang có dữ liệu.
+    -- Hiện chỉ LƯU để truy vết, chưa dùng để quyết định `status`.
+    ir_detected BOOLEAN DEFAULT NULL,
     relay_pin INT DEFAULT NULL,
     FOREIGN KEY (locker_id) REFERENCES lockers(locker_id) ON DELETE CASCADE,
     UNIQUE KEY uk_locker_comp (locker_id, comp_index)
@@ -82,6 +87,10 @@ CREATE TABLE IF NOT EXISTS orders (
     -- NOT NULL = shipper đã chủ động chọn ngăn → quét nhãn mới trả verified/order = 1.
     -- Không backfill: đơn cũ để NULL đúng nghĩa "chưa đặt trước".
     shipper_reserved_at DATETIME DEFAULT NULL,
+    -- GĐ21: hạn giữ chỗ của RIÊNG lần đặt trước này (shipper chọn 1 giờ hoặc 2 giờ).
+    -- NULL = đơn cũ (trước GĐ21) → ReservationTimeoutService rơi về shipper_reserved_at + 120 phút.
+    -- CỐ Ý cho phép NULL: thêm NOT NULL sẽ làm app không khởi động được trên DB đang có đơn.
+    reserve_expires_at DATETIME DEFAULT NULL,
     FOREIGN KEY (locker_id) REFERENCES lockers(locker_id) ON DELETE SET NULL,
     FOREIGN KEY (compartment_id) REFERENCES compartments(compartment_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;

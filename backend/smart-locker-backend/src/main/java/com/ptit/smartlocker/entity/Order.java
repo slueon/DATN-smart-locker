@@ -68,9 +68,25 @@ public class Order {
     }
 
     /**
-     * Constructor đầy đủ 17 tham số — Lombok {@code @Builder} cần đúng bộ tham số này
-     * (builder của nó gọi constructor bao trùm mọi field, kể cả {@code shipperReservedAt}).
+     * Constructor đầy đủ 18 tham số — Lombok {@code @Builder} cần đúng bộ tham số này
+     * (builder của nó gọi constructor bao trùm mọi field, kể cả {@code shipperReservedAt} và
+     * {@code reserveExpiresAt} thêm ở GĐ21).
+     *
+     * <p>Giữ CẢ constructor 15/16/17 tham số để code cũ gọi {@code new Order(...)} không gãy — đúng
+     * bài học từ GĐ9/GĐ12: khi entity có nhiều constructor thì builder phải đặt trên bản đủ field.
      */
+    public Order(String orderId, String customerName, String customerPhone, String deliveryType,
+                 Locker locker, Compartment compartment, LocalDate expectedDate, LocalDateTime depositedAt,
+                 LocalDateTime expiryDeadline, String status, BigDecimal totalAmount, String paymentMethod,
+                 String paymentStatus, LocalDateTime createdAt, String productName, String trackingCode,
+                 LocalDateTime shipperReservedAt, LocalDateTime reserveExpiresAt) {
+        this(orderId, customerName, customerPhone, deliveryType, locker, compartment, expectedDate,
+                depositedAt, expiryDeadline, status, totalAmount, paymentMethod, paymentStatus,
+                createdAt, productName, trackingCode, shipperReservedAt);
+        this.reserveExpiresAt = reserveExpiresAt;
+    }
+
+    /** Constructor 17 tham số (không có {@code reserveExpiresAt}) — giữ cho code cũ. */
     public Order(String orderId, String customerName, String customerPhone, String deliveryType,
                  Locker locker, Compartment compartment, LocalDate expectedDate, LocalDateTime depositedAt,
                  LocalDateTime expiryDeadline, String status, BigDecimal totalAmount, String paymentMethod,
@@ -151,4 +167,20 @@ public class Order {
      */
     @Column(name = "shipper_reserved_at")
     private LocalDateTime shipperReservedAt;
+
+    /**
+     * GĐ21 — hạn giữ chỗ của RIÊNG lần đặt trước này (shipper chọn 1 giờ hoặc 2 giờ).
+     *
+     * <p><b>Vì sao phải có cột riêng thay vì đổi hằng số toàn cục:</b> hằng số
+     * {@code app.reservation.timeout-minutes} áp cho MỌI đơn, nên đổi 120 → 60 sẽ đổi hạn của cả
+     * những đơn đã đặt trước đó — tức sửa ngược thoả thuận với shipper đang giữ ngăn. Cột này lưu
+     * thoả thuận của từng đơn.
+     *
+     * <p><b>NULL = đơn cũ</b> (đặt trước trước GĐ21) → {@code ReservationTimeoutService} rơi về công
+     * thức cũ {@code shipper_reserved_at + timeoutMinutes}. Nhờ vậy KHÔNG cần backfill và không làm
+     * hỏng dữ liệu đang có. Cột cho phép NULL là bắt buộc — thêm NOT NULL sẽ làm app không khởi động
+     * được trên DB đang có đơn.
+     */
+    @Column(name = "reserve_expires_at")
+    private LocalDateTime reserveExpiresAt;
 }
