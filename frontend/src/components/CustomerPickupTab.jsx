@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import LockerMap from './LockerMap';
 import CircularTimer from './CircularTimer';
@@ -43,6 +43,18 @@ export default function CustomerPickupTab({ currentUser }) {
   // `latestSeq` để KHÔNG phát lại modal của lần trước.
   const [kioskSeq, setKioskSeq] = useState(null);
 
+  /**
+   * GĐ26 — các `seq` sự kiện Kiosk đã tạo thông báo rồi.
+   *
+   * <p>Dùng `useRef` chứ không dùng state: đây là bộ nhớ chống trùng, không tham gia render. Nếu để
+   * state thì mỗi lần thêm sẽ kéo theo một vòng render và có thể lại kích hoạt effect poll.
+   *
+   * <p>Vì sao cần: `since(lockerId, after)` trả MỌI sự kiện có `seq > after`; poll 1,5 giây nên cùng
+   * một bản tin `receive/method` bị đọc lại vài lần trước khi `latestSeq` kịp vượt qua nó. Không
+   * chặn thì một lần khách bấm ở tủ sinh ra nhiều thông báo giống nhau.
+   */
+  const processedKioskSeqRef = useRef(new Set());
+
   useEffect(() => {
     const timer = setInterval(() => {
       setNowTime(Date.now());
@@ -54,7 +66,16 @@ export default function CustomerPickupTab({ currentUser }) {
   useEffect(() => {
     if (otpModalOrder) {
       const fresh = orders.find((o) => o.orderId === otpModalOrder.orderId);
-      if (fresh) setOtpModalOrder(fresh);
+      // GĐ25 — CHỈ đồng bộ khi bản `fresh` THẬT SỰ có mã. `GET /api/orders/by-phone` không trả
+      // `otpExpiresAt`, nên nếu ghi đè vô điều kiện thì mã vừa tạo bị thay bằng bản thiếu hạn và
+      // modal quay lại "đã hết hạn". Giữ hạn đã gắn tại chỗ nếu bản mới không có.
+      if (fresh) {
+        setOtpModalOrder({
+          ...fresh,
+          otpCode: fresh.otpCode || otpModalOrder.otpCode,
+          otpExpiresAt: fresh.otpExpiresAt || otpModalOrder.otpExpiresAt,
+        });
+      }
     }
     if (qrModalOrder) {
       const fresh = orders.find((o) => o.orderId === qrModalOrder.orderId);
@@ -84,19 +105,40 @@ export default function CustomerPickupTab({ currentUser }) {
    * `localStorage.smart_locker_user`. Không có SĐT (dữ liệu đăng nhập hỏng) thì GIỮ NGUYÊN danh
    * sách hiện có thay vì xoá trắng màn hình.
    */
+  /**
+   * GĐ24 — sắp xếp MỚI NHẤT TRƯỚC theo ngày đặt.
+   *
+   * <p>Backend đã sắp bằng `ORDER BY o.createdAt DESC, o.orderId DESC`, nên với dữ liệu từ API thì
+   * hàm này không đổi gì. Nó tồn tại cho <b>nhánh fallback</b> (`store.getOrders()` khi mất mạng):
+   * cache trong localStorage không có thứ tự đảm bảo, và nếu để nguyên thì khách thấy danh sách
+   * nhảy loạn mỗi lần mất mạng — đúng triệu chứng đang sửa.
+   *
+   * <p>So sánh theo `createdAt` (chuỗi ISO nên so chuỗi là đủ), thiếu thì lùi về `orderDate`, cuối
+   * cùng dùng `orderId` làm tiêu chí phụ để kết quả ổn định giữa hai lần render.
+   */
+  const sortNewestFirst = (list) => {
+    const key = (o) => o?.createdAt || o?.orderDate || o?.expectedDate || '';
+    return [...list].sort((a, b) => {
+      const ka = key(a);
+      const kb = key(b);
+      if (ka !== kb) return kb.localeCompare(ka);
+      return String(b?.orderId || '').localeCompare(String(a?.orderId || ''));
+    });
+  };
+
   const loadOrders = async () => {
     const phone = currentUser?.phone;
     if (!phone) {
       // GĐ13 — dữ liệu cache CHỈ dùng khi thiếu SĐT đăng nhập, và phải bật cờ để UI cảnh báo.
       // Không có cờ thì khách thấy danh sách cũ mà tưởng là đơn thật của mình.
-      setOrders(store.getOrders());
+      setOrders(sortNewestFirst(store.getOrders()));
       setUsingFallback(true);
       return;
     }
     try {
       const res = await orderApi.getByPhone(phone);
       const apiOrders = res?.data?.data || [];
-      setOrders(apiOrders);
+      setOrders(sortNewestFirst(apiOrders));
       setUsingFallback(false);
       if (apiOrders.length > 0 && !selectedOrderId) {
         setSelectedOrderId(apiOrders[0].orderId);
@@ -108,7 +150,7 @@ export default function CustomerPickupTab({ currentUser }) {
       // phải biết đây không phải dữ liệu máy chủ. Trước đây hàm này im lặng đổ cache vào và người
       // dùng không phân biệt được.
       console.warn('[CustomerPickupTab] Không tải được đơn từ API, dùng dữ liệu mô phỏng:', err?.message);
-      setOrders(store.getOrders());
+      setOrders(sortNewestFirst(store.getOrders()));
       setUsingFallback(true);
     }
   };
@@ -255,14 +297,55 @@ export default function CustomerPickupTab({ currentUser }) {
       //     hiện "Đã tạo mã OTP" trong khi backend không có mã đó — thao tác giả.
       //
       // Không còn nhánh nào cần ghi đè: mã OTP chỉ đọc từ server (`loadOrders` → `order.otpCode`).
-      loadOrders();
       setCopiedOtp(false);
+
       if (apiOtp) {
-        setOtpToast(`Đã tạo mã OTP nhận hàng mới (Hiệu lực 5 phút: ${apiOtp})!`);
+        // GĐ25 — MỞ MODAL, không chỉ toast.
+        //
+        // Trước đây nhánh thành công chỉ gọi `setOtpToast(..., mã ...)` rồi tự tắt sau 4 giây: mã
+        // nằm ở góc dưới phải, chữ `text-xs`, khách không kịp đọc — trong khi mã QR mở modal to.
+        // Modal OTP đã có sẵn (mã 6 số cỡ lớn, đếm ngược 5 phút, nút Đổi mã/sao chép), chỉ thiếu
+        // đường mở. Nên chỉ cần set `otpModalOrder`.
+        //
+        // Thứ tự quan trọng: `loadOrders()` phải chạy XONG trước khi mở modal, để effect đồng bộ
+        // `[orders]` nạp đơn có `otpCode` MỚI. Nếu mở modal bằng object `order` cũ (chụp từ lần
+        // render trước) thì modal có thể hiện mã CŨ.
+        await loadOrders();
+
+        // GĐ27b — SỬA NGUỒN DỮ LIỆU (minh bắt ở vòng 1, đây là lỗi thật).
+        //
+        // Bản trước lấy `fresh` từ `orderApi.getByPhone` — đó là endpoint **DANH SÁCH**, backend gọi
+        // `mapToOrderResponse(o, null, null, false)` với `includeSecrets = false`, nên trả về
+        // `otpCode = null` **VÀ** `otpExpiresAt = null` cho MỌI đơn (kể cả đơn DEPOSITED của chính
+        // chủ). Dựng modal từ nguồn đó thì modal mất cả mã lẫn hạn → hiện "Mã OTP đã hết hạn" ngay
+        // sau khi khách vừa tạo mã.
+        //
+        // Nay dùng `orderApi.getById(orderId, phone)` → `GET /api/orders/{id}?phone=...`, endpoint
+        // **chi tiết** có `includeSecrets = true` khi đúng SĐT chủ đơn và đơn đang DEPOSITED, nên
+        // trả `otpCode` + `otpExpiresAt` thật từ `pickup_credentials`.
+        //
+        // Nếu endpoint chi tiết lỗi (mất mạng, đơn vừa đổi trạng thái): vẫn phải mở modal với mã vừa
+        // tạo `apiOtp`, KHÔNG để khách bấm tạo mã mà không thấy gì.
+        const detail = await orderApi
+          .getById(order.orderId, currentUser?.phone || order.customerPhone)
+          .then((r) => r?.data?.data || null)
+          .catch(() => null);
+
+        const modalSource = {
+          ...(detail || order),
+          otpCode: (detail && detail.otpCode) || apiOtp,
+          otpExpiresAt: detail?.otpExpiresAt || null,
+        };
+        setOtpModalOrder(modalSource);
+        // Toast chỉ còn để nhắc khách; KHÔNG chứa mã và không phải đường hiển thị chính.
+        setOtpToast('Mã OTP đã sẵn sàng — xem mã trong cửa sổ vừa mở.');
+        setTimeout(() => setOtpToast(null), 4000);
       } else {
+        // Nhánh LỖI/thất bại: giữ toast (không có mã để mở modal), đúng điều cấm #2.
+        await loadOrders();
         setOtpToast('Máy chủ không cấp được mã OTP cho đơn này. Vui lòng thử lại.');
+        setTimeout(() => setOtpToast(null), 4000);
       }
-      setTimeout(() => setOtpToast(null), 4000);
     } catch (err) {
       console.error('Lỗi tạo OTP:', err);
     } finally {
@@ -357,17 +440,25 @@ export default function CustomerPickupTab({ currentUser }) {
 
         if (chosen) {
           const method = String(chosen.message || '').toLowerCase();
-          if (method === 'qr') {
-            handleOpenQrModal(selectedOrder);
-          } else if (method === 'otp') {
-            // SỬA GĐ20 (minh bắt ở vòng 1): trước đây gọi `handleGenerateOtp` — hàm đó tạo OTP
-            // rồi chỉ báo toast, KHÔNG mở modal, vì modal OTP là state riêng `otpModalOrder`.
-            // Nút "Phóng to" ở khối OTP mới là chỗ set state đó.
-            // Nay: mở modal NGAY (để khách thấy ngay như khi chọn QR), rồi tạo OTP nếu chưa có.
-            setOtpModalOrder(selectedOrder);
-            if (!getOtpStatus(selectedOrder).isGenerated) {
-              handleGenerateOtp(selectedOrder);
-            }
+          // GĐ26 — KHÔNG còn tự mở modal. User đổi ý so với GĐ20: tự bật popup làm khách giật
+          // mình khi đang làm việc khác. Nay chỉ GỬI THÔNG BÁO vào chuông; khách bấm vào thông báo
+          // mới mở modal (Navbar phát `smart_locker_open_pickup`, effect dưới lắng nghe).
+          //
+          // CHỐNG SPAM: chỉ tạo thông báo khi `chosen.seq` chưa xử lý. Poll 1,5 giây sẽ gặp lại
+          // đúng sự kiện đó nhiều lần (vì `since()` trả mọi sự kiện > after của lần trước), nên nếu
+          // không chặn thì 10 giây sau có ~6 thông báo giống nhau.
+          if ((method === 'qr' || method === 'otp') && !processedKioskSeqRef.current.has(chosen.seq)) {
+            processedKioskSeqRef.current.add(chosen.seq);
+            const label = method === 'qr' ? 'mã QR' : 'mã OTP';
+            store.addNotification({
+              type: 'KIOSK_METHOD_CHOSEN',
+              method,
+              orderId: selectedOrder.orderId,
+              title: `Tủ yêu cầu nhận hàng bằng ${label}`,
+              message: `Bấm để xem ${label} và mở ngăn #${selectedOrder.compartmentIndex ?? '—'}.`,
+              phone: selectedOrder.customerPhone || currentUser?.phone,
+              isRead: false,
+            });
           }
         }
 
@@ -396,6 +487,42 @@ export default function CustomerPickupTab({ currentUser }) {
   useEffect(() => {
     setKioskSeq(null);
   }, [selectedOrder?.orderId]);
+
+  /**
+   * GĐ26 — mở modal khi khách BẤM vào thông báo ở chuông.
+   *
+   * <p>Navbar phát `smart_locker_open_pickup` với `{ orderId, method }`. Tab này lắng nghe rồi mở
+   * ĐÚNG modal tương ứng — dùng lại 2 modal đang có, không dựng modal mới (điều cấm #5).
+   *
+   * <p><b>Vì sao chọn CustomEvent thay vì chuyển tab:</b> tab "Bưu kiện của tôi" đã mount sẵn khi
+   * khách đang xem; nếu khách đang ở tab khác thì `Navbar` cũng đã chuyển tab trước khi phát event
+   * (xem `Navbar.handleNotificationClick`). Cách này không cần đụng `App.jsx`/props xuyên tầng.
+   *
+   * <p>Đơn trong event có thể KHÁC đơn đang chọn → phải `setSelectedOrderId` trước để modal hiện
+   * đúng đơn, và tra trong `orders` bản mới nhất.
+   */
+  useEffect(() => {
+    const onOpenPickup = (ev) => {
+      const detail = ev?.detail || {};
+      const { orderId, method } = detail;
+      if (!orderId) return;
+      setSelectedOrderId(orderId);
+      const target = orders.find((o) => o.orderId === orderId);
+      if (!target) return; // danh sách chưa tải xong — khách bấm lại được từ chuông
+      if (method === 'otp') {
+        // Mở modal OTP rồi tạo mã nếu chưa có (giống hệt đường mở bằng tay ở GĐ25).
+        setOtpModalOrder(target);
+        if (!getOtpStatus(target).isGenerated) {
+          handleGenerateOtp(target);
+        }
+      } else {
+        handleOpenQrModal(target);
+      }
+    };
+    window.addEventListener('smart_locker_open_pickup', onOpenPickup);
+    return () => window.removeEventListener('smart_locker_open_pickup', onOpenPickup);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders]);
 
   const getStatusBadge = (status) => {
     switch (status) {

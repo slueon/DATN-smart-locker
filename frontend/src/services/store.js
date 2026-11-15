@@ -564,6 +564,40 @@ export const store = {
     } catch (e) {}
   },
 
+  /**
+   * GĐ26 — đánh dấu MỘT thông báo đã đọc (theo `id`).
+   *
+   * <p>Vì sao cần: trước đây chỉ có {@link markAllNotificationsRead}. Khi khách bấm vào đúng một
+   * thông báo "Tủ yêu cầu nhận hàng bằng mã QR" thì badge phải giảm 1, chứ không phải xoá sạch mọi
+   * thông báo chưa đọc (làm vậy khách mất dấu những thông báo khác chưa xem).
+   *
+   * <p><b>Vẫn là localStorage của trình duyệt</b> — mất khi xoá cache, không đồng bộ máy khác. Banner
+   * cảnh báo trong `Navbar` phải giữ nguyên.
+   */
+  markNotificationRead: (id) => {
+    try {
+      const data = localStorage.getItem(NOTIFS_KEY);
+      const list = data ? JSON.parse(data) : DEFAULT_NOTIFICATIONS;
+      let changed = false;
+      const updated = list.map((n) => {
+        if (n.id === id && !n.isRead) {
+          changed = true;
+          return { ...n, isRead: true };
+        }
+        return n;
+      });
+      if (changed) {
+        localStorage.setItem(NOTIFS_KEY, JSON.stringify(updated));
+        window.dispatchEvent(new Event('smart_locker_notifs_updated'));
+      }
+      return changed;
+    } catch {
+      // localStorage có thể bị chặn (chế độ riêng tư / hết quota). Trả false để nơi gọi biết
+      // "không đánh dấu được" thay vì ném lỗi làm sập dropdown thông báo.
+      return false;
+    }
+  },
+
   // Sinh mã OTP ngẫu nhiên 6 số và chỉ có hiệu lực trong 5 phút
   requestOtpForOrder: (orderId, customOtp = null) => {
     const orders = store.getOrders();

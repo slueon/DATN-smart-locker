@@ -14,7 +14,27 @@ import java.util.Optional;
 
 @Repository
 public interface OrderRepository extends JpaRepository<Order, String> {
-    List<Order> findByCustomerPhone(String customerPhone);
+    /**
+     * Đơn của một khách, <b>mới nhất trước</b> (GĐ24).
+     *
+     * <p><b>Vì sao đổi:</b> bản cũ là derived query {@code findByCustomerPhone} <b>không có ORDER BY</b>,
+     * nên thứ tự do MySQL quyết định — thực tế là thứ tự bản ghi vật lý, tức đơn cũ nhất trước và
+     * <b>không ổn định</b> sau khi dòng bị UPDATE. Người dùng thấy danh sách lộn xộn, đơn vừa tạo
+     * nằm tận cuối.
+     *
+     * <p><b>Vì sao {@code DESC}:</b> đơn mới nhất là thứ người dùng cần thấy trước.
+     *
+     * <p><b>Vì sao sắp ở DB chứ không ở frontend:</b> một nguồn sự thật. Endpoint này còn được
+     * {@code MqttService} dùng để đếm số kiện sẵn sàng — mọi nơi gọi đều nhận cùng một thứ tự,
+     * không phải nhớ sắp lại.
+     *
+     * <p><b>⚠ {@code created_at} là {@code NULL}-able:</b> MySQL xếp {@code NULL} <b>cuối</b> khi
+     * {@code DESC}, nên đơn thiếu ngày sẽ nằm dưới cùng chứ không chiếm đầu danh sách. Thêm
+     * {@code o.orderId DESC} làm tiêu chí phụ để hai đơn cùng giây không đảo thứ tự giữa hai lần gọi.
+     */
+    @Query("SELECT o FROM Order o WHERE o.customerPhone = :customerPhone "
+            + "ORDER BY o.createdAt DESC, o.orderId DESC")
+    List<Order> findByCustomerPhone(@Param("customerPhone") String customerPhone);
     List<Order> findByLocker_LockerIdAndStatus(String lockerId, String status);
     List<Order> findByStatus(String status);
 

@@ -92,6 +92,17 @@ public class OrderDTO {
         private String paymentStatus;
         private String qrToken;
         private String otpCode;
+        /**
+         * GĐ27 — hạn của mã OTP, lấy từ {@code pickup_credentials.expired_at}.
+         *
+         * <p><b>Vì sao thêm:</b> trước đây response chỉ có {@code otpCode} mà không có hạn, nên
+         * {@code CustomerPickupTab.getOtpStatus} — hàm cần CẢ HAI để biết mã còn hiệu lực — luôn
+         * trả {@code isGenerated:false}, và modal OTP **luôn hiện "Mã OTP đã hết hạn"** dù mã vừa
+         * tạo. Client phải tự gắn hạn 5 phút tại chỗ, tức là đoán thay vì đọc dữ liệu thật.
+         *
+         * <p>Chỉ trả khi {@code includeSecrets = true} (chủ đơn đúng SĐT), giống {@code otpCode}.
+         */
+        private LocalDateTime otpExpiresAt;
         private LocalDateTime createdAt;
         /** T3: mã vận đơn in trên nhãn; null thì coi như bằng orderId. */
         private String trackingCode;
@@ -117,15 +128,16 @@ public class OrderDTO {
             this.createdAt = createdAt;
         }
 
-        /** Constructor đầy đủ 19 tham số — Lombok @Builder cần đúng bộ tham số này. */
+        /** Constructor đầy đủ 20 tham số — Lombok @Builder cần đúng bộ tham số này. */
         public OrderResponse(String orderId, String customerName, String customerPhone, String deliveryType,
                              String lockerId, String lockerName, Integer compartmentIndex, LocalDate expectedDate,
                              LocalDateTime depositedAt, LocalDateTime expiryDeadline, String status, String productName,
                              BigDecimal totalAmount, String paymentMethod, String paymentStatus, String qrToken,
-                             String otpCode, LocalDateTime createdAt, String trackingCode) {
+                             String otpCode, LocalDateTime otpExpiresAt, LocalDateTime createdAt, String trackingCode) {
             this(orderId, customerName, customerPhone, deliveryType, lockerId, lockerName, compartmentIndex,
                     expectedDate, depositedAt, expiryDeadline, status, productName, totalAmount,
                     paymentMethod, paymentStatus, qrToken, otpCode, createdAt);
+            this.otpExpiresAt = otpExpiresAt;
             this.trackingCode = trackingCode;
         }
     }

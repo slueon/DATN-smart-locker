@@ -32,6 +32,37 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout 
     store.markAllNotificationsRead(currentUser?.phone);
   };
 
+  /**
+   * GĐ26 — bấm vào thông báo "Tủ yêu cầu nhận hàng bằng QR/OTP".
+   *
+   * <p>Luồng: đánh dấu đã đọc → chuyển sang tab "Bưu kiện của tôi" → phát
+   * {@code CustomEvent('smart_locker_open_pickup')} kèm {@code {orderId, method}} để
+   * {@code CustomerPickupTab} mở ĐÚNG modal.
+   *
+   * <p><b>Vì sao chọn CustomEvent (không phải chuyển tab rồi tự tìm đơn):</b> chuyển tab chỉ đổi
+   * màn hình; việc "mở modal nào" vẫn phải nói cho tab kia biết. Event là cách gọn nhất mà không
+   * phải luồn props qua `App.jsx`. Tab khác chưa mount thì event không tới — nhưng ta CHUYỂN TAB
+   * TRƯỚC nên nó đã mount xong.
+   *
+   * <p>Sự kiện phải phát SAU khi tab đã render: dùng `setTimeout(..., 0)` để React kịp commit lượt
+   * render của `setActiveTab`. Phát ngay trong cùng tick thì listener của tab mới chưa gắn.
+   */
+  const handleNotificationClick = (n) => {
+    if (n?.type !== 'KIOSK_METHOD_CHOSEN' || !n.orderId) return;
+    store.markNotificationRead(n.id);
+    if (setActiveTab) setActiveTab('customer');
+    // Đóng dropdown để khách thấy modal ngay, không bị panel che.
+    setShowNotifs(false);
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('smart_locker_open_pickup', {
+        detail: { orderId: n.orderId, method: n.method },
+      }));
+    }, 0);
+  };
+
+  /** Thông báo bấm được thì phải trông bấm được — đổi con trỏ và thêm gợi ý. */
+  const isActionableNotif = (n) => n?.type === 'KIOSK_METHOD_CHOSEN' && !!n.orderId;
+
   const getNavItems = () => {
     if (!currentUser) return [];
     const role = currentUser.role;
@@ -206,7 +237,14 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout 
                         notifications.map((n) => (
                           <div
                             key={n.id}
+                            onClick={() => handleNotificationClick(n)}
+                            role={isActionableNotif(n) ? 'button' : undefined}
+                            title={isActionableNotif(n) ? 'Bấm để xem mã nhận hàng' : undefined}
                             className={`p-3 rounded-xl border text-xs transition-all ${
+                              isActionableNotif(n)
+                                ? 'cursor-pointer hover:bg-blue-50 hover:border-blue-300 active:scale-[0.99]'
+                                : ''
+                            } ${
                               n.type === 'OTP_REQUEST'
                                 ? 'bg-amber-50/60 border-amber-200/80 text-amber-900'
                                 : 'bg-slate-50 border-slate-200/60 text-slate-700 hover:bg-slate-100/60'
@@ -224,6 +262,12 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout 
                               </span>
                             </div>
                             <p className="text-[11px] leading-relaxed text-slate-600">{n.message}</p>
+                            {/* GĐ26 — nhãn nói rõ bấm được, để khách không đoán. */}
+                            {isActionableNotif(n) && (
+                              <span className="mt-1.5 inline-block text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                                Bấm để mở mã
+                              </span>
+                            )}
                           </div>
                         ))
                       )}

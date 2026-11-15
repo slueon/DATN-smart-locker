@@ -53,11 +53,43 @@ export default function Header({
 
   const breadcrumb = getBreadcrumb();
 
+  /**
+   * GĐ26 — thông báo "tủ yêu cầu nhận hàng bằng QR/OTP".
+   *
+   * <p><b>Vì sao phải thêm vào bộ lọc tab:</b> tab "Mã OTP / Nhận" (đúng tab trong ảnh user gửi)
+   * trước đây chỉ nhận `type === 'OTP_REQUEST'`. Thông báo Kiosk mang type `KIOSK_METHOD_CHOSEN` nên
+   * bị **ẩn khỏi tab** — khách mở đúng tab "Mã OTP / Nhận" lại thấy "Chưa có thông báo nào", trong
+   * khi thông báo vẫn nằm ở tab "Tất cả". Đây là lỗi im lặng: dữ liệu đúng, chỗ hiển thị sai.
+   */
   const filteredNotifs = notifications.filter((n) => {
     if (filterNotifType === 'OVERDUE') return n.type === 'OVERDUE_ALERT';
-    if (filterNotifType === 'OTP') return n.type === 'OTP_REQUEST';
+    if (filterNotifType === 'OTP') {
+      return n.type === 'OTP_REQUEST' || n.type === 'KIOSK_METHOD_CHOSEN';
+    }
     return true;
   });
+
+  /** Thông báo Kiosk bấm được để mở modal QR/OTP tương ứng. */
+  const isActionableNotif = (n) => n?.type === 'KIOSK_METHOD_CHOSEN' && !!n.orderId;
+
+  /**
+   * GĐ26 — bấm thông báo: đánh dấu đã đọc, chuyển sang tab khách, rồi phát event để
+   * `CustomerPickupTab` mở đúng modal.
+   *
+   * <p>`setTimeout(0)` là bắt buộc: phát event ngay trong tick này thì tab vừa được yêu cầu chuyển
+   * tới CHƯA mount xong, listener chưa gắn → mất event.
+   */
+  const handleNotificationClick = (n) => {
+    if (!isActionableNotif(n)) return;
+    store.markNotificationRead(n.id);
+    if (setActiveTab) setActiveTab('customer');
+    setShowNotifs(false);
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('smart_locker_open_pickup', {
+        detail: { orderId: n.orderId, method: n.method },
+      }));
+    }, 0);
+  };
 
   return (
     <header className="h-16 liquid-glass border-b border-white/60 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30 select-none shadow-[0_4px_30px_rgba(31,38,135,0.05)]">
@@ -183,7 +215,14 @@ export default function Header({
                     filteredNotifs.map((n) => (
                       <div
                         key={n.id}
+                        onClick={() => handleNotificationClick(n)}
+                        role={isActionableNotif(n) ? 'button' : undefined}
+                        title={isActionableNotif(n) ? 'Bấm để xem mã nhận hàng' : undefined}
                         className={`p-3 rounded-xl border text-xs transition-all ${
+                          isActionableNotif(n)
+                            ? 'cursor-pointer hover:bg-blue-50 hover:border-blue-300 active:scale-[0.99]'
+                            : ''
+                        } ${
                           n.type === 'OVERDUE_ALERT'
                             ? 'bg-rose-50/90 border-rose-300/80 text-rose-950 font-medium shadow-2xs'
                             : n.type === 'RECALL_SUCCESS'
@@ -197,6 +236,8 @@ export default function Header({
                           <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                             {n.type === 'OVERDUE_ALERT' && <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />}
                             {n.type === 'OTP_REQUEST' && <Key className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
+                            {/* GĐ26 — icon riêng cho thông báo Kiosk để khách phân biệt với OTP tự tạo. */}
+                            {n.type === 'KIOSK_METHOD_CHOSEN' && <Key className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
                             {n.type === 'RECALL_SUCCESS' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
                             {n.title}
                           </span>

@@ -259,6 +259,11 @@ public class OrderService {
     public OrderDTO.OrderResponse mapToOrderResponse(Order order, String preloadedQr, String preloadedOtp, boolean includeSecrets) {
         String qrToken = null;
         String otpCode = null;
+        // GĐ27 — hạn OTP đi kèm mã. Response trước đây chỉ có `otpCode`, nên client cần cả hai để
+        // biết mã còn hiệu lực lại luôn nhận `null` cho hạn và kết luận "đã hết hạn" — modal OTP
+        // hiện sai ngay sau khi tạo mã. Giá trị lấy từ `pickup_credentials.expired_at`, KHÔNG tự
+        // cộng 5 phút ở client.
+        LocalDateTime otpExpiresAt = null;
 
         if (includeSecrets) {
             qrToken = preloadedQr;
@@ -268,6 +273,7 @@ public class OrderService {
                 if (credOpt.isPresent()) {
                     qrToken = credOpt.get().getQrToken();
                     otpCode = credOpt.get().getOtpCode();
+                    otpExpiresAt = credOpt.get().getExpiredAt();
                 }
             }
         }
@@ -292,6 +298,7 @@ public class OrderService {
                 .paymentStatus(order.getPaymentStatus())
                 .qrToken(qrToken)
                 .otpCode(otpCode)
+                .otpExpiresAt(otpExpiresAt)
                 .createdAt(order.getCreatedAt())
                 .build();
     }
