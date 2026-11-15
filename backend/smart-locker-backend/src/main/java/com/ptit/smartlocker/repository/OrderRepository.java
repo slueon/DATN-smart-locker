@@ -47,12 +47,33 @@ public interface OrderRepository extends JpaRepository<Order, String> {
      * bị giữ vô thời hạn và khách khác không dùng được. Nạp sẵn {@code compartment} và {@code locker}
      * vì tác vụ chạy ngoài request, tránh {@code LazyInitializationException}.
      */
+    /**
+     * Đơn đã đặt trước ngăn nhưng quá hạn giữ chỗ, tính theo hạn CỦA TỪNG ĐƠN (GĐ21).
+     *
+     * <p><b>Hai loại đơn, một câu query:</b>
+     * <ul>
+     *   <li><b>Đơn mới (GĐ21):</b> có {@code reserve_expires_at} → hết hạn khi
+     *       {@code reserve_expires_at < now}. Shipper chọn 1 giờ thì hết hạn sau 1 giờ, chọn 2 giờ
+     *       thì sau 2 giờ — đúng thoả thuận của chính đơn đó.</li>
+     *   <li><b>Đơn cũ:</b> {@code reserve_expires_at IS NULL} → giữ công thức cũ
+     *       {@code shipper_reserved_at < cutoff} (cutoff = now − timeoutMinutes, mặc định 120).
+     *       Nhờ nhánh này mà KHÔNG cần backfill dữ liệu cũ.</li>
+     * </ul>
+     *
+     * <p>⚠ Sửa điều kiện ở đây phải sửa đồng thời {@code releaseOne} trong
+     * {@code ReservationTimeoutService} — hai chỗ kiểm cùng một luật, lệch nhau là đơn được quét ra
+     * nhưng không được nhả (hoặc ngược lại).
+     */
     @Query("SELECT o FROM Order o "
             + "LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
             + "WHERE o.status = 'PENDING' "
             + "AND o.shipperReservedAt IS NOT NULL "
-            + "AND o.shipperReservedAt < :cutoff")
-    List<Order> findExpiredShipperReservations(@Param("cutoff") LocalDateTime cutoff);
+            + "AND ("
+            + "  (o.reserveExpiresAt IS NOT NULL AND o.reserveExpiresAt < :now) "
+            + "  OR (o.reserveExpiresAt IS NULL AND o.shipperReservedAt < :cutoff)"
+            + ")")
+    List<Order> findExpiredShipperReservations(@Param("cutoff") LocalDateTime cutoff,
+                                               @Param("now") LocalDateTime now);
 
     Optional<Order> findByOrderId(String orderId);
 

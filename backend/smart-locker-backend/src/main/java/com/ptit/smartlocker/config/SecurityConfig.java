@@ -198,10 +198,23 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/shipper/suggest-lockers").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/assign-locker").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.GET, "/api/shipper/overdue-orders").hasAnyRole("SHIPPER", "ADMIN")
+                // GĐ21 — danh sách khách để shipper chọn khi tạo đơn hộ. Chỉ SHIPPER/ADMIN vì trả
+                // tên + SĐT của mọi khách; thiếu dòng này là 403 vì denyAll() ở dưới.
+                .requestMatchers(HttpMethod.GET, "/api/shipper/customers").hasAnyRole("SHIPPER", "ADMIN")
                 // Sự kiện Kiosk của tủ thật (nguồn popup ở tab shipper). ADMIN đọc được vì cùng
                 // màn hình được dùng khi trực ca; thiếu dòng này là 403 vì denyAll() ở dưới.
                 .requestMatchers(HttpMethod.GET, "/api/shipper/kiosk-events")
                         .hasAnyRole("SHIPPER", "ADMIN")
+                // GĐ20 — sự kiện Kiosk cho WEB KHÁCH (để tự mở modal QR/OTP khi khách chọn cách
+                // nhận trên màn hình tủ).
+                //
+                // BẮT BUỘC phải có dòng này: luật `/api/pickup/**` ở trên chỉ mở cho **POST**, nên
+                // GET sẽ rơi xuống `.anyRequest().denyAll()` → khách nhận 403 dù đã đăng nhập. Đây
+                // đúng là bẫy đã được cảnh báo trong thẻ, không phải suy đoán.
+                // Chỉ mở cho vai trò đã đăng nhập có liên quan; KHÔNG dùng `.permitAll()` vì dữ liệu
+                // chứa mã đơn của nhiều khách đứng cùng tủ.
+                .requestMatchers(HttpMethod.GET, "/api/pickup/kiosk-events")
+                        .hasAnyRole("CUSTOMER", "SHIPPER", "ADMIN")
 
                 // --- Mặc định đóng ---
                 .anyRequest().denyAll());

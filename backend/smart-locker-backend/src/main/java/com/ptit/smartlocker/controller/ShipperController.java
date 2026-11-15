@@ -74,6 +74,24 @@ public class ShipperController {
     }
 
     /**
+     * GĐ21 — danh sách khách hàng để shipper chọn khi tạo đơn hộ ("+ Thêm đơn").
+     *
+     * <p>Trước đây màn đó ghi cứng một tên khách nên mọi đơn tạo từ shipper đều gán cho cùng một
+     * người. Endpoint này trả danh sách thật từ CSDL để tài khoản khách tạo thêm sau này cũng chọn
+     * được.
+     *
+     * <p><b>Chỉ SHIPPER/ADMIN:</b> đây là dữ liệu cá nhân của khách (tên + SĐT). Mở cho CUSTOMER
+     * là cho bất kỳ khách nào đọc được danh bạ khách của hệ thống. DTO cố ý không chứa
+     * {@code password}/{@code role}.
+     */
+    @GetMapping("/customers")
+    public ResponseEntity<ApiResponse<List<ShipperDTO.CustomerOptionResponse>>> getCustomers() {
+        List<ShipperDTO.CustomerOptionResponse> customers = shipperService.getCustomerOptions();
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Lấy danh sách khách hàng thành công (" + customers.size() + " khách)", customers));
+    }
+
+    /**
      * T3 — Danh sách đơn PENDING để shipper chọn đặt trước trên web.
      *
      * <p>Mỗi phần tử có {@code trackingCode} (= {@code tracking_code} nếu đã đặt, ngược lại
@@ -107,13 +125,21 @@ public class ShipperController {
             @RequestBody(required = false) ShipperDTO.AssignLockerRequest request) {
         String lockerId = request != null ? request.getLockerId() : null;
         Integer compartmentIndex = request != null ? request.getCompartmentIndex() : null;
-        OrderDTO.OrderResponse response = shipperService.assignLocker(orderId, lockerId, compartmentIndex);
+        // GĐ23 — thời hạn giữ chỗ (1|2 giờ, thiếu = 2) để luồng CHỌN TỦ cũng chọn được như
+        // `reserveCompartment`, thay vì bị khoá cứng 120 phút.
+        Integer reserveHours = request != null ? request.getReserveHours() : null;
+        OrderDTO.OrderResponse response =
+                shipperService.assignLocker(orderId, lockerId, compartmentIndex, reserveHours);
         return ResponseEntity.ok(ApiResponse.ok(
                 "Đã chốt tủ " + response.getLockerName() + " cho đơn " + orderId + "!", response));
     }
 
     /**
      * T3 — Đặt trước một ngăn cụ thể cho đơn PENDING (shipper chọn trên WEB, Q2).
+     *
+     * <p>GĐ21 — nhận thêm {@code reserveHours} (1 hoặc 2, bỏ trống = 2). Hạn giữ chỗ được lưu
+     * RIÊNG trên đơn ({@code orders.reserve_expires_at}) chứ không đổi hằng số toàn cục, nên đổi
+     * thẻ này không làm lệch hạn của những đơn đã đặt trước từ trước.
      */
     @PostMapping("/orders/{orderId}/reserve")
     public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> reserveCompartment(
@@ -122,8 +148,9 @@ public class ShipperController {
         try {
             String trackingCode = request != null ? request.getTrackingCode() : null;
             Integer compartmentIndex = request != null ? request.getCompartmentIndex() : null;
+            Integer reserveHours = request != null ? request.getReserveHours() : null;
             OrderDTO.OrderResponse response =
-                    shipperService.reserveCompartment(orderId, trackingCode, compartmentIndex);
+                    shipperService.reserveCompartment(orderId, trackingCode, compartmentIndex, reserveHours);
             return ResponseEntity.ok(ApiResponse.ok(
                     "Đặt trước ngăn " + response.getCompartmentIndex() + " cho đơn " + orderId + " thành công!",
                     response));

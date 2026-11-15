@@ -822,6 +822,16 @@ public class MqttService implements MqttCallbackExtended {
             return;
         }
 
+        // GĐ20 — Khách chọn CÁCH NHẬN HÀNG trên màn hình tủ: receive/method (và rec/method cũ).
+        //
+        // Đặt TRƯỚC nhánh 10 (cancel/scan) để không bị nuốt: nhánh 10 dùng `lower.contains(...)`
+        // nên rất rộng, đặt sau là bản tin này rơi vào HW_MQTT_UI_EVENT và web khách không bao giờ
+        // biết khách đã chọn gì.
+        if (lower.endsWith("receive/method") || lower.endsWith("rec/method")) {
+            handleReceivedMethod(topic, rel, payload, payloadStr);
+            return;
+        }
+
         // 7. Chọn ngăn (0-based ở payload): locker/select_compartment
         if (lower.endsWith("select_compartment")) {
             handleSelectCompartment(topic, rel, payload, payloadStr);
@@ -1112,6 +1122,49 @@ public class MqttService implements MqttCallbackExtended {
         }
     }
 
+    /**
+     * GĐ20 — khách vừa chọn cách nhận hàng trên màn hình tủ ({@code receive/method}).
+     *
+     * <p>Bản tin thật từ firmware:
+     * <pre>
+     *   ptit/Tu_1/receive/method   {"locker_id":"Tu_1","method":"otp"}
+     *   ptit/Tu_1/receive/method   {"locker_id":"Tu_1","method":"qr"}
+     * </pre>
+     *
+     * <p>Việc của hàm: ghi {@code device_events} để truy vết (như mọi nhánh khác), rồi — CHỈ với
+     * {@code method} hợp lệ — phát một sự kiện {@link KioskEventService#CUSTOMER_METHOD_CHOSEN} để
+     * web khách tự mở đúng modal.
+     *
+     * <p><b>Vì sao giá trị lạ KHÔNG được phát sự kiện:</b> sự kiện này trực tiếp điều khiển giao
+     * diện khách (mở modal QR/OTP). Nếu chấp nhận mọi chuỗi thì một bản tin rác trên topic công
+     * cộng (broker không xác thực) có thể bật modal tuỳ ý. Chỉ {@code qr} và {@code otp} đi tiếp.
+     */
+    private void handleReceivedMethod(String topic, String rel, Payload payload, String payloadStr) {
+        Locker locker = resolveLocker(deviceIdFromTopicOrPayload(rel, payload), rel, payloadStr);
+        if (locker == null) {
+            return;
+        }
+        saveEvent(locker, "HW_MQTT_RECEIVE_METHOD", payloadStr);
+
+        String raw = payload.str("method");
+        String method = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+
+        if (!"qr".equals(method) && !"otp".equals(method)) {
+            // Không phát sự kiện Kiosk — chỉ để lại vết trong device_events.
+            log.warn("receive/method có giá trị không hợp lệ '{}' tại tủ {} — bỏ qua (chỉ nhận qr|otp)",
+                    raw, locker.getLockerId());
+            return;
+        }
+
+        kioskEventService.record(
+                locker.getLockerId(),
+                KioskEventService.CUSTOMER_METHOD_CHOSEN,
+                null, null, null, null,
+                method);
+        log.info("Khách chọn cách nhận '{}' tại tủ {} — đã phát sự kiện Kiosk cho web",
+                method, locker.getLockerId());
+    }
+
     private void handleCustomerQr(String topic, String rel, Payload payload, String payloadStr) {
         Locker locker = resolveLocker(deviceIdFromTopicOrPayload(rel, payload), rel, payloadStr);
         if (locker == null) {
@@ -1301,6 +1354,24 @@ public class MqttService implements MqttCallbackExtended {
                 comp.setIsDoorClosed(doorClosed);
             }
             Boolean hasItem = payload.boolOrNull("has_item");
+
+            // GĐ22 — LƯU cờ hồng ngoại để truy vết (kiện quá nhẹ làm `weight = 0` dù có hàng).
+            //
+            // CHỈ ghi khi payload CÓ `ir_detected`. Firmware cũ ở hiện trường không gửi trường này;
+            // nếu gán null/0 vô điều kiện thì mỗi bản tin cũ sẽ xoá mất giá trị IR thật vừa đọc
+            // được — biến cột truy vết thành cột rác.
+            Boolean irDetected = payload.boolOrNull("ir_detected");
+            if (irDetected != null) {
+                comp.setIrDetected(irDetected);
+                // Ca kiện nhẹ: IR nói có vật nhưng cân đọc 0 — cần thấy trong log để chẩn đoán,
+                // vì đây chính là lý do tồn tại của cảm biến này.
+                if (Boolean.TRUE.equals(irDetected) && weight != null && weight == 0.0) {
+                    log.warn("Ngăn {} của tủ {}: IR báo CÓ vật nhưng cân = 0 (kiện quá nhẹ) — "
+                                    + "has_item firmware gửi = {}",
+                            compIndex, locker.getLockerId(), hasItem);
+                }
+            }
+
             if (hasItem != null) {
                 comp.setStatus(hasItem ? "OCCUPIED" : "EMPTY");
             }

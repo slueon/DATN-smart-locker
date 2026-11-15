@@ -76,6 +76,15 @@ class ReservationTimeoutServiceTests {
 
     /** Tạo đơn PENDING đã đặt trước, giữ một ngăn, đặt trước cách đây `phut` phút. */
     private Order taoDonDatTruoc(String orderId, int compIndex, long phut) {
+        return taoDonDatTruoc(orderId, compIndex, phut, null);
+    }
+
+    /**
+     * GĐ21 — như trên nhưng có hạn RIÊNG của đơn.
+     *
+     * @param hanRiengPhut số phút còn lại (âm = đã quá hạn), {@code null} = đơn cũ không có hạn riêng
+     */
+    private Order taoDonDatTruoc(String orderId, int compIndex, long phut, Long hanRiengPhut) {
         Compartment comp = layNgan(compIndex);
         comp.setStatus("RESERVED");
         compartmentRepository.save(comp);
@@ -92,6 +101,9 @@ class ReservationTimeoutServiceTests {
                 .totalAmount(BigDecimal.valueOf(50000))
                 .productName("Kiện test")
                 .shipperReservedAt(LocalDateTime.now().minusMinutes(phut))
+                .reserveExpiresAt(hanRiengPhut == null
+                        ? null
+                        : LocalDateTime.now().plusMinutes(hanRiengPhut))
                 .build();
         return orderRepository.save(order);
     }
@@ -121,10 +133,66 @@ class ReservationTimeoutServiceTests {
         assertEquals("RESERVED", layNgan(1).getStatus(), "Ngăn vẫn phải ở RESERVED");
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // GĐ21 — hạn RIÊNG từng đơn vs đơn cũ (công thức 120 phút)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GĐ21: đơn đặt 1 giờ, mới 65 phút → PHẢI nhả (khác hẳn hành vi cũ 120 phút)")
+    void donMotGioQua65PhutThiNha() {
+        // 65 phút > hạn 60 phút của đơn, nhưng < 120 phút của công thức cũ.
+        // Nếu ai bỏ nhánh `reserveExpiresAt` trong query/releaseOne, test này FAIL — đó chính là
+        // điều cần khoá lại: hạn phải theo TỪNG ĐƠN, không phải hằng số toàn cục.
+        Order order = taoDonDatTruoc("ORD-TT-1GIO", 1, 65, 0L);
+
+        service.releaseExpiredReservations();
+
+        Order sau = orderRepository.findById(order.getOrderId()).orElseThrow();
+        assertNull(sau.getShipperReservedAt(), "Đơn hạn 1 giờ, quá 65 phút thì phải bị nhả");
+        assertNull(sau.getReserveExpiresAt(), "Hạn riêng cũng phải bị xoá cùng");
+        assertEquals("EMPTY", layNgan(1).getStatus(), "Ngăn phải về EMPTY");
+    }
+
+    @Test
+    @DisplayName("GĐ21: đơn đặt 2 giờ, mới 65 phút → KHÔNG nhả (còn hạn riêng)")
+    void donHaiGioQua65PhutChuaNha() {
+        Order order = taoDonDatTruoc("ORD-TT-2GIO", 1, 65, 55L); // còn 55 phút nữa mới hết hạn
+
+        service.releaseExpiredReservations();
+
+        Order sau = orderRepository.findById(order.getOrderId()).orElseThrow();
+        assertNotNull(sau.getShipperReservedAt(), "Còn hạn riêng thì phải giữ đặt trước");
+        assertEquals("RESERVED", layNgan(1).getStatus(), "Ngăn vẫn phải RESERVED");
+    }
+
+    @Test
+    @DisplayName("GĐ21: đơn CŨ (không có hạn riêng), 125 phút → vẫn nhả theo 120 phút")
+    void donCuKhongCoHanRiengVanNhaTheo120Phut() {
+        Order order = taoDonDatTruoc("ORD-TT-CU", 1, 125); // reserveExpiresAt = null
+
+        service.releaseExpiredReservations();
+
+        Order sau = orderRepository.findById(order.getOrderId()).orElseThrow();
+        assertNull(sau.getShipperReservedAt(),
+                "Đơn cũ phải rơi về công thức 120 phút, 125 phút là quá hạn");
+        assertEquals("EMPTY", layNgan(1).getStatus(), "Ngăn phải về EMPTY");
+    }
+
+    @Test
+    @DisplayName("GĐ21: đơn CŨ (không có hạn riêng), 65 phút → KHÔNG nhả (chưa tới 120)")
+    void donCuKhongCoHanRiengChuaQua120ThiGiu() {
+        Order order = taoDonDatTruoc("ORD-TT-CU2", 1, 65);
+
+        service.releaseExpiredReservations();
+
+        Order sau = orderRepository.findById(order.getOrderId()).orElseThrow();
+        assertNotNull(sau.getShipperReservedAt(),
+                "Đơn cũ 65 phút thì chưa quá 120 phút, phải giữ");
+    }
+
     @Test
     @DisplayName("LỖI ĐÃ VÁ: không bịa trạng thái cảm biến — cân nặng và cảm biến cửa giữ nguyên")
-    void giuNguyenTrangThaiCamBien() {
-        Order order = taoDonDatTruoc("ORD-TT-CAMBIEN", 1, 180);
+    void giuNguyenTrangThaiCamBien() {        Order order = taoDonDatTruoc("ORD-TT-CAMBIEN", 1, 180);
 
         // Cửa đang MỞ, có hàng nặng 0.5kg theo cảm biến thật
         Compartment comp = layNgan(1);

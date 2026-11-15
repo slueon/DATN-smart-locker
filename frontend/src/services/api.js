@@ -152,6 +152,14 @@ export const shipperApi = {
   // T3 — đặt trước ngăn trên web.
   getPendingOrders: (lockerId) =>
     api.get('/shipper/orders/pending' + (lockerId ? '?lockerId=' + encodeURIComponent(lockerId) : '')),
+
+  /**
+   * GĐ21 — danh sách khách hàng để shipper chọn khi tạo đơn hộ.
+   *
+   * Trước đây màn "+ Thêm đơn" ghi cứng một khách nên mọi đơn tạo từ shipper đều gán cho cùng
+   * một người. Trả `{userId, fullName, phone}` — backend cố ý không trả `password`/`role`.
+   */
+  getCustomers: () => api.get('/shipper/customers'),
   reserveCompartment: (orderId, body) =>
     api.post('/shipper/orders/' + encodeURIComponent(orderId) + '/reserve', body),
   cancelReserve: (orderId) =>
@@ -184,10 +192,30 @@ export const pickupApi = {
   verifyPickup: (data) => api.post('/pickup/verify', data),
   requestOtp: (orderId, customerPhone) => 
     api.post(`/pickup/request-otp?orderId=${orderId}${customerPhone ? `&customerPhone=${encodeURIComponent(customerPhone)}` : ''}`),
+
+  /**
+   * GĐ20 — sự kiện Kiosk cho WEB KHÁCH (tự mở modal QR/OTP khi khách chọn cách nhận ở tủ).
+   *
+   * <p>Cùng hợp đồng với {@code shipperApi.getKioskEvents} nhưng khác đường dẫn quyền: endpoint
+   * này mở cho CUSTOMER, còn bản của shipper chỉ cho SHIPPER/ADMIN. Lần gọi ĐẦU phải bỏ trống
+   * {@code after} để chỉ lấy {@code latestSeq} — nếu không sẽ phát lại modal của lần trước.
+   */
+  getKioskEvents: (lockerId, after) => {
+    const params = new URLSearchParams();
+    if (lockerId) params.set('lockerId', lockerId);
+    if (after != null) params.set('after', String(after));
+    const qs = params.toString();
+    return api.get(`/pickup/kiosk-events${qs ? `?${qs}` : ''}`);
+  },
 };
 
 export const mqttApi = {
   sendCommand: (data) => api.post('/mqtt/command', data),
+  /**
+   * GĐ18 — <b>hiện KHÔNG còn chỗ nào gọi</b> (component dock telemetry ESP32 đã bị xoá khỏi UI
+   * theo yêu cầu người dùng). Hàm và endpoint backend `/api/mqtt/recent-logs` vẫn được giữ:
+   * endpoint phục vụ chẩn đoán/ADMIN, và xoá helper này chỉ làm mất đường gọi nếu sau cần lại.
+   */
   getRecentLogs: () => api.get('/mqtt/recent-logs'),
   /** GĐ7 — lịch sử mở tủ (ADMIN xem tất cả, SHIPPER xem lệnh của mình). */
   getCommandLogs: (lockerId, limit) => {

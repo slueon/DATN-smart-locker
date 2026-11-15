@@ -49,6 +49,15 @@ public class KioskEventService {
     public static final String COMPARTMENT_SELECTED = "COMPARTMENT_SELECTED";
     public static final String DEPOSIT_SUCCESS = "DEPOSIT_SUCCESS";
 
+    /**
+     * GĐ20 — khách vừa chọn cách nhận hàng trên màn hình tủ ({@code receive/method}).
+     *
+     * <p>{@code message} của sự kiện là {@code "qr"} hoặc {@code "otp"} — web khách đọc giá trị này
+     * để TỰ mở đúng modal, thay vì bắt khách bấm tay. Chỉ 2 giá trị hợp lệ được ghi thành sự kiện;
+     * giá trị lạ chỉ vào {@code device_events} để truy vết, không điều khiển giao diện.
+     */
+    public static final String CUSTOMER_METHOD_CHOSEN = "CUSTOMER_METHOD_CHOSEN";
+
     private final AtomicLong seq = new AtomicLong(0L);
     private final Deque<KioskEvent> events = new ArrayDeque<>(MAX_EVENTS);
 

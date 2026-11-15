@@ -615,4 +615,71 @@ class MqttTopicRoutingTests {
         assertEquals(don.getOrderId(), orderValid.getOrderId());
         assertEquals("TRACK-EVT", orderValid.getTrackingCode());
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // GĐ20 — topic `receive/method`: tủ báo web khách để tự mở modal QR/OTP
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("GĐ20: receive/method=qr phát sự kiện CUSTOMER_METHOD_CHOSEN mang message=qr")
+    void receiveMethodQrPhatSuKienChoWebKhach() {
+        long moc = kioskEventService.latestSeq();
+
+        publish("ptit/Tu_1/receive/method", "{\"locker_id\":\"Tu_1\",\"method\":\"qr\"}");
+
+        List<KioskEvent> suKien = suKienSau(moc);
+        KioskEvent event = suKien.stream()
+                .filter(e -> KioskEventService.CUSTOMER_METHOD_CHOSEN.equals(e.getType()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "Phải ghi CUSTOMER_METHOD_CHOSEN để web khách tự mở modal QR; thực tế: "
+                                + loaiSuKienSau(moc)));
+        assertEquals("qr", event.getMessage(),
+                "message phải là 'qr' để web biết mở modal QR");
+        assertEquals(locker.getLockerId(), event.getLockerId(),
+                "Sự kiện phải gắn đúng tủ — nếu sai, web của tủ khác cũng mở modal");
+    }
+
+    @Test
+    @DisplayName("GĐ20: receive/method=otp phát sự kiện với message=otp")
+    void receiveMethodOtpPhatSuKienChoWebKhach() {
+        long moc = kioskEventService.latestSeq();
+
+        publish("ptit/Tu_1/receive/method", "{\"locker_id\":\"Tu_1\",\"method\":\"otp\"}");
+
+        KioskEvent event = suKienSau(moc).stream()
+                .filter(e -> KioskEventService.CUSTOMER_METHOD_CHOSEN.equals(e.getType()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "Phải ghi CUSTOMER_METHOD_CHOSEN với method=otp; thực tế: " + loaiSuKienSau(moc)));
+        assertEquals("otp", event.getMessage());
+    }
+
+    @Test
+    @DisplayName("GĐ20: receive/method giá trị lạ KHÔNG phát sự kiện Kiosk (không điều khiển UI)")
+    void receiveMethodGiaTriLaKhongPhatSuKien() {
+        long moc = kioskEventService.latestSeq();
+
+        publish("ptit/Tu_1/receive/method", "{\"locker_id\":\"Tu_1\",\"method\":\"rac\"}");
+
+        List<String> loai = loaiSuKienSau(moc);
+        assertFalse(loai.contains(KioskEventService.CUSTOMER_METHOD_CHOSEN),
+                "Giá trị lạ không được điều khiển giao diện khách (chỉ nhận qr|otp); thực tế: " + loai);
+
+        // Nhưng vẫn phải có vết trong device_events để truy vết được bản tin rác.
+        assertTrue(deviceEventRepository.findAll().stream()
+                        .anyMatch(e -> "HW_MQTT_RECEIVE_METHOD".equals(e.getEventType())),
+                "Vẫn phải ghi device_events HW_MQTT_RECEIVE_METHOD để truy vết");
+    }
+
+    @Test
+    @DisplayName("GĐ20: tên cũ rec/method vẫn được nhận (tương thích firmware cũ)")
+    void receiveMethodTenCuRecVanNhan() {
+        long moc = kioskEventService.latestSeq();
+
+        publish("ptit/rec/method", "{\"locker_id\":\"Tu_1\",\"method\":\"qr\"}");
+
+        assertTrue(loaiSuKienSau(moc).contains(KioskEventService.CUSTOMER_METHOD_CHOSEN),
+                "Tên cũ rec/method phải được nhận như receive/method; thực tế: " + loaiSuKienSau(moc));
+    }
 }

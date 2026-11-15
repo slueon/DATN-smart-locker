@@ -143,6 +143,33 @@ public class ShipperDTO {
     }
 
     /**
+     * GĐ21 — một KHÁCH HÀNG để shipper chọn khi tạo đơn hộ.
+     *
+     * <p><b>Vì sao chỉ 3 field:</b> màn "Thêm đơn" chỉ cần biết gán đơn cho ai. KHÔNG trả
+     * {@code password}, {@code role}, {@code createdAt} — dữ liệu thừa ở API nội bộ là bề mặt tấn
+     * công miễn phí, và {@code password} thì tuyệt đối không bao giờ được ra khỏi CSDL.
+     *
+     * <p>{@code userId} để frontend giữ khoá ổn định khi SĐT/tên bị sửa.
+     */
+    @Getter
+    @Setter
+    @Builder
+    public static class CustomerOptionResponse {
+        private Long userId;
+        private String fullName;
+        private String phone;
+
+        public CustomerOptionResponse() {
+        }
+
+        public CustomerOptionResponse(Long userId, String fullName, String phone) {
+            this.userId = userId;
+            this.fullName = fullName;
+            this.phone = phone;
+        }
+    }
+
+    /**
      * GĐ11 — shipper chốt tủ cho đơn. {@code compartmentIndex} để trống thì backend tự chọn ngăn
      * trống phù hợp cỡ kiện.
      */
@@ -152,13 +179,29 @@ public class ShipperDTO {
     public static class AssignLockerRequest {
         private String lockerId;
         private Integer compartmentIndex;
+        /**
+         * GĐ23 — số giờ giữ chỗ shipper chọn ở luồng CHỌN TỦ: <b>chỉ 1 hoặc 2</b>, bỏ trống = 2.
+         *
+         * <p>Trước GĐ23 luồng này ghi {@code shipper_reserved_at} mà không ghi hạn, nên mọi đơn
+         * chọn tủ đều bị khoá cứng 120 phút và không ai chọn được 1 giờ — trái yêu cầu người dùng.
+         */
+        private Integer reserveHours;
 
         public AssignLockerRequest() {
         }
 
-        public AssignLockerRequest(String lockerId, Integer compartmentIndex) {
+        /**
+         * Constructor đủ field — {@code @Builder} của Lombok cần bản bao trùm MỌI field (đã dính lỗi
+         * này ở GĐ21 khi thêm {@code reserveHours} vào {@code ReserveRequest}).
+         */
+        public AssignLockerRequest(String lockerId, Integer compartmentIndex, Integer reserveHours) {
             this.lockerId = lockerId;
             this.compartmentIndex = compartmentIndex;
+            this.reserveHours = reserveHours;
+        }
+
+        public AssignLockerRequest(String lockerId, Integer compartmentIndex) {
+            this(lockerId, compartmentIndex, null);
         }
     }
 }

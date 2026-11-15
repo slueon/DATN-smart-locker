@@ -81,11 +81,14 @@ public class ReservationTimeoutService {
             return; // tác vụ bị tắt bằng cấu hình
         }
 
-        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(timeoutMinutes);
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime cutoff = now.minusMinutes(timeoutMinutes);
 
         // Bước 1: chỉ lấy danh sách id trong một transaction ngắn, rồi thoát ra ngay.
+        // GĐ21 — truyền CẢ `now` (cho đơn có hạn riêng) và `cutoff` (cho đơn cũ). Query tự chọn
+        // nhánh theo `reserve_expires_at IS NULL`; xem javadoc `findExpiredShipperReservations`.
         List<String> candidates = transactionTemplate.execute(status ->
-                orderRepository.findExpiredShipperReservations(cutoff).stream()
+                orderRepository.findExpiredShipperReservations(cutoff, now).stream()
                         .map(Order::getOrderId)
                         .toList());
 
@@ -128,7 +131,15 @@ public class ReservationTimeoutService {
                     orderId, order.getStatus());
             return false;
         }
-        if (!order.getShipperReservedAt().isBefore(LocalDateTime.now().minusMinutes(timeoutMinutes))) {
+        // GĐ21 — kiểm lại ĐÚNG luật của query, cho cả hai loại đơn:
+        //   • có `reserveExpiresAt` → hết hạn khi now > hạn RIÊNG của đơn đó;
+        //   • không có (đơn cũ)   → công thức cũ shipperReservedAt + timeoutMinutes.
+        // Phải kiểm lại ở đây vì đơn có thể đã được gia hạn/đặt lại trong lúc chờ khoá.
+        LocalDateTime now = LocalDateTime.now();
+        boolean expired = order.getReserveExpiresAt() != null
+                ? order.getReserveExpiresAt().isBefore(now)
+                : order.getShipperReservedAt().isBefore(now.minusMinutes(timeoutMinutes));
+        if (!expired) {
             log.debug("Bỏ qua đơn {}: đã được gia hạn đặt trước trong lúc chờ khoá.", orderId);
             return false;
         }
@@ -138,6 +149,9 @@ public class ReservationTimeoutService {
         if (comp == null) {
             // Đơn đã mất ngăn từ trước (ví dụ bị autoRelease của LockerService dọn) — chỉ xoá dấu.
             order.setShipperReservedAt(null);
+            // GĐ21 — xoá cả hạn giữ chỗ: đơn không còn giữ ngăn thì hạn đó vô nghĩa và sẽ gây
+            // hiểu nhầm "đơn vẫn đang được giữ đến 11:59".
+            order.setReserveExpiresAt(null);
             orderRepository.save(order);
             log.info("Đơn {} hết hạn đặt trước nhưng không còn giữ ngăn — đã xoá dấu đặt trước.", orderId);
             return true;
@@ -165,6 +179,8 @@ public class ReservationTimeoutService {
 
         order.setCompartment(null);
         order.setShipperReservedAt(null);
+        // GĐ21 — xoá luôn hạn riêng của lần đặt trước vừa bị nhả.
+        order.setReserveExpiresAt(null);
         orderRepository.save(order);
 
         // KHÔNG cộng available_slots: slot đã bị trừ lúc khách đặt hàng, không trừ lúc shipper đặt trước.
