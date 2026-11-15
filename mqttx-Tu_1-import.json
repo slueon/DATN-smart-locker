@@ -162,6 +162,21 @@
                                   "connectionId":  "2cbf9af6-d85e-486c-a026-189bf7d37af5"
                               },
                               {
+                                  "topic":  "ptit/Tu_1/receive/method",
+                                  "qos":  1,
+                                  "disabled":  false,
+                                  "createAt":  "2026-11-14T17:22:53.000Z",
+                                  "id":  "scription_m1th0d0a-14re-ce1v-8a2b-6e5f7c8d9a01",
+                                  "alias":  "",
+                                  "retain":  false,
+                                  "nl":  false,
+                                  "rap":  false,
+                                  "rh":  0,
+                                  "subscriptionIdentifier":  null,
+                                  "color":  "#4B7BEC",
+                                  "connectionId":  "2cbf9af6-d85e-486c-a026-189bf7d37af5"
+                              },
+                              {
                                   "topic":  "ptit/Tu_1/locker/select_compartment",
                                   "qos":  1,
                                   "disabled":  false,

@@ -27,6 +27,7 @@
 
 import net from 'node:net';
 import tls from 'node:tls';
+import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
 const BROKER_URL = process.env.MQTT_BROKER_URL || 'ssl://broker.emqx.io:8883';
@@ -355,8 +356,18 @@ function topicPath(...parts) {
 }
 
 async function cmdPub(positional, flags) {
-  const [topic, payload = ''] = positional;
+  const [topic, rawPayload = ''] = positional;
   if (!topic) throw usage('pub cần <topic> <payload>');
+  // GĐ20 — cho phép `@duong/dan/file.json` để nạp payload từ FILE.
+  //
+  // Vì sao cần: PowerShell 5.1 bóc dấu `"` khi truyền JSON qua command line (đã ghi trong
+  // AGENTS.md), nên payload `{"a":"b"}` tới nơi chỉ còn `{a:b}` — JSON hỏng và backend rơi vào
+  // nhánh plaintext. Đọc từ file thì giữ nguyên từng byte.
+  let payload = rawPayload;
+  if (rawPayload.startsWith('@')) {
+    const p = rawPayload.slice(1);
+    payload = readFileSync(p, 'utf8').replace(/\r?\n$/, '');
+  }
   const qos = Number(flags.qos || 0);
   const retain = Boolean(flags.retain);
   await withClient(async (client) => {

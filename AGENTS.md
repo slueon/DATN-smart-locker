@@ -1,0 +1,4 @@
+- On this Windows machine, never pass JSON or quoted arguments inline on the PowerShell command line — PowerShell strips the quotes and the payload arrives malformed. Write the command to a script file and run that file instead.
+- Writing file contents through PowerShell corrupts Vietnamese (UTF-8) text — create and edit source files with your file-editing tool, never PowerShell here-strings or redirection.
+- Delegate verification of changes to the team's verifier rather than self-checking — the user called out an agent for verifying its own one-line fix.
+- Never discard uncommitted changes with `git checkout -- <file>` (or restore/reset) before comparing `git show HEAD:<file>` against the working copy and confirming whose edit it is — a blind checkout here deleted the user's own change and the blame landed on the wrong agent.
