@@ -2,3 +2,5 @@
 - Writing file contents through PowerShell corrupts Vietnamese (UTF-8) text — create and edit source files with your file-editing tool, never PowerShell here-strings or redirection.
 - Delegate verification of changes to the team's verifier rather than self-checking — the user called out an agent for verifying its own one-line fix.
 - Never discard uncommitted changes with `git checkout -- <file>` (or restore/reset) before comparing `git show HEAD:<file>` against the working copy and confirming whose edit it is — a blind checkout here deleted the user's own change and the blame landed on the wrong agent.
+- When the user asks for a test run of the features, report what fails and stop — do not fix the failures in the same pass; the user had to say this after an agent started fixing during a test request.
+- Only shut down the machine when the user asks for it in the current prompt — the earlier standing "when everything is done, shutdown" instruction was withdrawn.
