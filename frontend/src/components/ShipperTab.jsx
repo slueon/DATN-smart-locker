@@ -5,6 +5,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
 import { shipperApi, lockerApi, orderApi } from '../services/api';
+// GĐ40 — suy trạng thái tủ từ `lastHeartbeat` (dùng chung với màn admin, không tự viết ngưỡng mới).
+import { getLockerHealth } from '../utils/lockerHealth';
 import {
   Truck, QrCode, Timer, ShieldCheck, CheckCircle2, AlertTriangle,
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
@@ -103,6 +105,15 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   //   Ngoại lệ đang thấy trong DB: `LOCKER_HN_02` ngăn 1 có `current_weight = 0.85`. Đây là
   //   **dữ liệu rác** do bug cũ `weightGrams: 0.85` (kg) bị ghi vào cột gram qua
   //   `ShipperService:168`. Không được lấy giá trị đó làm chuẩn để suy ra đơn vị.
+  // GĐ39 — TOÀN BỘ danh sách ngăn của tủ đang xem (shape của `LockerCabinetVisualizer`).
+  // `null` = chưa đọc được → component dùng `defaultSlots` (2 ngăn mặc định), không bịa status.
+  // Shipper LUÔN thấy đủ ngăn, mọi lúc — không lọc theo ngăn của đơn.
+  const [compartments, setCompartments] = useState(null);
+
+  // GĐ40 — telemetry THẬT theo từng tủ: { [lockerId]: {isVirtual, lastHeartbeat, health} }.
+  // `null` = chưa đọc được / lỗi mạng → header sơ đồ ẩn (không bịa số).
+  const [telemetryByLocker, setTelemetryByLocker] = useState(null);
+
   const [sensor, setSensor] = useState({
     weight: null,       // kg — null = chưa đọc được
     doorClosed: null,   // true/false — null = chưa có bản tin
@@ -131,6 +142,34 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     } catch (e) {}
   };
 
+  /**
+   * GĐ40 — telemetry THẬT cho header sơ đồ tủ.
+   *
+   * <p>Trước GĐ40 header hard-code `ESP32 12ms` + `MQTT 1883` — hai con số không đọc từ đâu, và
+   * **1883 còn sai sự thật** (backend dùng TLS **8883**). Nay dữ liệu lấy từ chính response
+   * `/api/lockers` (`lastHeartbeat`, `isVirtual`), suy bằng `getLockerHealth` của GĐ12.
+   *
+   * <p><b>KHÔNG gọi `/api/mqtt/status`</b>: endpoint đó 403 với vai trò không phải ADMIN.
+   * Lỗi mạng ⇒ state `null` ⇒ header ẩn, **không bịa số**.
+   */
+  const loadLockerTelemetry = async () => {
+    try {
+      const res = await lockerApi.getAll();
+      const list = res?.data?.data || [];
+      const byId = {};
+      list.forEach((l) => {
+        byId[l.lockerId] = {
+          isVirtual: l.isVirtual === true,
+          lastHeartbeat: l.lastHeartbeat || null,
+          health: getLockerHealth(l),
+        };
+      });
+      setTelemetryByLocker(byId);
+    } catch {
+      setTelemetryByLocker(null); // để header ẩn, không bịa
+    }
+  };
+
   useEffect(() => {
     // GĐ13 — KHÔNG còn `store.checkAndScanOverdueOrders()`.
     //
@@ -140,6 +179,9 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     // `shipperApi.getOverdueOrders` (dùng ở tab Thu hồi).
     loadOrders();
     setAllLockers(store.getLockers());
+    // GĐ40 — tải danh sách tủ THẬT từ API để có `lastHeartbeat`/`isVirtual` (cache localStorage
+    // không có nhịp tim, dùng nó sẽ ra telemetry sai). Chỉ để hiện header sơ đồ, không đổi luồng đơn.
+    loadLockerTelemetry();
     // GĐ21 — nạp danh sách khách MỘT LẦN cho hộp chọn "+ Thêm đơn" (không gọi lại mỗi lần bấm).
     loadCustomers();
 
@@ -447,16 +489,31 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
    * công tắc từ MC-38, cả hai do thiết bị publish lên và backend ghi vào DB. Gọi lại mỗi 2 giây
    * khi shipper đang ở bước nạp hàng nên UI bám theo phần cứng thật.
    */
-  const loadCompartmentSensor = async (lockerId, compIndex) => {
-    if (!lockerId || compIndex == null) return null;
+  const loadCompartmentSensor = async (lockerId) => {
+    if (!lockerId) return null;
     try {
       const res = await lockerApi.getCompartments(lockerId);
       const list = res?.data?.data || [];
-      const comp = list.find((c) => c.compIndex === compIndex);
-      if (!comp) {
+      if (!list.length) {
+        setCompartments(null);
         setSensor({ weight: null, doorClosed: null, updatedAt: null, status: null, compIndex: null });
         return null;
       }
+
+      // GĐ39 — GIỮ CẢ DANH SÁCH. Trước đây hàm này `find` đúng ngăn của đơn rồi chỉ lưu 1 ngăn,
+      // nên sơ đồ chỉ vẽ được 1 slot dù tủ có 2 ngăn (user báo kèm ảnh). Nay lưu toàn bộ để
+      // `LockerCabinetVisualizer` vẽ đủ ngăn — component đó vốn render được nhiều slot.
+      setCompartments(list.map((c) => ({
+        id: c.compIndex,
+        status: c.status || null,                 // status THẬT từ API, không suy diễn
+        weight: c.currentWeight != null ? Number(c.currentWeight) / 1000 : 0,
+        door: c.isDoorClosed === false ? 'OPEN' : 'CLOSED',
+      })));
+
+      // `sensor` giữ nguyên ý nghĩa cũ: ngăn ĐANG THAO TÁC (phục vụ ô "Cửa Đang Mở"/"Trọng lượng"
+      // và `sensorWeight`). Không đổi hành vi highlight — `activeSlotId` vẫn do caller truyền.
+      const compIndex = activeOrder?.compartmentIndex;
+      const comp = list.find((c) => c.compIndex === compIndex) || list[0];
       const data = {
         // DB lưu GRAM (xem ghi chú đơn vị ở khối state `sensor`), component hiểu KG → chia 1000.
         weight: comp.currentWeight != null ? Number(comp.currentWeight) / 1000 : 0,
@@ -657,7 +714,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       // Nếu chưa đọc được thì bỏ hẳn tham số, để backend giữ nguyên giá trị phần cứng đã báo.
       let liveWeightKg = sensor.weight;
       if (liveWeightKg == null) {
-        const fresh = await loadCompartmentSensor(order.lockerId, order.compartmentIndex);
+        const fresh = await loadCompartmentSensor(order.lockerId);
         liveWeightKg = fresh?.weight ?? null;
       }
 
@@ -684,7 +741,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       // giữ snapshot cũ (`status` chưa có, cân = 0) và sơ đồ đứng yên ở "Ngăn Trống".
       // Backend đã ghi `compartments.status = 'OCCUPIED'` + `current_weight` trong cùng request,
       // nên đọc lại ngay là thấy giá trị mới.
-      await loadCompartmentSensor(order.lockerId, order.compartmentIndex);
+      await loadCompartmentSensor(order.lockerId);
     } catch (err) {
       setReserveMessage({
         type: 'error',
@@ -709,6 +766,11 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
 
   const activeOrder = orders.find((o) => o.orderId === selectedOrderId) || filteredPending[0] || null;
 
+  // GĐ40 — telemetry của ĐÚNG tủ đang hiện sơ đồ (không lẫn tủ khác).
+  const telemetry = (activeOrder && telemetryByLocker)
+    ? (telemetryByLocker[activeOrder.lockerId] || null)
+    : null;
+
   // T3: mỗi khi đổi đơn đang chọn → nạp lại danh sách ngăn trống + điền sẵn mã vận đơn.
   useEffect(() => {
     if (!activeOrder) {
@@ -729,7 +791,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   // ⇒ sơ đồ rơi về mặc định "Ngăn Trống". Đọc ở đây để sơ đồ phản ánh trạng thái thật của ngăn
   // ngay khi mở đơn, và đọc lại khi đổi sang ngăn khác (không giữ số của ngăn cũ).
   useEffect(() => {
-    loadCompartmentSensor(activeOrder?.lockerId, activeOrder?.compartmentIndex);
+    loadCompartmentSensor(activeOrder?.lockerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrder?.lockerId, activeOrder?.compartmentIndex]);
 
@@ -755,9 +817,9 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     if (!dangNap && !daNapXong) return undefined;
 
     // Đọc ngay 1 lần rồi mới hẹn chu kỳ, để UI không trống 2 giây đầu.
-    loadCompartmentSensor(activeOrder.lockerId, compIndex);
+    loadCompartmentSensor(activeOrder.lockerId);
     const timer = setInterval(() => {
-      loadCompartmentSensor(activeOrder.lockerId, compIndex);
+      loadCompartmentSensor(activeOrder.lockerId);
     }, 2000);
 
     return () => clearInterval(timer);
@@ -1521,22 +1583,17 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   lockerName={activeOrder.lockerName}
                   lockerId={activeOrder.lockerId}
                   activeSlotId={activeOrder.compartmentIndex}
-                  // GĐ29 — TRUYỀN TRẠNG THÁI THẬT CỦA NGĂN.
+                  // GĐ39 — TRUYỀN TOÀN BỘ NGĂN CỦA TỦ.
                   //
-                  // Trước GĐ29 prop này không được truyền, nên `LockerCabinetVisualizer:46` rơi về
-                  // `defaultSlots` với `status: 'AVAILABLE'` ⇒ nhãn luôn là "Ngăn Trống" dù DB đã
-                  // `OCCUPIED`. Chỉ truyền khi ĐÃ đọc được cảm biến của ĐÚNG ngăn đang xem; chưa có
-                  // dữ liệu thì để `null` cho component dùng mặc định (không bịa trạng thái).
-                  compartments={
-                    sensor.status != null && sensor.compIndex === activeOrder.compartmentIndex
-                      ? [{
-                          id: sensor.compIndex,
-                          status: sensor.status,
-                          weight: sensor.weight != null ? sensor.weight : 0,
-                          door: sensor.doorClosed === false ? 'OPEN' : 'CLOSED',
-                        }]
-                      : null
-                  }
+                  // Trước GĐ39 chỗ này lọc `sensor.compIndex === activeOrder.compartmentIndex` nên chỉ
+                  // đưa xuống ĐÚNG 1 phần tử ⇒ sơ đồ chỉ vẽ 1 ngăn dù tủ có 2 (user báo kèm ảnh).
+                  // Shipper LUÔN cần thấy đủ ngăn để biết ngăn nào trống mà chọn; ngăn của đơn vẫn
+                  // nổi bật nhờ `activeSlotId` (component tô `ring-2` cho slot khớp, không cần lọc).
+                  // `compartments === null` (chưa đọc được) ⇒ component dùng `defaultSlots` (2 ngăn),
+                  // KHÔNG bịa status (điều cấm #2).
+                  compartments={compartments}
+                  // GĐ40 — telemetry THẬT thay cho "ESP32 12ms"/"MQTT 1883" hard-code.
+                  telemetry={telemetry}
                   // GĐ5-A2 — CẢM BIẾN CỬA THẬT (MC-38) từ `isDoorClosed`.
                   //
                   // Chọn phương án (b) của thẻ: dùng dữ liệu thật, FALLBACK theo bước UI khi

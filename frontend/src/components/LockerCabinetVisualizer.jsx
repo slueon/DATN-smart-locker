@@ -17,6 +17,11 @@ export default function LockerCabinetVisualizer({
   sensorWeight = 0.0, // KG
   onSelectSlot = null,
   highlightOrder = null,
+  // GĐ40 — TELEMETRY THẬT cho header. Trước GĐ40 header hard-code `ESP32 12ms` + `MQTT 1883`:
+  // hai con số không đọc từ đâu, và `1883` SAI SỰ THẬT (hệ thống dùng TLS 8883).
+  // Shape: { isVirtual: boolean, lastHeartbeat: string|null, health: {tone, rel, key} } | null.
+  // `null` = caller chưa đọc được ⇒ hiện "Chưa có dữ liệu", TUYỆT ĐỐI không bịa số.
+  telemetry = null,
   compact = false
 }) {
   // Dữ liệu ngăn tủ mặc định nếu không truyền từ store (Hệ thống chuẩn 2 ngăn: Nhỏ & Lớn)
@@ -66,12 +71,57 @@ export default function LockerCabinetVisualizer({
           </div>
         </div>
 
-        {/* Real-time Telemetry Status Pill */}
-        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100/80 border border-slate-200/70 text-slate-700 text-[11px] font-mono shadow-2xs">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-semibold">ESP32 12ms</span>
-          <span className="text-slate-300">•</span>
-          <span className="text-blue-600 font-bold">MQTT 1883</span>
+        {/* Real-time Telemetry Status Pill — GĐ40: dữ liệu THẬT, không hard-code.
+            Trước GĐ40 khối này ghi cứng `ESP32 12ms` + `MQTT 1883`: không đọc từ đâu, và `1883`
+            sai sự thật vì backend dùng TLS `8883`. Bốn trường hợp:
+              • tủ ảo              → "Tủ demo — không có thiết bị" (KHÔNG hiện "mất kết nối")
+              • tủ thật, hb = null → "Chưa từng gửi nhịp tim"
+              • tủ thật, còn sống  → "MQTT 8883 TLS" + "Nhịp tim N phút trước" (xanh)
+              • tủ thật, hb cũ     → như trên nhưng VÀNG
+              • telemetry = null   → "Chưa có dữ liệu" (KHÔNG bịa số) */}
+        <div
+          data-testid="locker-telemetry"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100/80 border border-slate-200/70 text-slate-700 text-[11px] font-mono shadow-2xs"
+        >
+          {(() => {
+            if (!telemetry) {
+              return (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-slate-400" />
+                  <span className="font-semibold text-slate-500">Chưa có dữ liệu</span>
+                </>
+              );
+            }
+            if (telemetry.isVirtual === true) {
+              return (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-slate-400" />
+                  <span className="font-semibold text-slate-500">Tủ demo — không có thiết bị</span>
+                </>
+              );
+            }
+            if (!telemetry.lastHeartbeat) {
+              return (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-slate-400" />
+                  <span className="font-semibold text-slate-500">Chưa từng gửi nhịp tim</span>
+                </>
+              );
+            }
+            const conSong = (telemetry.health?.tone || '') === 'emerald';
+            return (
+              <>
+                <span className={`w-2 h-2 rounded-full ${conSong
+                  ? 'bg-emerald-500 animate-pulse'
+                  : 'bg-amber-500'}`} />
+                <span className="font-semibold">MQTT 8883 TLS</span>
+                <span className="text-slate-300">•</span>
+                <span className={`font-bold ${conSong ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  Nhịp tim {(telemetry.health?.rel || '').replace('chưa từng gửi', '—')}
+                </span>
+              </>
+            );
+          })()}
         </div>
       </div>
 

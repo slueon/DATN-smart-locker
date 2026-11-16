@@ -4,6 +4,8 @@ import CircularTimer from './CircularTimer';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
 import { pickupApi, orderApi, lockerApi } from '../services/api';
+// GĐ40 — suy trạng thái tủ từ `lastHeartbeat`, dùng chung helper GĐ12 (không tự viết ngưỡng mới).
+import { getLockerHealth } from '../utils/lockerHealth';
 import {
   Package, Clock, CheckCircle2, AlertTriangle, QrCode,
   Search, MapPin, X, XCircle, AlertCircle, Timer,
@@ -105,6 +107,15 @@ export default function CustomerPickupTab({ currentUser }) {
   // Trước đây là số cứng `0.85` nên khách nào cũng thấy cùng một con số dù kiện nặng nhẹ khác nhau.
   // DB lưu GRAM (`MqttService:1069`), `LockerCabinetVisualizer` hiểu KG → chia 1000 tại chỗ truyền.
   const [compartmentSensor, setCompartmentSensor] = useState(null);
+
+  // GĐ39 — TOÀN BỘ ngăn của tủ đang xem (shape của `LockerCabinetVisualizer`).
+  // Dùng để vẽ đủ 2 ngăn khi đơn CHƯA nạp; khi đơn đã nạp thì chỉ lọc đúng ngăn của đơn.
+  // `null` = chưa đọc được → component dùng `defaultSlots`, KHÔNG bịa status (điều cấm #2).
+  const [compartmentsDayDu, setCompartmentsDayDu] = useState(null);
+
+  // GĐ40 — telemetry thật của tủ đang xem: { lastHeartbeat, isVirtual, health } | null.
+  // Lấy từ `/api/lockers` (KHÔNG gọi `/api/mqtt/status` — 403 với khách, điều cấm #2).
+  const [lockerTelemetry, setLockerTelemetry] = useState(null);
 
   // GĐ20 — mốc `seq` sự kiện Kiosk đã xử lý. `null` = chưa hỏi lần nào, lần poll đầu chỉ lấy
   // `latestSeq` để KHÔNG phát lại modal của lần trước.
@@ -477,15 +488,29 @@ export default function CustomerPickupTab({ currentUser }) {
   const docCamBien = useCallback(async (lockerId, compIndex) => {
     if (!lockerId || compIndex == null) {
       setCompartmentSensor(null);
+      setCompartmentsDayDu(null);
       return;
     }
     try {
       const res = await lockerApi.getCompartments(lockerId);
-      const comp = (res?.data?.data || []).find((c) => c.compIndex === compIndex);
+      const list = res?.data?.data || [];
+      // GĐ39 — GIỮ CẢ DANH SÁCH: đơn CHƯA nạp phải hiện đủ 2 ngăn (user chốt). Trước đây chỉ
+      // `find` đúng ngăn của đơn nên sơ đồ chỉ vẽ 1 ngăn dù tủ có 2.
+      setCompartmentsDayDu(list.length
+        ? list.map((c) => ({
+            id: c.compIndex,
+            status: c.status || null,
+            weight: c.currentWeight != null ? Number(c.currentWeight) / 1000 : 0,
+            door: c.isDoorClosed === false ? 'OPEN' : 'CLOSED',
+          }))
+        : null);
+      // `compartmentSensor` giữ nghĩa cũ: ngăn của ĐƠN (phục vụ doorState/sensorWeight — điều cấm #4).
+      const comp = list.find((c) => c.compIndex === compIndex);
       setCompartmentSensor(comp || null);
     } catch {
       // mất mạng thì để trống, không bịa số (điều cấm #2)
       setCompartmentSensor(null);
+      setCompartmentsDayDu(null);
     }
   }, []);
 
@@ -493,6 +518,44 @@ export default function CustomerPickupTab({ currentUser }) {
     docCamBien(selectedOrder?.lockerId, selectedOrder?.compartmentIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOrder?.lockerId, selectedOrder?.compartmentIndex]);
+
+  /**
+   * GĐ40 — tải telemetry THẬT của tủ đang xem.
+   *
+   * <p>Trước GĐ40 header sơ đồ hard-code `ESP32 12ms` + `MQTT 1883` — không đọc từ đâu, và 1883
+   * sai sự thật (hệ thống dùng TLS **8883**). Nay lấy `lastHeartbeat`/`isVirtual` từ chính
+   * response `/api/lockers` rồi suy trạng thái bằng `getLockerHealth` (GĐ12).
+   *
+   * <p>Lỗi mạng ⇒ `null` ⇒ header ẩn. **Không** gọi `/api/mqtt/status` (403 với khách).
+   */
+  useEffect(() => {
+    const lockerId = selectedOrder?.lockerId;
+    if (!lockerId) {
+      setLockerTelemetry(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await lockerApi.getAll();
+        if (cancelled) return;
+        const l = (res?.data?.data || []).find((x) => x.lockerId === lockerId);
+        if (!l) {
+          setLockerTelemetry(null);
+          return;
+        }
+        setLockerTelemetry({
+          isVirtual: l.isVirtual === true,
+          lastHeartbeat: l.lastHeartbeat || null,
+          health: getLockerHealth(l),
+        });
+      } catch {
+        if (!cancelled) setLockerTelemetry(null);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrder?.lockerId]);
 
   /**
    * GĐ29 — ĐỌC LẠI CẢM BIẾN ĐỊNH KỲ KHI ĐƠN ĐANG Ở TRONG TỦ.
@@ -1192,24 +1255,23 @@ export default function CustomerPickupTab({ currentUser }) {
                   lockerName={selectedOrder.lockerName || 'Trạm Tủ KTX A1'}
                   lockerId={selectedOrder.lockerId || 'LOCKER_HN_01'}
                   activeSlotId={selectedOrder.compartmentIndex || 2}
-                  // GĐ29 — TRUYỀN TRẠNG THÁI THẬT CỦA NGĂN.
-                  //
-                  // Trước GĐ29 prop này không được truyền ⇒ `LockerCabinetVisualizer:46` rơi về
-                  // `defaultSlots` (`status: 'AVAILABLE'`) nên nhãn luôn "Ngăn Trống" dù ngăn đã
-                  // `OCCUPIED`. Chỉ truyền khi đã đọc được cảm biến; chưa có thì `null` để component
-                  // dùng mặc định — KHÔNG tự đoán trạng thái (điều cấm #1).
-                  compartments={
-                    compartmentSensor?.status != null && compartmentSensor?.compIndex != null
-                      ? [{
-                          id: compartmentSensor.compIndex,
-                          status: compartmentSensor.status,
-                          weight: compartmentSensor.currentWeight != null
-                            ? Number(compartmentSensor.currentWeight) / 1000
-                            : 0,
-                          door: compartmentSensor.isDoorClosed === false ? 'OPEN' : 'CLOSED',
-                        }]
-                      : null
-                  }
+                  // GĐ39 — SỐ NGĂN THEO TRẠNG THÁI ĐƠN (user chốt 16/11):
+                  //   • Đơn CHƯA nạp (mọi trạng thái ngoài 3 cái dưới) → hiện ĐỦ 2 ngăn.
+                  //   • Đơn ĐÃ nạp (`DEPOSITED`/`PICKUP_OPENED`/`COMPLETED`) → chỉ ngăn chứa đơn.
+                  // Ngăn của đơn vẫn nổi bật nhờ `activeSlotId` (component tô `ring-2`), nên KHÔNG
+                  // lọc theo `activeSlotId` (điều cấm #3).
+                  // `compartmentsDayDu === null` (chưa đọc được) ⇒ `null` ⇒ component dùng
+                  // `defaultSlots`, KHÔNG bịa status (điều cấm #2).
+                  compartments={(() => {
+                    if (!compartmentsDayDu) return null;
+                    const DA_NAP = ['DEPOSITED', 'PICKUP_OPENED', 'COMPLETED'];
+                    if (!DA_NAP.includes(selectedOrder.status)) return compartmentsDayDu;
+                    const cuaDon = selectedOrder.compartmentIndex;
+                    const loc = compartmentsDayDu.filter((c) => c.id === cuaDon);
+                    return loc.length ? loc : compartmentsDayDu;
+                  })()}
+                  // GĐ40 — telemetry THẬT thay "ESP32 12ms"/"MQTT 1883".
+                  telemetry={lockerTelemetry}
                   doorState={compartmentSensor?.isDoorClosed != null
                     ? (compartmentSensor.isDoorClosed ? 'CLOSED' : 'OPEN')
                     : 'CLOSED'}
