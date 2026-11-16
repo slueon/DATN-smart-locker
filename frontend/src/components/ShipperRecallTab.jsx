@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 // GĐ41 — KHÔNG còn CircularTimer ở file này (mã QR shipper là mã cố định, không đếm ngược).
 // File `CircularTimer.jsx` VẪN GIỮ vì `CustomerPickupTab` còn dùng cho OTP khách.
@@ -29,6 +29,26 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState(null);
   const [showQrModal, setShowQrModal] = useState(false);
+
+  /**
+   * GĐ44 — "shipper ĐÃ QUÉT QR THÀNH CÔNG tại tủ" hay chưa.
+   *
+   * <p><b>Vì sao KHÔNG dùng `dynamicToken != null`:</b> `generateToken` chỉ **cấp** mã; phải quét ở
+   * tủ thì backend mới đặt `isVerified = true` và bắn `SHIPPER_VERIFIED`. Dùng `dynamicToken` thì
+   * nút hiện ngay khi bấm lấy QR — sai yêu cầu user (điều cấm #2).
+   *
+   * <p>Nguồn sự thật duy nhất: sự kiện Kiosk `SHIPPER_VERIFIED` của ĐÚNG tủ đang chọn.
+   */
+  const [shipperVerified, setShipperVerified] = useState(false);
+  const [verifyRejectedReason, setVerifyRejectedReason] = useState(null);
+  /** Mốc `seq` sự kiện Kiosk đã xử lý — chống xử lý lại cùng sự kiện mỗi nhịp 1,5 giây. */
+  /**
+   * Mốc `seq` sự kiện Kiosk đã đọc — dùng `useRef` (không phải state) để effect poll KHÔNG chạy
+   * lại mỗi khi mốc đổi. Nếu để state + đưa vào dependency thì mỗi 1,5 giây lại sinh thêm một
+   * interval (đo được 352 request/5s thay vì 3–4).
+   */
+  const kioskSeqRef = useRef(null);
+  const processedKioskSeqRef = useRef(new Set());
 
   // ===== BƯỚC 2 -> 4: QUY TRÌNH THU HỒI 1 CHẠM & CẢM BIẾN TỰ ĐỘNG =====
   const [recallPhase, setRecallPhase] = useState('IDLE'); // 'IDLE' | 'DOOR_OPEN' | 'PROCESSING' | 'SUCCESS' | 'FAILSAFE_ERROR'
@@ -204,6 +224,13 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   const handleGenerateToken = async () => {
     setTokenError(null);
     setTokenLoading(true);
+    // GĐ44 — BẤM LẤY QR = MỞ PHIÊN MỚI ⇒ phải reset cờ đã xác thực.
+    //
+    // Backend `generateDynamicToken` (GĐ33) reset `isVerified = false` để phiên quét lại từ đầu.
+    // Nếu UI không reset, nút "Mở Cửa Ngăn" vẫn hiện nhưng bấm sẽ ra 400 "chưa được quét xác
+    // thực" — nút chết, tệ hơn ẩn.
+    setShipperVerified(false);
+    setVerifyRejectedReason(null);
     try {
       const res = await shipperApi.generateToken();
       const ma = res?.data?.data?.dynamicToken;
@@ -230,6 +257,89 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
 
   const activeRecallOrder =
     orders.find((o) => o.orderId === selectedRecallOrderId) || filteredOverdue[0] || null;
+
+  /**
+   * GĐ44 — POLL SỰ KIỆN KIOSK ĐỂ BIẾT SHIPPER ĐÃ QUÉT QR THÀNH CÔNG.
+   *
+   * <p>Trước GĐ44 trang này **không** poll Kiosk (chỉ `loadOrders` mỗi 30 s), nên không có nguồn nào
+   * để biết đã xác thực — đo thật: **0 request** `/kiosk-events` trong 5 giây.
+   *
+   * <p><b>Bốn ràng buộc:</b>
+   * <ol>
+   *   <li><b>Lần poll đầu bỏ trống `after`</b> ⇒ backend trả `events: []` + `latestSeq`. Nếu gửi
+   *       `after` cũ thì mở tab là nút hiện ra vì sự kiện của lần trước (lỗi im lặng).</li>
+   *   <li>Luôn cập nhật `latestSeq` **kể cả khi không có sự kiện** (bài học `ShipperTab`).</li>
+   *   <li>Chống trùng bằng `Set` các `seq` đã xử lý (`processedKioskSeqRef`).</li>
+   *   <li>Nhịp **1,5 giây** — cùng nhịp hai tab kia, KHÔNG tạo nhịp rời rạc mới. Chỉ poll SỰ KIỆN,
+   *       tuyệt đối không gọi `loadOrders()` theo nhịp này (điều cấm #5).</li>
+   * </ol>
+   *
+   * <p>Đổi đơn ⇒ `lockerId`/`orderId` đổi ⇒ effect chạy lại và reset cờ (đơn khác tủ ⇒ phiên xác
+   * thực khác). Cleanup `clearInterval` khi unmount.
+   */
+  useEffect(() => {
+    const lockerId = activeRecallOrder?.lockerId;
+    const orderId = activeRecallOrder?.orderId;
+    if (!lockerId || !orderId) return undefined;
+
+    // Đổi đơn đang chọn ⇒ mở phiên mới: chưa xác thực, quên mốc cũ của tủ trước.
+    setShipperVerified(false);
+    setVerifyRejectedReason(null);
+    kioskSeqRef.current = null;
+    processedKioskSeqRef.current = new Set();
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        // Lần đầu `kioskSeqRef.current` là null ⇒ KHÔNG gửi `after` ⇒ backend chỉ trả mốc, không
+        // trả sự kiện cũ (nếu gửi `after` cũ thì mở tab là nút hiện ra vì sự kiện lần trước).
+        const res = await shipperApi.getKioskEvents(lockerId, kioskSeqRef.current);
+        if (cancelled) return;
+        const payload = res?.data?.data;
+        if (!payload) return;
+
+        const events = payload.events || [];
+        // Chỉ quan tâm sự kiện xác thực của ĐÚNG tủ này (lớp kiểm thứ hai sau backend).
+        const verified = [...events].reverse().find((e) => e.type === 'SHIPPER_VERIFIED'
+          && (!e.lockerId || e.lockerId === lockerId)
+          && !processedKioskSeqRef.current.has(e.seq));
+        const rejected = [...events].reverse().find((e) => e.type === 'SHIPPER_REJECTED'
+          && (!e.lockerId || e.lockerId === lockerId)
+          && !processedKioskSeqRef.current.has(e.seq));
+
+        if (verified) {
+          events.forEach((e) => processedKioskSeqRef.current.add(e.seq));
+          setShipperVerified(true);
+          setVerifyRejectedReason(null);
+        } else if (rejected) {
+          events.forEach((e) => processedKioskSeqRef.current.add(e.seq));
+          // Giữ ẩn nút + nói rõ lý do (backend đã viết sẵn câu tiếng Việt trong `message`).
+          setShipperVerified(false);
+          setVerifyRejectedReason(rejected.message || 'Xác thực shipper không thành công.');
+        }
+
+        // GĐ44 — mốc `seq` dùng `useRef`, KHÔNG dùng state.
+        //
+        // Nếu để state và đưa vào dependency của effect, mỗi lần cập nhật mốc (1,5 giây/lần) effect
+        // chạy lại → tạo THÊM một interval → request nhân lên theo cấp số (đo được **352 request
+        // trong 5 giây** thay vì 3–4). Dùng ref thì effect chỉ chạy lại khi đổi đơn/tủ.
+        if (payload.latestSeq != null) kioskSeqRef.current = payload.latestSeq;
+      } catch {
+        // Mất mạng/quyền: im lặng bỏ nhịp này — KHÔNG bật nút khi chưa chắc chắn.
+      }
+    };
+
+    poll(); // đọc ngay, không trống 1,5 giây đầu
+    const timer = setInterval(poll, 1500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRecallOrder?.lockerId, activeRecallOrder?.orderId]);
+
 
   useEffect(() => {
     if (!activeRecallOrder) {
@@ -571,13 +681,38 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
 
                 {/* Phase Actions */}
                 {recallPhase === 'IDLE' && (
-                  <button
-                    onClick={handleOneTouchUnlockSolenoid}
-                    className="ios-btn w-full bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-bold py-3.5 px-4 rounded-2xl text-xs transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-rose-400/30"
-                  >
-                    <Unlock className="w-4 h-4" />
-                    <span>Mở Cửa Ngăn #{activeRecallOrder.compartmentIndex}</span>
-                  </button>
+                  shipperVerified ? (
+                    // GĐ44 — CHỈ khi shipper đã quét QR thành công tại tủ mới hiện nút mở ngăn.
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full w-fit mx-auto">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        Đã xác thực shipper
+                      </div>
+                      <button
+                        onClick={handleOneTouchUnlockSolenoid}
+                        className="ios-btn w-full bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-bold py-3.5 px-4 rounded-2xl text-xs transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-rose-400/30"
+                      >
+                        <Unlock className="w-4 h-4" />
+                        <span>Mở Cửa Ngăn #{activeRecallOrder.compartmentIndex}</span>
+                      </button>
+                    </div>
+                  ) : (
+                    // GĐ44 — CHƯA xác thực: KHÔNG render nút mở ngăn, chỉ hướng dẫn.
+                    <div className="p-4 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-300 text-center space-y-2">
+                      <Lock className="w-6 h-6 text-slate-400 mx-auto" />
+                      <p className="text-xs font-bold text-slate-700">
+                        Quét mã QR Shipper tại tủ để mở khoá thao tác thu hồi
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        Đang chờ xác thực tại tủ…
+                      </p>
+                      {verifyRejectedReason && (
+                        <p className="text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-2.5 py-1.5">
+                          {verifyRejectedReason}
+                        </p>
+                      )}
+                    </div>
+                  )
                 )}
 
                 {(recallPhase === 'DOOR_OPEN' || recallPhase === 'FAILSAFE_ERROR') && (
