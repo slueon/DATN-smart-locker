@@ -1025,9 +1025,52 @@ public class ShipperService {
 
     /**
      * 5. Shipper thu hồi bưu kiện quá hạn về kho bãi và giải phóng ngăn tủ
+     *
+     * <p><b>GĐ41 — BẮT BUỘC xác thực bằng QR shipper, đồng bộ với {@link #depositPackage}.</b>
+     *
+     * <p>Trước GĐ41 hàm này <b>không kiểm danh tính một dòng nào</b>: ai đăng nhập được (kể cả
+     * ADMIN) gọi {@code POST /api/shipper/recall-overdue?orderId=…} là thu hồi được, và mã QR hiện ở
+     * tab thu hồi lại do client tự bịa nên <b>không tồn tại trong DB</b> (đo thật: 0 dòng mang tiền
+     * tố {@code SHIPPER-TOKEN-}, toàn bộ 32 token thật đều là {@code SHIP-…}). Tức cả hai chiều đều
+     * sai: mã không dùng được, mà cũng không cần dùng.
+     *
+     * <p><b>Ba điều kiện dùng đúng câu chữ của {@code depositPackage} (:218-227)</b> để hai tab nói
+     * cùng một ngôn ngữ, cộng một điều kiện thứ tư:
+     * <ol>
+     *   <li>thiếu token → 400 "Vui lòng quét mã QR xác thực danh tính Shipper trước khi gửi hàng!"
+     *       (dùng chung câu với nạp hàng);</li>
+     *   <li>token không tồn tại → 400 "Mã QR định danh Shipper không hợp lệ!";</li>
+     *   <li>{@code isVerified != true} → 400 "Mã QR Shipper chưa được quét xác thực tại trạm tủ!";</li>
+     *   <li>token thuộc <b>shipper khác</b> người đang đăng nhập → <b>403</b>.</li>
+     * </ol>
+     *
+     * @param orderId        đơn cần thu hồi
+     * @param dynamicToken   mã QR shipper (bắt buộc, lấy từ {@code /api/shipper/token/generate})
+     * @param currentUsername <b>lấy từ {@code Principal} của phiên đăng nhập</b> — TUYỆT ĐỐI không
+     *                        nhận từ client (điều cấm #3: client không được tự khai danh tính)
      */
     @Transactional
-    public void recallOverduePackage(String orderId) {
+    public void recallOverduePackage(String orderId, String dynamicToken, String currentUsername) {
+        // (1)(2)(3) — cùng thứ tự và cùng câu chữ với `depositPackage`.
+        if (dynamicToken == null || dynamicToken.isBlank()) {
+            throw new RuntimeException("Vui lòng quét mã QR xác thực danh tính Shipper trước khi gửi hàng!");
+        }
+
+        ShipperIdentityToken token = tokenRepository.findByDynamicToken(dynamicToken.trim())
+                .orElseThrow(() -> new RuntimeException("Mã QR định danh Shipper không hợp lệ!"));
+
+        if (!Boolean.TRUE.equals(token.getIsVerified())) {
+            throw new RuntimeException("Mã QR Shipper chưa được quét xác thực tại trạm tủ!");
+        }
+
+        // (4) Token phải thuộc CHÍNH người đang đăng nhập. 403 vì đây là lỗi quyền, không phải
+        // dữ liệu sai — token hợp lệ nhưng không phải của bạn.
+        if (currentUsername == null || token.getShipperId() == null
+                || !token.getShipperId().equalsIgnoreCase(currentUsername)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Mã QR này không thuộc tài khoản đang đăng nhập!");
+        }
+
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
                         "Không tìm thấy đơn hàng: " + orderId));

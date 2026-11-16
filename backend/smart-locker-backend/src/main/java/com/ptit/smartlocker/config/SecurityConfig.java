@@ -187,8 +187,16 @@ public class SecurityConfig {
                 // cháy" bằng cách ghi localStorage: web báo "đã thu hồi" trong khi kiện hàng vẫn
                 // nằm trong tủ và DB vẫn OVERDUE. Thu hồi là cùng một nghiệp vụ, ai trực ca cũng
                 // phải làm được; quyền được kiểm ở đây chứ không phải bằng cách bỏ qua backend.
+                // GĐ41 — ADMIN MẤT QUYỀN THU HỒI (user chốt 16/11: "quyền thu hồi chỉ có tài khoản
+                // shipper"). ADMIN chỉ ĐỌC danh sách đơn quá hạn (dòng GET `/overdue-orders` bên
+                // dưới vẫn giữ `hasAnyRole("SHIPPER","ADMIN")`).
+                //
+                // Lịch sử: trước GĐ41 dòng này là `hasAnyRole("SHIPPER","ADMIN")` (GĐ13 mở cho admin
+                // vì khi đó chưa có cơ chế xác thực QR). Nay thu hồi bắt buộc quét mã QR shipper
+                // (GĐ41), mà ADMIN không có phiên QR shipper ⇒ phải chặn ở đây, nếu không admin vẫn
+                // gọi được API dù UI đã bỏ nút.
                 .requestMatchers(HttpMethod.POST, "/api/shipper/recall-overdue")
-                        .hasAnyRole("SHIPPER", "ADMIN")
+                        .hasRole("SHIPPER")
                 // T3: đặt trước ngăn. Thiếu 3 dòng này là 403 vì anyRequest().denyAll() ở dưới.
                 .requestMatchers(HttpMethod.GET, "/api/shipper/orders/pending").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")

@@ -66,6 +66,24 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(ex.getMessage()));
     }
 
+    /**
+     * GĐ41 — lỗi QUYỀN: tài nguyên hợp lệ nhưng người gọi không được phép.
+     *
+     * <p>Ca dùng thật: shipper A dùng mã QR của shipper B để thu hồi hàng
+     * ({@code ShipperService.recallOverduePackage}). Phải là **403**, không phải 400 — request
+     * đúng cú pháp, token hợp lệ, chỉ là không thuộc tài khoản đang đăng nhập.
+     *
+     * <p>Đặt TRƯỚC handler {@code RuntimeException} để Spring chọn đúng kiểu cụ thể hơn
+     * ({@code AccessDeniedException} là lớp con của {@code RuntimeException}; nếu không có khối
+     * này thì nó rơi vào 400).
+     */
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException ex) {
+        log.warn("[API 403] {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(ex.getMessage()));
+    }
+
     /** Tham số/đối số sai. */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {

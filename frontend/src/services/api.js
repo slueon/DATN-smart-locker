@@ -147,7 +147,12 @@ export const shipperApi = {
   verifyToken: (lockerId, dynamicToken) => api.post('/shipper/token/verify', { lockerId, dynamicToken }),
   depositPackage: (data) => api.post('/shipper/deposit', data),
   getOverdueOrders: (lockerId) => api.get(`/shipper/overdue-orders${lockerId ? `?lockerId=${lockerId}` : ''}`),
-  recallOverdue: (orderId) => api.post(`/shipper/recall-overdue?orderId=${encodeURIComponent(orderId)}`),
+  // GĐ41 — thu hồi phải kèm `dynamicToken` (mã QR shipper THẬT). Trước GĐ41 chỉ gửi `orderId`
+  // nên backend không có gì để kiểm danh tính, và tab thu hồi tự bịa mã ở client.
+  recallOverdue: (orderId, dynamicToken) => api.post(
+    `/shipper/recall-overdue?orderId=${encodeURIComponent(orderId)}`
+    + `&dynamicToken=${encodeURIComponent(dynamicToken || '')}`,
+  ),
 
   // T3 — đặt trước ngăn trên web.
   getPendingOrders: (lockerId) =>

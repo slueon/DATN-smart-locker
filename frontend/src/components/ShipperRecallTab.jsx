@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import CircularTimer from './CircularTimer';
+// GĐ41 — KHÔNG còn CircularTimer ở file này (mã QR shipper là mã cố định, không đếm ngược).
+// File `CircularTimer.jsx` VẪN GIỮ vì `CustomerPickupTab` còn dùng cho OTP khách.
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
 import { shipperApi, lockerApi } from '../services/api';
@@ -9,7 +10,7 @@ import {
   Check, MapPin, User, Timer, PackageX, Truck, RefreshCw,
   BellRing, X, QrCode, ShieldCheck, Unlock, Lock,
   Sparkles, CheckCheck, Radio, Volume2, ArrowRight,
-  Shield, AlertCircle, ChevronRight
+  Shield, AlertCircle, ChevronRight, XCircle
 } from 'lucide-react';
 
 export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
@@ -22,7 +23,11 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
 
   // ===== BƯỚC 1: XÁC THỰC DANH TÍNH SHIPPER TẠI KIOSK =====
   const [dynamicToken, setDynamicToken] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(0);
+  // GĐ41 — BỎ state `timeLeft` và vòng đếm ngược 60 giây. Mã QR shipper là mã CỐ ĐỊNH (GĐ33),
+  // dùng được nhiều lần, nên đếm ngược vừa sai sự thật vừa khiến shipper tưởng phải tạo lại.
+  // Cũng bỏ luôn token tự bịa ở client: mã thật lấy từ `/api/shipper/token/generate`. 
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [tokenError, setTokenError] = useState(null);
   const [showQrModal, setShowQrModal] = useState(false);
 
   // ===== BƯỚC 2 -> 4: QUY TRÌNH THU HỒI 1 CHẠM & CẢM BIẾN TỰ ĐỘNG =====
@@ -188,25 +193,33 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLockerFilter]);
 
-  useEffect(() => {
-    if (timeLeft <= 0) return;
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [timeLeft]);
-
-  const handleGenerateToken = () => {
-    const token = 'SHIPPER-TOKEN-' + Math.random().toString(36).substring(2, 10).toUpperCase() + '-' + Date.now();
-    setDynamicToken(token);
-    setTimeLeft(60);
-    setShowQrModal(true);
+  /**
+   * GĐ41 — lấy mã QR THẬT từ backend, giống hệt tab nạp tủ (`ShipperTab.handleGenerateToken`).
+   *
+   * <p>Trước GĐ41 hàm này **tự bịa** `'SHIPPER-TOKEN-' + Math.random()… + Date.now()` ngay trên
+   * trình duyệt. Đo thật: `shipper_identity_tokens` **0 dòng** mang tiền tố đó (toàn bộ 32 token
+   * thật là `SHIP-…`) ⇒ đem quét ở tủ luôn bị "Mã QR Shipper không hợp lệ". Điều cấm #1: không
+   * được tự sinh token ở client dưới bất kỳ dạng nào.
+   */
+  const handleGenerateToken = async () => {
+    setTokenError(null);
+    setTokenLoading(true);
+    try {
+      const res = await shipperApi.generateToken();
+      const ma = res?.data?.data?.dynamicToken;
+      if (!ma) {
+        // API trả 200 nhưng thiếu mã ⇒ báo lỗi thật, KHÔNG bịa mã thay thế.
+        setTokenError('Máy chủ không trả về mã QR. Vui lòng thử lại.');
+        return;
+      }
+      setDynamicToken(ma);
+      setShowQrModal(true);
+    } catch (err) {
+      // Hiện nguyên văn message backend; không báo thành công giả.
+      setTokenError(err?.response?.data?.message || 'Không lấy được mã QR shipper. Vui lòng thử lại.');
+    } finally {
+      setTokenLoading(false);
+    }
   };
 
   const overdueOrders = orders.filter((o) => o.status === 'OVERDUE');
@@ -283,7 +296,10 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
       // vẫn hiện "đã thu hồi thành công" và đổi trạng thái trong localStorage — tiến trình giả.
       // Nay lỗi thì DỪNG: hiện message thật, không ghi gì, không thêm thông báo thành công.
       try {
-        await shipperApi.recallOverdue(activeRecallOrder.orderId);
+        // GĐ41 — GỬI KÈM `dynamicToken`: backend nay bắt buộc xác thực QR shipper (đồng bộ với
+        // `depositPackage`). Chưa quét mã thì `dynamicToken` còn `null` → backend trả 400 với câu
+        // "Vui lòng quét mã QR xác thực danh tính Shipper…", hiện nguyên văn cho shipper.
+        await shipperApi.recallOverdue(activeRecallOrder.orderId, dynamicToken);
       } catch (e) {
         setFailsafeMessage(
           e?.response?.data?.message
@@ -393,13 +409,22 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
           </div>
           <button
             onClick={handleGenerateToken}
-            className="ios-btn bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold px-5 py-3 rounded-2xl text-xs shadow-lg shadow-amber-500/25 flex items-center gap-2 cursor-pointer transition whitespace-nowrap active:scale-95 border border-amber-400/30"
+            disabled={tokenLoading}
+            className="ios-btn bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold px-5 py-3 rounded-2xl text-xs shadow-lg shadow-amber-500/25 flex items-center gap-2 cursor-pointer transition whitespace-nowrap active:scale-95 border border-amber-400/30 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <QrCode className="w-4 h-4" />
-            <span>Mã QR Shipper</span>
+            <span>{tokenLoading ? 'Đang lấy mã…' : 'Mã QR Shipper'}</span>
           </button>
         </div>
       </div>
+
+      {/* GĐ41 — lỗi lấy mã phải HIỆN, không im lặng báo thành công giả. */}
+      {tokenError && (
+        <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+          <XCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+          <span>{tokenError}</span>
+        </div>
+      )}
 
       {/* Main Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -637,18 +662,14 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
               <QRCodeSVG value={dynamicToken} size={180} />
             </div>
 
-            <div className="flex flex-col items-center justify-center my-2">
-              <CircularTimer
-                secondsLeft={timeLeft}
-                totalSeconds={60}
-                size={70}
-                strokeWidth={5}
-                label="Hiệu Lực"
-              />
+            {/* GĐ41 — BỎ vòng đếm ngược 60 giây. Mã QR shipper là mã CỐ ĐỊNH (GĐ33) nên đếm ngược
+                vừa sai sự thật vừa khiến shipper tưởng phải tạo lại mã. Thay bằng khối nói rõ. */}
+            <div className="my-2 p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
+              Mã QR cố định — dùng được nhiều lần, không cần tạo lại
             </div>
 
             <p className="text-[11px] text-slate-500 mb-5 px-2">
-              Quét mã tại trạm tủ để mở quyền thu hồi.
+              Đưa mã QR này trước camera GM65 của tủ để mở khóa quyền thu hồi.
             </p>
 
             <button

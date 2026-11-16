@@ -218,16 +218,33 @@ public class ShipperController {
     }
 
     /**
-     * Shipper hoặc ADMIN xác nhận thu hồi bưu kiện quá hạn về kho bãi và giải phóng ngăn tủ.
+     * Shipper xác nhận thu hồi bưu kiện quá hạn về kho bãi và giải phóng ngăn tủ.
      *
      * <p><b>GĐ13 — đã bỏ {@code catch (Exception)}.</b> Trước đó mọi ngoại lệ bị nuốt và trả 400,
      * nên {@code BusinessException} ("đơn không ở trạng thái quá hạn") mất đúng mã 409 mà
      * {@code GlobalExceptionHandler} đã ánh xạ. Bấm "Thu hồi" lần hai phải ra 409 để client biết
-     * đây là đơn đã xử lý, không phải request hỏng. Controller không quyết định status nữa.
+     * đây là đơn đã xử lý, không phải request hỏng.
+     *
+     * <p><b>GĐ41 — BẮT BUỘC xác thực QR, và ADMIN mất quyền.</b> Trước GĐ41 endpoint này chỉ nhận
+     * {@code orderId}: ai đăng nhập được cũng thu hồi được, mã QR ở tab thu hồi lại do client tự
+     * bịa nên không có trong DB. Nay:
+     * <ul>
+     *   <li>nhận thêm {@code dynamicToken} — mã THẬT từ {@code /api/shipper/token/generate};</li>
+     *   <li><b>danh tính lấy từ {@code Principal} của phiên đăng nhập</b>, TUYỆT ĐỐI không nhận
+     *       {@code shipperId}/{@code username} từ query hay body (điều cấm #3);</li>
+     *   <li>{@code SecurityConfig} giới hạn {@code hasRole("SHIPPER")} nên ADMIN bị chặn **trước
+     *       khi** vào tới đây (điều cấm #2).</li>
+     * </ul>
      */
     @PostMapping("/recall-overdue")
-    public ResponseEntity<ApiResponse<Void>> recallOverdue(@RequestParam String orderId) {
-        shipperService.recallOverduePackage(orderId);
+    public ResponseEntity<ApiResponse<Void>> recallOverdue(
+            @RequestParam String orderId,
+            @RequestParam(required = false) String dynamicToken,
+            java.security.Principal principal) {
+        shipperService.recallOverduePackage(
+                orderId,
+                dynamicToken,
+                principal != null ? principal.getName() : null);
         return ResponseEntity.ok(ApiResponse.ok("Thu hồi bưu kiện " + orderId + " về kho bãi thành công!", null));
     }
 }

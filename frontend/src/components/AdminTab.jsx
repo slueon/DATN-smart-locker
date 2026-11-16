@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
-import { authApi, lockerApi, adminApi, mqttApi, shipperApi } from '../services/api';
+// GĐ41 — bỏ `shipperApi` khỏi import: ADMIN không còn gọi API thu hồi (đã grep cả file, 0 chỗ dùng).
+import { authApi, lockerApi, adminApi, mqttApi } from '../services/api';
 import { store } from '../services/store';
 import { getLockerHealth } from '../utils/lockerHealth';
 import { describeActor, actorBadgeClass } from '../utils/commandLogActor';
@@ -59,14 +60,8 @@ export default function AdminTab() {
   const [cronRunning, setCronRunning] = useState(false);
   const [cronMsg, setCronMsg] = useState('');
 
-  // GĐ13 — thông báo kết quả THU HỒI, thay cho `alert()`.
-  //
-  // Trước đây nút thu hồi chỉ ghi localStorage rồi `alert("Đã thu hồi...")` — người vận hành
-  // tưởng việc đã xong trong khi kiện hàng vẫn nằm trong tủ và DB vẫn `OVERDUE`. Nay thông báo
-  // tách 2 loại: `type='success'` chỉ khi API trả 200, `type='error'` khi 4xx/5xx (kèm message
-  // thật từ server). Màu đỏ/xanh để không thể đọc nhầm.
-  const [recallMsg, setRecallMsg] = useState(null); // { type: 'success'|'error', text: string }
-  const [recallingOrderId, setRecallingOrderId] = useState(null);
+  // GĐ41 — ĐÃ XOÁ state `recallMsg` + `recallingOrderId`: ADMIN không còn quyền thu hồi
+  // (user chốt 16/11: "quyền thu hồi chỉ có tài khoản shipper"). Bảng đơn quá hạn giờ CHỈ ĐỌC.
 
   /**
    * GĐ5-B1 — KPI Admin lấy từ API THẬT thay vì localStorage.
@@ -366,38 +361,13 @@ export default function AdminTab() {
     }
   };
 
-  /**
-   * GĐ13 — thu hồi kiện quá hạn bằng API THẬT rồi giải phóng ngăn.
-   *
-   * <p><b>KHÔNG còn nhánh localStorage nào.</b> Trước đây hàm này chỉ gọi
-   * `store.updateOrderStatus(orderId, 'COMPLETED')` — đổi trạng thái trong trình duyệt rồi báo
-   * "đã thu hồi thành công". Hậu quả: hàng của khách vẫn nằm trong tủ, DB vẫn `OVERDUE`, và lần
-   * mở trang sau mọi thứ quay lại như cũ — người vận hành đã tưởng xử lý xong. Thu hồi hàng là
-   * thao tác không được phép "giả vờ thành công", nên đường duy nhất còn lại là API.
-   *
-   * <p>Bấm lần thứ hai trên cùng đơn: backend trả **409** (đơn không còn `OVERDUE`), ta hiện
-   * nguyên message đó — không bao giờ báo thành công giả.
-   */
-  const handleRecallOverdue = async (ord) => {
-    setRecallingOrderId(ord.orderId);
-    setRecallMsg(null);
-    try {
-      await shipperApi.recallOverdue(ord.orderId);
-      setRecallMsg({
-        type: 'success',
-        text: `Đã thu hồi bưu kiện ${ord.orderId} và giải phóng ngăn #${ord.compartmentIndex}.`,
-      });
-      await refreshAllData();
-    } catch (err) {
-      setRecallMsg({
-        type: 'error',
-        text: err?.response?.data?.message
-          || `Không thu hồi được đơn ${ord.orderId}. Hàng vẫn nằm trong tủ.`,
-      });
-    } finally {
-      setRecallingOrderId(null);
-    }
-  };
+  // GĐ41 — ĐÃ XOÁ `handleRecallOverdue`.
+  //
+  // User chốt 16/11: "quyền thu hồi chỉ có tài khoản shipper". ADMIN chỉ XEM danh sách đơn quá
+  // hạn. Lý do kỹ thuật: thu hồi nay bắt buộc xác thực mã QR shipper (GĐ41), mà admin không có
+  // phiên QR shipper; `SecurityConfig` cũng đã đổi `recall-overdue` sang `hasRole("SHIPPER")` nên
+  // nếu để nút lại thì bấm sẽ ra 403 — nút chết, tệ hơn không có nút.
+  // State `recallMsg`/`recallingOrderId` cũng đã xoá (không còn dùng ở đâu khác).
 
   const getCompartmentBadge = (status) => {
     switch (status) {
@@ -798,21 +768,7 @@ export default function AdminTab() {
             </div>
           )}
 
-          {/* GĐ13 — kết quả thu hồi. Tách 2 màu: chỉ xanh khi API đã trả 200. */}
-          {recallMsg && (
-            <div
-              className={`p-3.5 text-xs rounded-2xl flex items-start gap-2 border ${
-                recallMsg.type === 'success'
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}
-            >
-              {recallMsg.type === 'success'
-                ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
-                : <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />}
-              <span>{recallMsg.text}</span>
-            </div>
-          )}
+          {/* GĐ41 — khối `recallMsg` đã xoá: ADMIN không còn thao tác thu hồi. */}
 
           {overdueList.length === 0 ? (
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-12 text-center shadow-md">
@@ -847,13 +803,14 @@ export default function AdminTab() {
                       </p>
                     </div>
 
-                    <button
-                      onClick={() => handleRecallOverdue(ord)}
-                      disabled={recallingOrderId === ord.orderId}
-                      className="bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-bold text-xs py-2 px-4 rounded-xl transition cursor-pointer shadow-xs whitespace-nowrap"
-                    >
-                      {recallingOrderId === ord.orderId ? 'Đang thu hồi...' : 'Thu hồi & Giải phóng ngăn'}
-                    </button>
+                    {/* GĐ41 — ADMIN CHỈ ĐỌC: thay nút thu hồi bằng nhãn giải thích.
+                        User chốt: "quyền thu hồi chỉ có tài khoản shipper". Backend cũng đã
+                        chặn (`SecurityConfig` → `hasRole("SHIPPER")`), nên để nút lại chỉ tạo
+                        nút chết ra 403. */}
+                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-3 py-2 rounded-xl whitespace-nowrap">
+                      <Lock className="w-3.5 h-3.5" />
+                      Chỉ tài khoản Shipper được thu hồi
+                    </span>
                   </div>
                 ))}
               </div>
