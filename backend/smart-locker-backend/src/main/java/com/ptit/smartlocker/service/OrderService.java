@@ -287,6 +287,9 @@ public class OrderService {
                 .deliveryType(order.getDeliveryType())
                 .lockerId(order.getLocker() != null ? order.getLocker().getLockerId() : null)
                 .lockerName(order.getLocker() != null ? order.getLocker().getName() : null)
+                // GĐ36 — địa chỉ trạm để màn khách hiện "đi tới đâu". Trước đây DTO thiếu field
+                // này nên dòng địa chỉ trong "Vị Trí Trạm Tủ" luôn trống (minh phát hiện ở GĐ35).
+                .lockerAddress(order.getLocker() != null ? order.getLocker().getAddress() : null)
                 .compartmentIndex(order.getCompartment() != null ? order.getCompartment().getCompIndex() : null)
                 .expectedDate(order.getExpectedDate())
                 .depositedAt(order.getDepositedAt())

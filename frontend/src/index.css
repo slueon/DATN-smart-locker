@@ -184,6 +184,99 @@ code, kbd, samp, pre, .font-mono {
   animation: led-blink 1.4s ease-in-out infinite;
 }
 
+/* =========================================================================
+   GĐ37 — ANIMATION VÀO (animate-in / fade-in / zoom-in-95 / slide-in-from-bottom-2)
+
+   VẤN ĐỀ ĐÃ ĐO: 18 chỗ trong JSX dùng `animate-in fade-in zoom-in-95
+   slide-in-from-bottom-2`, nhưng CSS build ra KHÔNG có class nào trong số đó
+   (đo trên dist/assets/*.css: cả 4 đều false). Dự án không cài
+   `tailwindcss-animate`, và Tailwind v4 không tự sinh các utility này.
+   ⇒ 18 modal/popup hiện ĐỘT NGỘT dù đã viết class.
+
+   CÁCH LÀM: mỗi modifier chỉ đặt MỘT BIẾN CSS; `.animate-in` chạy MỘT keyframe
+   `sl-enter` đọc các biến đó. Nhờ vậy một element dùng cả 3 class vẫn cho ra
+   animation GỘP (opacity + scale + translate cùng lúc), không phải 3 animation
+   đè nhau — đúng cách plugin `tailwindcss-animate` làm.
+
+   Thời lượng 200ms (< 250ms theo điều cấm #4), `fill-mode: both` để giữ trạng
+   thái đầu trước khi chạy và trạng thái cuối sau khi xong (không nháy).
+   ========================================================================= */
+
+@keyframes sl-enter {
+  from {
+    opacity: var(--sl-enter-opacity, 1);
+    /* GĐ37b — phải đọc CẢ `translate-x` và `translate-y`, nếu không thì
+       `.slide-in-from-left-2` / `.slide-in-from-right-2` (chỉ đặt `--sl-enter-translate-x`) là
+       class CHẾT: khai báo biến mà keyframe không dùng thì không có hiệu ứng nào.
+       minh phát hiện khi nghiệm thu GĐ37 — hiện chưa nơi nào dùng nên chưa lộ, nhưng ai dùng sau
+       sẽ tưởng có hiệu ứng mà không có. */
+    transform: translate3d(
+                 var(--sl-enter-translate-x, 0),
+                 var(--sl-enter-translate-y, 0),
+                 0
+               )
+               scale(var(--sl-enter-scale, 1));
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.animate-in {
+  animation: sl-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Modifier: chỉ khai báo biến, KHÔNG tự chạy animation (tránh đè nhau). */
+.fade-in {
+  --sl-enter-opacity: 0;
+}
+
+.zoom-in-95 {
+  --sl-enter-scale: 0.95;
+}
+
+.slide-in-from-bottom-2 {
+  /* 2 = 0.5rem = 8px trong thang Tailwind */
+  --sl-enter-translate-y: 8px;
+}
+
+/* Các biến thể số khác đang có trong mã nguồn (đề phòng dùng sau này).
+   Vẫn chỉ đặt biến — không thêm animation riêng. */
+.zoom-in-90 { --sl-enter-scale: 0.9; }
+.zoom-in-100 { --sl-enter-scale: 1; }
+.slide-in-from-top-2 { --sl-enter-translate-y: -8px; }
+.slide-in-from-left-2 { --sl-enter-translate-x: -8px; }
+.slide-in-from-right-2 { --sl-enter-translate-x: 8px; }
+.fade-out { --sl-exit-opacity: 0; }
+
+/* GĐ37 ý 5 — DẤU ✓ VẼ RA (popup "Lấy hàng thành công" của GĐ32).
+   Nguyên lý: path dài ~48 đơn vị, đặt `stroke-dasharray: 48` và cho
+   `stroke-dashoffset` chạy từ 48 → 0 để nét được "vẽ" dần.
+   `animation-iteration-count: 1` (không lặp — điều cấm #4) + `forwards` để giữ nét đã vẽ. */
+@keyframes sl-draw-check {
+  from { stroke-dashoffset: 48; }
+  to   { stroke-dashoffset: 0; }
+}
+
+.draw-check path {
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: sl-draw-check 420ms cubic-bezier(0.65, 0, 0.35, 1) 120ms 1 forwards;
+}
+
+/* Vòng tròn sau dấu ✓ phóng nhẹ khi popup mở (một lần). */
+@keyframes sl-pop-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.pop-success {
+  animation: sl-pop-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+
+
 /* Apple Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

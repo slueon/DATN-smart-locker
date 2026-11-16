@@ -109,6 +109,14 @@ export default function App() {
 
         {/* Dynamic Tab Content Area */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto pb-16">
+          {/* GĐ37 — CHUYỂN TAB MƯỢT.
+              `key={activeTab}` buộc React thay phần tử khi đổi tab, nhờ đó animation chạy lại
+              từ đầu; 3 class `animate-in fade-in slide-in-from-bottom-2` dùng đúng bộ CSS vừa
+              thêm ở `index.css` (200ms — dưới ngưỡng 250ms của điều cấm #4).
+
+              ⚠ Chỉ animate WRAPPER NỘI DUNG, không animate `position: fixed` (sidebar/toast/modal)
+              — điều cấm #3: transform trên phần tử fixed gây nhảy. Wrapper này là block thường. */}
+          <div key={activeTab} className="animate-in fade-in slide-in-from-bottom-2">
           {activeTab === 'customer' && (
             <CustomerPickupTab currentUser={currentUser} />
           )}
@@ -152,6 +160,7 @@ export default function App() {
               />
             )
           )}
+          </div>
         </main>
       </div>
     </div>

@@ -853,7 +853,24 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
             </div>
 
             <div className="max-h-[580px] overflow-y-auto pr-1 space-y-3 custom-scrollbar">
-            {hienThiLockers.length === 0 ? (
+            {hienThiLockers.length === 0 && isRefreshing ? (
+              /* GĐ37 — SKELETON cho lần tải ĐẦU (chưa có dữ liệu). Dùng `animate-pulse` có sẵn.
+                 Điều kiện `length === 0 && isRefreshing`: khi bấm "Làm mới" mà đã có danh sách thì
+                 KHÔNG thay danh sách bằng skeleton (sẽ nháy), chỉ lần đầu mới hiện. */
+              <div className="space-y-3" data-testid="stations-skeleton">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="p-4 rounded-2xl border border-white/80 bg-white/60 animate-pulse">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="h-4 w-24 rounded bg-slate-200/70" />
+                      <div className="h-4 w-16 rounded-full bg-slate-200/70" />
+                    </div>
+                    <div className="h-3 w-2/3 rounded bg-slate-200/70 mb-2" />
+                    <div className="h-2 w-full rounded-full bg-slate-200/70 mb-2" />
+                    <div className="h-3 w-1/3 rounded bg-slate-200/70" />
+                  </div>
+                ))}
+              </div>
+            ) : hienThiLockers.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500 liquid-glass-card rounded-3xl border border-white/90 shadow-sm">
                 Không tìm thấy trạm tủ phù hợp với bộ lọc hiện tại.
               </div>

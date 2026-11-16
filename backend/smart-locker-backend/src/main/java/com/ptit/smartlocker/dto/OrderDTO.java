@@ -64,6 +64,19 @@ public class OrderDTO {
         private String deliveryType;
         private String lockerId;
         private String lockerName;
+        /**
+         * GĐ36 — ĐỊA CHỈ trạm tủ, để màn khách hiện được "đi tới đâu".
+         *
+         * <p><b>Vì sao thêm:</b> `CustomerPickupTab:1151` đã render `{selectedOrder.lockerAddress}`
+         * từ lâu nhưng DTO <b>chưa bao giờ có field này</b> — nên dòng địa chỉ trong khối
+         * "Vị Trí Trạm Tủ" <b>luôn trống</b> kể từ khi khối đó được viết. Minh phát hiện khi nghiệm
+         * thu GĐ35 (đo DOM thấy tiêu đề + tên tủ + số ngăn, nhưng địa chỉ rỗng; kiểm API trả 23
+         * field không có `lockerAddress`).
+         *
+         * <p>Lấy từ {@code locker.getAddress()} (cột {@code lockers.address}). NULL khi đơn chưa
+         * gán tủ — frontend phải xử lý trường hợp này, không in "undefined".
+         */
+        private String lockerAddress;
         private Integer compartmentIndex;
         /**
          * GĐ18 — cỡ của ngăn đơn đang trỏ tới, <b>chỉ để hiển thị/tương thích</b>.
@@ -128,15 +141,17 @@ public class OrderDTO {
             this.createdAt = createdAt;
         }
 
-        /** Constructor đầy đủ 20 tham số — Lombok @Builder cần đúng bộ tham số này. */
+        /** Constructor đầy đủ 21 tham số — Lombok @Builder cần đúng bộ tham số này. */
         public OrderResponse(String orderId, String customerName, String customerPhone, String deliveryType,
-                             String lockerId, String lockerName, Integer compartmentIndex, LocalDate expectedDate,
+                             String lockerId, String lockerName, String lockerAddress,
+                             Integer compartmentIndex, LocalDate expectedDate,
                              LocalDateTime depositedAt, LocalDateTime expiryDeadline, String status, String productName,
                              BigDecimal totalAmount, String paymentMethod, String paymentStatus, String qrToken,
                              String otpCode, LocalDateTime otpExpiresAt, LocalDateTime createdAt, String trackingCode) {
             this(orderId, customerName, customerPhone, deliveryType, lockerId, lockerName, compartmentIndex,
                     expectedDate, depositedAt, expiryDeadline, status, productName, totalAmount,
                     paymentMethod, paymentStatus, qrToken, otpCode, createdAt);
+            this.lockerAddress = lockerAddress;
             this.otpExpiresAt = otpExpiresAt;
             this.trackingCode = trackingCode;
         }

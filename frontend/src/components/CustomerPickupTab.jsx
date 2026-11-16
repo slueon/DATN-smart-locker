@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import LockerMap from './LockerMap';
 import CircularTimer from './CircularTimer';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
@@ -29,6 +28,11 @@ export default function CustomerPickupTab({ currentUser }) {
   const [copiedOtp, setCopiedOtp] = useState(false);
   const [otpToast, setOtpToast] = useState(null);
   const [nowTime, setNowTime] = useState(Date.now());
+
+  // GĐ37 — trạng thái tải THẬT của danh sách đơn, để hiện skeleton thay cho màn trắng.
+  // `true` trong lúc gọi API, `false` khi xong (kể cả lỗi) — nếu để treo `true` thì skeleton
+  // quay mãi (điều cấm của thẻ).
+  const [loadingOrders, setLoadingOrders] = useState(true);
 
   // GĐ13 — true = danh sách đơn đang đọc từ localStorage (cache), KHÔNG phải máy chủ.
   // Phải có cờ này để hiện banner, nếu không khách tưởng đơn cache là đơn thật của mình.
@@ -151,8 +155,10 @@ export default function CustomerPickupTab({ currentUser }) {
       // Không có cờ thì khách thấy danh sách cũ mà tưởng là đơn thật của mình.
       setOrders(sortNewestFirst(store.getOrders()));
       setUsingFallback(true);
+      setLoadingOrders(false);
       return;
     }
+    setLoadingOrders(true);
     try {
       const res = await orderApi.getByPhone(phone);
       const apiOrders = res?.data?.data || [];
@@ -170,6 +176,9 @@ export default function CustomerPickupTab({ currentUser }) {
       console.warn('[CustomerPickupTab] Không tải được đơn từ API, dùng dữ liệu mô phỏng:', err?.message);
       setOrders(sortNewestFirst(store.getOrders()));
       setUsingFallback(true);
+    } finally {
+      // GĐ37 — luôn tắt skeleton, kể cả khi lỗi. Để `true` là skeleton quay mãi.
+      setLoadingOrders(false);
     }
   };
 
@@ -685,15 +694,12 @@ export default function CustomerPickupTab({ currentUser }) {
     }
   };
 
-  const lockersForMap = [
-    {
-      lockerId: selectedOrder?.lockerId || 'LOCKER_HN_01',
-      name: selectedOrder?.lockerName || 'Tủ KTX A1',
-      address: selectedOrder?.lockerAddress || 'KTX A1, Học viện CNBCVT',
-      latitude: selectedOrder?.lockerId === 'LOCKER_HN_02' ? 20.980910 : 20.980645,
-      longitude: selectedOrder?.lockerId === 'LOCKER_HN_02' ? 105.787450 : 105.787920,
-    }
-  ];
+  // GĐ35 — ĐÃ XOÁ `lockersForMap` cùng bản đồ GIS ở tab này (user yêu cầu bỏ bản đồ).
+  //
+  // Đáng chú ý: mảng đó chứa toạ độ **BỊA** — `latitude/longitude` được gán cứng theo điều kiện
+  // `lockerId === 'LOCKER_HN_02'`, chỉ đúng cho 2 tủ và sai cho 8 tủ còn lại. Nó tồn tại chỉ để vẽ
+  // marker trên bản đồ nhỏ; bỏ bản đồ là bỏ luôn nguồn dữ liệu sai này, không phải mất thông tin
+  // thật (vị trí thật vẫn xem ở tab "Bản đồ mạng lưới tủ", lấy từ API).
 
   return (
     <div className="space-y-5 notranslate select-none">
@@ -804,7 +810,23 @@ export default function CustomerPickupTab({ currentUser }) {
           </div>
 
           <div className="space-y-3 max-h-[780px] overflow-y-auto pr-1">
-            {filteredOrders.length === 0 ? (
+            {/* GĐ37 — SKELETON khi ĐANG TẢI THẬT. Trước đây API chậm thì hiện thẳng
+                "Không có đơn hàng nào khớp bộ lọc" — khách tưởng mất đơn. Dùng `animate-pulse`
+                có sẵn (không thêm keyframe). Chỉ hiện khi `loadingOrders === true`. */}
+            {loadingOrders ? (
+              <div className="space-y-3" data-testid="orders-skeleton">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="p-4 rounded-2xl border border-white/80 bg-white/60 animate-pulse">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="h-4 w-28 rounded bg-slate-200/70" />
+                      <div className="h-4 w-20 rounded-full bg-slate-200/70" />
+                    </div>
+                    <div className="h-3 w-3/4 rounded bg-slate-200/70 mb-2" />
+                    <div className="h-3 w-1/2 rounded bg-slate-200/70" />
+                  </div>
+                ))}
+              </div>
+            ) : filteredOrders.length === 0 ? (
               <div className="liquid-glass-card p-10 rounded-3xl border border-white/80 text-center shadow-sm">
                 <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                 <p className="text-xs text-slate-500 font-medium">Không có đơn hàng nào khớp bộ lọc</p>
@@ -1136,7 +1158,11 @@ export default function CustomerPickupTab({ currentUser }) {
                 />
               </div>
 
-              {/* Locker Location & GIS Mini-Map */}
+              {/* GĐ35 — ĐÃ BỎ BẢN ĐỒ GIS ở tab nhận hàng của khách (user yêu cầu 16/11).
+                  Lý do user: bản đồ nhỏ trong tab này chiếm chỗ, chữ trên tile bị cắt, và khách
+                  đã có tab "Bản đồ mạng lưới tủ" riêng để xem vị trí + chỉ đường.
+                  GIỮ LẠI khối thông tin trạm (tên + địa chỉ + số ngăn) vì khách vẫn cần biết
+                  mình phải tới đâu — chỉ bỏ phần bản đồ. */}
               <div className="space-y-2.5 pt-2 border-t border-slate-100">
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
                   Vị Trí Trạm Tủ
@@ -1148,21 +1174,19 @@ export default function CustomerPickupTab({ currentUser }) {
                       <MapPin className="w-3.5 h-3.5 text-blue-600" />
                       {selectedOrder.lockerName || 'Trạm Tủ KTX A1'}
                     </h5>
-                    <p className="text-[11px] text-slate-500 mt-0.5">{selectedOrder.lockerAddress}</p>
+                    {/* GĐ36 — trước đây dòng này LUÔN trống vì `OrderDTO` không có `lockerAddress`
+                        (minh phát hiện khi nghiệm thu GĐ35). Nay backend trả địa chỉ thật. Vẫn phải
+                        có nhánh dự phòng: đơn chưa gán tủ thì `lockerAddress` = null, in
+                        "undefined" ra màn hình khách là lỗi tệ hơn để trống. */}
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {selectedOrder.lockerAddress || 'Chưa có địa chỉ trạm'}
+                    </p>
                   </div>
 
                   <span className="bg-blue-50/90 text-blue-700 font-bold px-3 py-1 rounded-xl border border-blue-200 text-xs">
                     {/* GĐ18 — bỏ "(Size …)": mọi ngăn dùng được như nhau. */}
                     Ngăn #{selectedOrder.compartmentIndex || 2}
                   </span>
-                </div>
-
-                <div className="h-44 rounded-3xl overflow-hidden border border-white/80 shadow-md">
-                  <LockerMap
-                    lockers={lockersForMap}
-                    selectedLockerId={selectedOrder.lockerId}
-                    onSelectLocker={() => {}}
-                  />
                 </div>
               </div>
             </div>
@@ -1251,8 +1275,23 @@ export default function CustomerPickupTab({ currentUser }) {
               <X className="w-5 h-5" />
             </button>
 
-            <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-emerald-200 shadow-2xs">
-              <CheckCircle2 className="w-7 h-7" />
+            {/* GĐ37 ý 5 — dấu ✓ VẼ RA (một lần).
+                Dùng SVG path + `stroke-dasharray/offset` (class `.draw-check` trong `index.css`)
+                thay vì icon tĩnh: nét được vẽ dần từ trái sang phải. `pop-success` phóng nhẹ
+                vòng tròn. Cả hai chạy `1` lần, không lặp (điều cấm #4). */}
+            <div className="pop-success w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-emerald-200 shadow-2xs">
+              <svg
+                className="draw-check w-7 h-7"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
             </div>
 
             <h3 className="text-base font-extrabold text-slate-900">Lấy hàng thành công</h3>
