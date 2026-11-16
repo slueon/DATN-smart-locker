@@ -1403,6 +1403,70 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                     </div>
                   )}
 
+                  {/* GĐ38 — THANH 3 BƯỚC, suy HOÀN TOÀN từ `kioskEvents` THẬT.
+                      Vì sao có hiệu ứng này (không phải trang trí): firmware báo từng mốc khi
+                      shipper thao tác tại tủ (quét QR → quét mã đơn → chọn ngăn). Thanh này phản
+                      ánh đúng tiến trình phần cứng đã báo, giúp shipper biết còn thiếu bước nào.
+                      ⚠ KHÔNG timer giả, KHÔNG đếm theo lần bấm (điều cấm #1): mỗi bước chỉ sáng khi
+                      có sự kiện tương ứng. Chưa có sự kiện → cả 3 xám, không có ✓ giả (phép thử 5).
+                      ✓ dùng lại `.sl-draw-check` của GĐ37 (điều cấm #5: không sửa class cũ). */}
+                  {(() => {
+                    const co = (loai) => kioskEvents.some((e) => e.type === loai);
+                    const buoc = [
+                      { key: 'SHIPPER_VERIFIED', nhan: 'Xác thực', xong: co('SHIPPER_VERIFIED') },
+                      { key: 'ORDER_VALID', nhan: 'Mã đơn', xong: co('ORDER_VALID') },
+                      { key: 'COMPARTMENT_SELECTED', nhan: 'Chọn ngăn', xong: co('COMPARTMENT_SELECTED') },
+                    ];
+                    return (
+                      <div className="flex items-center gap-1.5" data-testid="kiosk-steps">
+                        {buoc.map((b, i) => (
+                          <div key={b.key} className="flex items-center gap-1.5 flex-1">
+                            <div className="flex flex-col items-center gap-1 shrink-0">
+                              <span
+                                data-testid={`kiosk-step-${i}`}
+                                data-done={b.xong ? '1' : '0'}
+                                className={`w-6 h-6 rounded-full flex items-center justify-center border transition-colors duration-200 ${
+                                  b.xong
+                                    ? 'bg-emerald-500 border-emerald-400 text-white'
+                                    : 'bg-slate-800 border-slate-600 text-slate-500'
+                                }`}
+                              >
+                                {b.xong ? (
+                                  <svg
+                                    className="draw-check w-3.5 h-3.5"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    aria-hidden="true"
+                                  >
+                                    <path d="M20 6 9 17l-5-5" />
+                                  </svg>
+                                ) : (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                                )}
+                              </span>
+                              <span className={`text-[9px] font-bold leading-none ${
+                                b.xong ? 'text-emerald-400' : 'text-slate-500'
+                              }`}>
+                                {b.nhan}
+                              </span>
+                            </div>
+                            {i < buoc.length - 1 && (
+                              <span
+                                className={`flex-1 h-0.5 rounded-full transition-colors duration-200 ${
+                                  buoc[i + 1].xong ? 'bg-emerald-500/70' : 'bg-slate-700'
+                                }`}
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
                   {kioskEvents.length === 0 ? (
                     <div className="p-6 rounded-xl border-2 border-dashed border-slate-700 bg-slate-950 text-center">
                       <ScanLine className="w-10 h-10 text-slate-600 mx-auto mb-2" />

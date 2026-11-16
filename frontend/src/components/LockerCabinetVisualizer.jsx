@@ -124,13 +124,42 @@ export default function LockerCabinetVisualizer({
                   </span>
                 </div>
 
-                {/* Locker Physical Door Visualizer */}
-                <div className={`my-2.5 p-3 rounded-2xl border transition-all duration-300 relative ${
+                {/* Locker Physical Door Visualizer
+                    GĐ38 — CỬA TRƯỢT THẬT: thêm một cánh cửa xoay quanh bản lề trái.
+                    Vì sao có hiệu ứng này (không phải trang trí): solenoid 12V cần ~0.3 giây
+                    để nhả chốt và cánh cửa mới bật ra; MC-38 báo "đóng" sau đó. 280ms mô tả
+                    đúng khoảng thời gian đó.
+                    ⚠ CHỈ transition `transform` + `opacity` — animate `width/height/left` sẽ
+                    gây layout reflow và giật (điều cấm #2).
+                    `isOpen` suy từ prop `doorState` (dữ liệu cảm biến THẬT) — không timer giả. */}
+                <div className={`my-2.5 p-3 rounded-2xl border transition-colors duration-300 relative overflow-hidden ${
                   isOpen
                     ? 'bg-amber-500/15 border-amber-300/80 text-amber-900 shadow-sm backdrop-blur-md'
                     : 'liquid-glass-subtle border-white/70 text-slate-700'
                 }`}>
-                  <div className="flex items-center justify-between">
+                  {/* Cánh cửa: khi ĐÓNG phủ kín khối (translateX 0, không xoay); khi MỞ xoay
+                      -75deg quanh bản lề trái nên nhìn như cửa bật ra. */}
+                  <div
+                    data-testid={`door-panel-${slot.id}`}
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      transformOrigin: 'left center',
+                      transform: isOpen ? 'rotateY(-75deg)' : 'rotateY(0deg)',
+                      opacity: isOpen ? 0.15 : 1,
+                      transition: 'transform 280ms ease-out, opacity 280ms ease-out',
+                      pointerEvents: 'none',
+                      // Viền + nền để thấy rõ cánh cửa đang che ngăn.
+                      borderRadius: '1rem',
+                      background: isOpen
+                        ? 'linear-gradient(90deg, rgba(251,191,36,0.18), rgba(251,191,36,0.04))'
+                        : 'linear-gradient(90deg, rgba(255,255,255,0.85), rgba(241,245,249,0.55))',
+                      borderRight: '2px solid rgba(148,163,184,0.45)',
+                      boxShadow: isOpen ? 'none' : 'inset -6px 0 12px -8px rgba(15,23,42,0.25)',
+                    }}
+                  />
+                  <div className="flex items-center justify-between relative">
                     <div className="flex items-center gap-2">
                       {isOpen ? (
                         <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-600 animate-pulse">

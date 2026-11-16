@@ -12,6 +12,69 @@ import {
   Shield, Smartphone, ExternalLink
 } from 'lucide-react';
 
+/**
+ * GĐ38 — SỐ ĐẾM KPI CHẠY SỐ (mô tả đúng thay đổi dữ liệu thật, không phải trang trí).
+ *
+ * <p>Vì sao cần: khi một đơn đổi trạng thái, 4 thẻ KPI nhảy số tức thì nên người xem không biết
+ * thẻ nào vừa đổi. Chạy 500ms giúp mắt bám được sự thay đổi đó.
+ *
+ * <p><b>Ba ràng buộc:</b>
+ * <ol>
+ *   <li><b>Lần đầu hiện NGAY giá trị đúng</b>, không chạy từ 0 — nếu chạy từ 0 thì khách vừa mở
+ *       trang thấy "0 đơn" rồi mới nhảy lên số thật, tưởng mất đơn.</li>
+ *   <li>Chỉ animate khi giá trị **đổi sau render đầu**.</li>
+ *   <li>`cancelAnimationFrame` khi unmount (và trước mỗi lần chạy mới) — nếu không sẽ có frame
+ *       chạy trên component đã chết, React cảnh báo và rò rỉ.</li>
+ * </ol>
+ */
+function CountUp({ value, duration = 500 }) {
+  const dich = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const [hienThi, setHienThi] = useState(dich);
+  const tuRef = useRef(null);        // giá trị đang hiển thị (điểm bắt đầu lần chạy)
+  const khungRef = useRef(null);     // id requestAnimationFrame đang chạy
+  const lanDauRef = useRef(true);
+
+  useEffect(() => {
+    if (lanDauRef.current) {
+      // Lần render đầu: hiện thẳng số thật, KHÔNG animate.
+      lanDauRef.current = false;
+      tuRef.current = dich;
+      setHienThi(dich);
+      return undefined;
+    }
+
+    const tu = tuRef.current == null ? dich : tuRef.current;
+    if (tu === dich) return undefined;
+
+    if (khungRef.current != null) cancelAnimationFrame(khungRef.current);
+    const batDau = performance.now();
+    const easeOut = (t) => 1 - (1 - t) ** 3;
+
+    const buoc = (now) => {
+      const tiLe = Math.min(1, (now - batDau) / duration);
+      const giaTri = Math.round(tu + (dich - tu) * easeOut(tiLe));
+      tuRef.current = giaTri;
+      setHienThi(giaTri);
+      if (tiLe < 1) {
+        khungRef.current = requestAnimationFrame(buoc);
+      } else {
+        khungRef.current = null;
+        setHienThi(dich);
+      }
+    };
+    khungRef.current = requestAnimationFrame(buoc);
+
+    return () => {
+      if (khungRef.current != null) {
+        cancelAnimationFrame(khungRef.current);
+        khungRef.current = null;
+      }
+    };
+  }, [dich, duration]);
+
+  return hienThi;
+}
+
 export default function CustomerPickupTab({ currentUser }) {
   const [orders, setOrders] = useState([]);
   const [filterStatus, setFilterStatus] = useState('ALL');
@@ -723,7 +786,7 @@ export default function CustomerPickupTab({ currentUser }) {
               <Package className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-extrabold text-slate-900 font-mono">{orders.length}</div>
+          <div className="text-3xl font-extrabold text-slate-900 font-mono"><CountUp value={orders.length} /></div>
         </div>
 
         <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
@@ -734,7 +797,7 @@ export default function CustomerPickupTab({ currentUser }) {
             </div>
           </div>
           <div className="text-3xl font-extrabold text-emerald-600 font-mono">
-            {orders.filter((o) => o.status === 'DEPOSITED').length}
+            <CountUp value={orders.filter((o) => o.status === 'DEPOSITED').length} />
           </div>
         </div>
 
@@ -746,7 +809,7 @@ export default function CustomerPickupTab({ currentUser }) {
             </div>
           </div>
           <div className="text-3xl font-extrabold text-amber-600 font-mono">
-            {orders.filter((o) => o.status === 'PENDING').length}
+            <CountUp value={orders.filter((o) => o.status === 'PENDING').length} />
           </div>
         </div>
 
@@ -758,7 +821,7 @@ export default function CustomerPickupTab({ currentUser }) {
             </div>
           </div>
           <div className="text-3xl font-extrabold text-slate-700 font-mono">
-            {orders.filter((o) => o.status === 'COMPLETED').length}
+            <CountUp value={orders.filter((o) => o.status === 'COMPLETED').length} />
           </div>
         </div>
       </div>
