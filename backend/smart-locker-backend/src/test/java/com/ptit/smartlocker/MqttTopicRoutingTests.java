@@ -56,6 +56,7 @@ class MqttTopicRoutingTests {
     @Autowired private DeviceEventRepository deviceEventRepository;
     @Autowired private ShipperIdentityTokenRepository tokenRepository;
     @Autowired private KioskEventService kioskEventService;
+    @Autowired private com.ptit.smartlocker.repository.PickupCredentialRepository credentialRepository;
 
     /**
      * Spy trên {@link MqttService} để bắt được các lần gọi {@code publishRawMessage}.
@@ -681,5 +682,62 @@ class MqttTopicRoutingTests {
 
         assertTrue(loaiSuKienSau(moc).contains(KioskEventService.CUSTOMER_METHOD_CHOSEN),
                 "Tên cũ rec/method phải được nhận như receive/method; thực tế: " + loaiSuKienSau(moc));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // GĐ43 — MỘT LẦN NHẬN HÀNG CHỈ ĐƯỢC PHÁT ĐÚNG 1 LỆNH MỞ TỦ
+    // ─────────────────────────────────────────────────────────────
+    //
+    // Trước GĐ43 có **2** đường cùng publish `locker/open` cho một lần khách nhận hàng:
+    //   1. `PickupService.verifyAndPickup` (nhãn `CUSTOMER_PICKUP`) — nơi DUY NHẤT, giữ lại;
+    //   2. nhánh Kiosk trong `MqttService` (nhãn `CUSTOMER_OTP`) — đã xoá ở GĐ43.
+    // Đo thật lúc ban hành thẻ: 2 dòng `command_logs` cùng ngăn, cùng đơn, cùng giây 21:37:25.
+
+    /** Dựng đơn DEPOSITED + credential (OTP + QR) của khách tại ngăn 1. */
+    private void dungDonChoKhachNhan(String orderId, String otp, String qrToken) {
+        Order order = taoDonPending(orderId, 1);
+        order.setStatus("DEPOSITED");
+        order.setDepositedAt(LocalDateTime.now());
+        order.setExpiryDeadline(LocalDateTime.now().plusDays(2));
+        orderRepository.save(order);
+
+        Compartment comp = compartmentRepository
+                .findByLocker_LockerIdAndCompIndex(locker.getLockerId(), 1).orElseThrow();
+        comp.setStatus("OCCUPIED");
+        compartmentRepository.save(comp);
+
+        credentialRepository.save(com.ptit.smartlocker.entity.PickupCredential.builder()
+                .order(order)
+                .qrToken(qrToken)
+                .otpCode(otp)
+                .isUsed(false)
+                .failedAttempts(0)
+                .expiredAt(LocalDateTime.now().plusMinutes(5))
+                .build());
+    }
+
+    @Test
+    @DisplayName("GĐ43 (1): một lần nhập OTP tại tủ chỉ phát ĐÚNG 1 lệnh mở (trước: 2)")
+    void otpChiPhatMotLenhMo() {
+        dungDonChoKhachNhan("ORD-GD43-OTP", "777888", "QR-GD43-OTP");
+        long cmdTruoc = demCommandLog();
+
+        publish("ptit/receive/otp", "{\"locker_id\":\"Tu_1\",\"otp\":\"777888\"}");
+
+        assertEquals(cmdTruoc + 1, demCommandLog(),
+                "Một lần nhập OTP chỉ được phát ĐÚNG 1 lệnh mở. Trước GĐ43 là 2 vì cả "
+                        + "PickupService và nhánh Kiosk cùng publishCommand");
+    }
+
+    @Test
+    @DisplayName("GĐ43 (2): khách nhận bằng QR tại tủ cũng chỉ phát ĐÚNG 1 lệnh mở")
+    void qrChiPhatMotLenhMo() {
+        dungDonChoKhachNhan("ORD-GD43-QR", "111222", "QR-GD43-QR");
+        long cmdTruoc = demCommandLog();
+
+        publish("ptit/qr/receive", "{\"locker_id\":\"Tu_1\",\"qr\":\"QR-GD43-QR\"}");
+
+        assertEquals(cmdTruoc + 1, demCommandLog(),
+                "Nhận bằng QR cũng chỉ được 1 lệnh mở (cùng gốc với ca OTP)");
     }
 }

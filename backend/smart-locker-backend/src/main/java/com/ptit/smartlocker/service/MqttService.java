@@ -1130,10 +1130,21 @@ public class MqttService implements MqttCallbackExtended {
                     .authMethod("OTP")
                     .code(otp)
                     .build();
+            // GĐ43 — KHÔNG publish lệnh mở tủ ở đây nữa.
+            //
+            // `pickupService.verifyAndPickup` (dòng trên) **đã** publish `locker/open` với nhãn
+            // `CUSTOMER_PICKUP` — đó là nơi DUY NHẤT phát lệnh cho luồng nhận hàng. Hai dòng cũ ở
+            // đây là di sản từ thời `verifyAndPickup` chưa tự mở tủ; giữ chúng thì mỗi lần khách
+            // nhập OTP, solenoid bị kích **2 lần** cách nhau ~1,25 s (đo thật: 2 dòng
+            // `command_logs` cùng ngăn/cùng đơn/cùng giây, nhãn `CUSTOMER_PICKUP` +
+            // `CUSTOMER_OTP`).
+            //
+            // Bản tin này chỉ phản hồi cho TFT qua `verified/qr_otp/failed` khi thất bại — KHÔNG
+            // publish thêm lệnh mở.
             PickupDTO.PickupResponse resp = pickupService.verifyAndPickup(req);
-            if (resp.isSuccess() && resp.getCompartmentIndex() != null) {
-                publishCommand(locker.getLockerId(), resp.getCompartmentIndex(), "OPEN_DOOR", "CUSTOMER_OTP", resp.getOrderId());
-            } else {
+            if (!resp.isSuccess() || resp.getCompartmentIndex() == null) {
+                // GIỮ nhánh này (điều cấm #2): TFT cần phản hồi thất bại, bỏ đi thì màn hình tủ
+                // treo chờ. Chỉ phản hồi, KHÔNG mở tủ.
                 publishVerified(locker.getLockerId(), "qr_otp/failed", "-1");
             }
         } catch (Exception ex) {
@@ -1202,10 +1213,12 @@ public class MqttService implements MqttCallbackExtended {
                     .authMethod("QR")
                     .code(qr)
                     .build();
+            // GĐ43 — y hệt nhánh OTP: `verifyAndPickup` đã publish `locker/open` (nhãn
+            // `CUSTOMER_PICKUP`), nên KHÔNG publish thêm ở đây. Trước GĐ43 khách nhận bằng QR cũng
+            // bị 2 lệnh, chỉ ít ai để ý vì đường GM65 ít dùng hơn nhập OTP tay.
             PickupDTO.PickupResponse resp = pickupService.verifyAndPickup(req);
-            if (resp.isSuccess() && resp.getCompartmentIndex() != null) {
-                publishCommand(locker.getLockerId(), resp.getCompartmentIndex(), "OPEN_DOOR", "CUSTOMER_PICKUP", resp.getOrderId());
-            } else {
+            if (!resp.isSuccess() || resp.getCompartmentIndex() == null) {
+                // GIỮ nhánh thất bại cho TFT (điều cấm #2).
                 publishVerified(locker.getLockerId(), "qr_otp/failed", "-1");
             }
         } catch (Exception ex) {
