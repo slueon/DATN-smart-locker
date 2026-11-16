@@ -2,14 +2,65 @@ import React, { useState, useEffect } from 'react';
 import LockerMap, { getLockerStatusInfo } from './LockerMap';
 import { store } from '../services/store';
 import { lockerApi, adminApi, mqttApi } from '../services/api';
+import { fetchDrivingRoute } from '../services/routingApi';
 import { getLockerHealth, TONE_HEX, formatRelativeTime } from '../utils/lockerHealth';
 import { describeActor, actorBadgeClass } from '../utils/commandLogActor';
 import {
   MapPin, Search, Filter, RefreshCw, Cpu, Activity,
   Layers, CheckCircle2, AlertTriangle, ArrowRight,
   Package, Radio, Sparkles, X, Unlock, Clock, ShieldAlert,
-  Check, AlertCircle, Wrench
+  Check, AlertCircle, Wrench, Navigation, Route
 } from 'lucide-react';
+
+/**
+ * GĐ34 ý 3 — BỎ DẤU tiếng Việt để tìm kiếm.
+ *
+ * <p>Vấn đề thật: khách gõ `nguyen trai` không tìm ra `Nguyễn Trãi` vì `includes()` so chuỗi thô.
+ *
+ * <p><b>Chỉ dùng để SO SÁNH</b> — chữ hiển thị trên màn hình vẫn giữ nguyên dấu (điều cấm #3).
+ *
+ * <p>Cách làm: `normalize('NFD')` tách ký tự gốc khỏi dấu kết hợp, rồi xoá dải
+ * `U+0300–U+036F`. Chữ `đ` KHÔNG bị NFD tách (nó là ký tự riêng) nên phải thay tay, và thay cả
+ * `Đ` trước khi `toLowerCase()`. Không dùng thư viện ngoài (điều cấm #4).
+ */
+const boDau = (str) => {
+  if (!str) return '';
+  return String(str)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+};
+
+/**
+ * GĐ34 ý 1 — khoảng cách HAI CHIỀU (km) theo công thức Haversine.
+ *
+ * <p>Chỉ dùng để SẮP XẾP và hiện khoảng cách ước lượng. Khoảng cách ĐƯỜNG ĐI thật lấy từ OSRM
+ * ({@code fetchDrivingRoute}) — không trộn hai số này vào nhau.
+ */
+const haversineKm = (a, b) => {
+  if (!a || !b) return null;
+  const lat1 = Number(a.lat ?? a.latitude);
+  const lon1 = Number(a.lng ?? a.longitude);
+  const lat2 = Number(b.lat ?? b.latitude);
+  const lon2 = Number(b.lng ?? b.longitude);
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return null;
+  const R = 6371; // bán kính Trái Đất (km)
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+};
+
+/** Định dạng khoảng cách: dưới 1 km hiện mét, từ 1 km hiện km 1 chữ số thập phân. */
+const formatKm = (km) => {
+  if (km == null || !Number.isFinite(km)) return null;
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(1).replace('.', ',')} km`;
+};
 
 export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, onNavigateToShipper }) {
   // GĐ13 — KHỞI TẠO RỖNG, chờ API.
@@ -23,6 +74,24 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL'); // ADMIN: tone sức khoẻ; khác: statusKey
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  /**
+   * GĐ34 ý 1 — vị trí khách + trạng thái định vị.
+   *
+   * <p><b>KHÔNG tự bật khi mở tab</b> (điều cấm #2): chỉ khách BẤM "Gần tôi" mới hỏi quyền.
+   * `userPos = { lat, lng }` khi đã có; `null` = chưa.
+   * `geoMsg` = banner giải thích khi bị từ chối/timeout (không im lặng).
+   * `sortByDistance` = đang sắp theo khoảng cách; bấm lần 2 thì tắt.
+   */
+  const [userPos, setUserPos] = useState(null);
+  const [geoBusy, setGeoBusy] = useState(false);
+  const [geoMsg, setGeoMsg] = useState(null);
+  const [sortByDistance, setSortByDistance] = useState(false);
+
+  /** GĐ34 ý 2 — tuyến đường thật tới tủ đang chọn: { lockerId, distanceKm, durationMin, geometry, source } */
+  const [routeInfo, setRouteInfo] = useState(null);
+  const [routeBusy, setRouteBusy] = useState(false);
+  const [routeMsg, setRouteMsg] = useState(null);
 
   /**
    * GĐ8 — dữ liệu riêng cho màn ADMIN.
@@ -155,14 +224,41 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
       }
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchName = (l.name || '').toLowerCase().includes(q);
-      const matchAddr = (l.address || '').toLowerCase().includes(q);
+      // GĐ34 ý 3 — so KHÔNG DẤU cả hai chiều, giữ tìm theo `lockerId` (mã tủ).
+      // Chữ hiển thị không đổi: `boDau` chỉ dùng ở đây để so sánh (điều cấm #3).
+      const q = boDau(searchQuery.trim());
+      const matchName = boDau(l.name).includes(q);
+      const matchAddr = boDau(l.address).includes(q);
       const matchId = (l.lockerId || '').toLowerCase().includes(q);
       return matchName || matchAddr || matchId;
     }
     return true;
   });
+
+  /**
+   * GĐ34 ý 1 — khi đang bật "Gần tôi" thì sắp theo khoảng cách tăng dần.
+   *
+   * <p>Sắp xếp phải ỔN ĐỊNH: hai tủ cùng khoảng cách thì giữ thứ tự theo TÊN, để danh sách không
+   * nhảy qua nhảy lại giữa các lần render.
+   *
+   * <p>ADMIN không bao giờ vào nhánh này (`sortByDistance` chỉ bật từ `handleLocateMe`, mà hàm đó
+   * return sớm khi `isAdmin`) — điều cấm #1.
+   */
+  const khoangCachToi = (locker) => (userPos
+    ? haversineKm(userPos, { lat: locker.latitude, lng: locker.longitude })
+    : null);
+
+  const hienThiLockers = (sortByDistance && !isAdmin && userPos)
+    ? [...filteredLockers].sort((a, b) => {
+        const ka = khoangCachToi(a);
+        const kb = khoangCachToi(b);
+        if (ka == null && kb == null) return (a.name || '').localeCompare(b.name || '', 'vi');
+        if (ka == null) return 1;
+        if (kb == null) return -1;
+        if (Math.abs(ka - kb) < 0.000001) return (a.name || '').localeCompare(b.name || '', 'vi');
+        return ka - kb;
+      })
+    : filteredLockers;
 
   const selectedLocker = lockers.find((l) => l.lockerId === selectedLockerId) || lockers[0];
 
@@ -176,6 +272,18 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
   const onlineCount = lockers.filter((l) => getLockerHealth(l).tone === 'emerald').length;
   // Số trạm KHÔNG online (vàng + đỏ) — dùng thay KPI "100% WGS84" cứng.
   const offlineCount = totalLockers - onlineCount;
+
+  /**
+   * GĐ34 4b — số trạm KHÁCH lấy được hàng NGAY: còn ít nhất 1 ngăn EMPTY và không bảo trì.
+   * Đây là con số hữu ích với khách, thay cho "trạm mất kết nối" (họ không cần biết tủ nào chết).
+   */
+  const tramLayDuocNgay = lockers.filter((l) => {
+    const baoTri = String(l.connectionStatus || l.connection_status || '').toUpperCase() === 'MAINTENANCE';
+    if (baoTri) return false;
+    const avail = l.availableCompartments
+      ?? (Array.isArray(l.compartments) ? l.compartments.filter((c) => c.status === 'EMPTY').length : 0);
+    return Number(avail) > 0;
+  }).length;
 
   const handleAction = (locker) => {
     if (isAdmin) {
@@ -196,6 +304,95 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
     : currentUser?.role === 'SHIPPER'
     ? 'Đến nạp hàng tại tủ này'
     : 'Xem bưu kiện của tôi';
+
+  /**
+   * GĐ34 ý 1 — "📍 Gần tôi": lấy vị trí khách rồi sắp danh sách theo khoảng cách.
+   *
+   * <p>Bấm lần 2 → tắt sắp xếp, về thứ tự gốc (KHÔNG xoá vị trí đã lấy: ý 2 cần lại toạ độ này để
+   * vẽ đường đi mà không phải hỏi quyền lần nữa).
+   *
+   * <p>Timeout 10 giây: đủ để GPS máy thật kịp trả; nếu lâu hơn thì báo và mở lại nút, không treo.
+   */
+  const handleLocateMe = () => {
+    if (isAdmin) return; // điều cấm #1: nhánh ADMIN không đổi
+    setGeoMsg(null);
+
+    if (sortByDistance) {
+      setSortByDistance(false);
+      return;
+    }
+    if (userPos) {
+      // Đã có vị trí trong phiên này → bật lại sắp xếp, không hỏi quyền lần nữa.
+      setSortByDistance(true);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setGeoMsg('Trình duyệt này không hỗ trợ lấy vị trí. Bạn có thể tự tìm trạm theo tên.');
+      return;
+    }
+
+    setGeoBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setSortByDistance(true);
+        setGeoBusy(false);
+        setGeoMsg(null);
+      },
+      (err) => {
+        // Không im lặng (điều cấm #2): nói rõ vì sao và gợi ý cách khác.
+        const biTuChoi = err?.code === 1; // PERMISSION_DENIED
+        setGeoMsg(biTuChoi
+          ? 'Trình duyệt không cho lấy vị trí. Bạn có thể tự tìm trạm theo tên.'
+          : 'Không lấy được vị trí (quá 10 giây hoặc mất tín hiệu). Bạn có thể tự tìm trạm theo tên.');
+        setGeoBusy(false);
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+    );
+  };
+
+  /**
+   * GĐ34 ý 2 — "Xem đường đi": dùng LẠI `fetchDrivingRoute` đã nghiệm thu ở GĐ14 (điều cấm #3).
+   *
+   * <p>Chỉ gọi khi ĐÃ CÓ toạ độ khách (điều cấm: không đoán điểm đầu). Lỗi/timeout → fallback
+   * "chim bay" bằng Haversine kèm nhãn amber, map không trắng.
+   *
+   * <p>⚠ `fetchDrivingRoute` nhận `{lat, lng}` và tự đổi sang `lng,lat` cho OSRM
+   * (`routingApi.js:37-40`) — KHÔNG tự dựng URL ở đây (điều cấm #4).
+   */
+  const handleShowRoute = async (locker) => {
+    if (isAdmin || !locker) return;
+    if (!userPos) {
+      setRouteMsg('Bấm "Gần tôi" trước để biết bạn đang ở đâu.');
+      return;
+    }
+    setRouteBusy(true);
+    setRouteMsg(null);
+    const tu = { lat: locker.latitude, lng: locker.longitude };
+    try {
+      const r = await fetchDrivingRoute([userPos, tu]);
+      setRouteInfo({
+        lockerId: locker.lockerId,
+        distanceKm: r.distanceKm,
+        durationMin: r.durationMin,
+        geometry: r.geometry,
+        source: 'osrm',
+      });
+    } catch (err) {
+      // Fallback có NHÃN RÕ — không bịa số đường đi.
+      const chimBay = haversineKm(userPos, tu);
+      setRouteInfo({
+        lockerId: locker.lockerId,
+        distanceKm: chimBay != null ? Math.round(chimBay * 10) / 10 : null,
+        durationMin: null,
+        geometry: [[userPos.lat, userPos.lng], [tu.lat, tu.lng]],
+        source: 'haversine',
+      });
+      setRouteMsg(`Không lấy được đường đi thật (${err?.message || 'lỗi mạng'}). Đang hiện khoảng cách chim bay.`);
+    } finally {
+      setRouteBusy(false);
+    }
+  };
 
   /**
    * GĐ8 ý 2 — số đơn QUÁ HẠN theo tủ, để hiện badge đỏ trên marker.
@@ -474,31 +671,72 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
 
         <div className="liquid-glass-card rounded-3xl p-5 border border-white/90 shadow-md">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Trạng Thái Kết Nối</span>
+            {/* GĐ34 4b — nhánh KHÁCH đổi nghĩa 2 KPI cho hữu ích; ADMIN giữ nguyên 100%
+                (điều cấm #1): "tủ nào dùng được" hữu ích hơn "tủ nào chết". */}
+            <span>{isAdmin ? 'Trạng Thái Kết Nối' : 'Ngăn Trống Gần Nhất'}</span>
             <div className="w-7 h-7 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
               <Radio className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-extrabold font-mono text-slate-900">{onlineCount} / {totalLockers} Online</div>
-          <div className="text-[11px] text-emerald-600 font-medium mt-0.5">Kết nối trực tuyến</div>
+          {isAdmin ? (
+            <>
+              <div className="text-2xl font-extrabold font-mono text-slate-900">{onlineCount} / {totalLockers} Online</div>
+              <div className="text-[11px] text-emerald-600 font-medium mt-0.5">Kết nối trực tuyến</div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl font-extrabold font-mono text-slate-900">
+                {(() => {
+                  // Đã bật định vị → số ngăn trống của tủ GẦN NHẤT; chưa bật → tổng ngăn trống.
+                  if (!userPos || !hienThiLockers.length) return `${totalAvailableSlots} ngăn`;
+                  const ganNhat = hienThiLockers
+                    .map((l) => ({ l, km: khoangCachToi(l) }))
+                    .filter((x) => x.km != null)
+                    .sort((a, b) => a.km - b.km)[0];
+                  if (!ganNhat) return `${totalAvailableSlots} ngăn`;
+                  const avail = ganNhat.l.availableCompartments
+                    ?? (Array.isArray(ganNhat.l.compartments)
+                      ? ganNhat.l.compartments.filter((c) => c.status === 'EMPTY').length : 0);
+                  return `${avail} ngăn`;
+                })()}
+              </div>
+              <div className="text-[11px] text-emerald-600 font-medium mt-0.5">
+                {userPos ? 'Ở trạm gần bạn nhất' : 'Tổng số ngăn trống'}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="liquid-glass-card rounded-3xl p-5 border border-white/90 shadow-md">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
             {/* GĐ8 — KPI cũ "100% WGS84 / Bán kính 7km" là SỐ CỨNG, không tính từ gì.
                 Nay thay bằng số trạm KHÔNG online, suy thật từ `lastHeartbeat`: con số admin
-                cần để biết có trạm nào đang chết. */}
-            <span>Trạm mất kết nối</span>
-            <div className="w-7 h-7 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
-              <ShieldAlert className="w-4 h-4" />
+                cần để biết có trạm nào đang chết.
+                GĐ34 4b — nhánh KHÁCH đổi thành "Trạm lấy được ngay"; ADMIN giữ nguyên. */}
+            <span>{isAdmin ? 'Trạm mất kết nối' : 'Trạm lấy được ngay'}</span>
+            <div className={`w-7 h-7 rounded-xl flex items-center justify-center ${
+              isAdmin ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+            }`}>
+              {isAdmin ? <ShieldAlert className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
             </div>
           </div>
-          <div className={`text-2xl font-extrabold font-mono ${offlineCount > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
-            {offlineCount} / {totalLockers}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-0.5">
-            {offlineCount > 0 ? 'Cần kiểm tra — suy từ nhịp tim' : 'Tất cả trạm đều phản hồi'}
-          </div>
+          {isAdmin ? (
+            <>
+              <div className={`text-2xl font-extrabold font-mono ${offlineCount > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                {offlineCount} / {totalLockers}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                {offlineCount > 0 ? 'Cần kiểm tra — suy từ nhịp tim' : 'Tất cả trạm đều phản hồi'}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl font-extrabold font-mono text-emerald-600">
+                {tramLayDuocNgay} / {totalLockers}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">Còn ngăn trống, không bảo trì</div>
+            </>
+          )}
         </div>
       </div>
 
@@ -516,6 +754,24 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           />
         </div>
 
+        {/* GĐ34 ý 1 — "Gần tôi": CHỈ hiện ở nhánh khách (điều cấm #1: không đụng ADMIN).
+            Không tự bật định vị khi mở tab — chỉ chạy khi bấm (điều cấm #2). */}
+        {!isAdmin && (
+          <button
+            type="button"
+            onClick={handleLocateMe}
+            disabled={geoBusy}
+            className={`whitespace-nowrap flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl text-xs font-bold border transition cursor-pointer disabled:opacity-60 ${
+              sortByDistance
+                ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-600/20'
+                : 'bg-white/80 text-slate-700 border-white/90 hover:bg-white shadow-2xs'
+            }`}
+          >
+            <Navigation className="w-3.5 h-3.5" />
+            {geoBusy ? 'Đang lấy vị trí…' : sortByDistance ? 'Đang ở gần tôi' : 'Gần tôi'}
+          </button>
+        )}
+
         {/* 3-Color Status Filter Pills — GĐ8: ADMIN lọc theo SỨC KHOẺ, vai trò khác theo sức chứa */}
         <div className="ios-segmented-tray flex items-center gap-1 overflow-x-auto p-1">
           {(isAdmin
@@ -529,7 +785,8 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                 { key: 'ALL', label: 'Tất cả' },
                 { key: 'AVAILABLE', label: '🟢 Rỗi' },
                 { key: 'FULL', label: '🔴 Bận' },
-                { key: 'OFFLINE', label: '⚪ Mất kết nối' },
+                // GĐ34 4c — khách không cần lọc "tủ hỏng", nhưng cần biết tủ đang sửa.
+                { key: 'MAINTENANCE', label: '🟡 Đang bảo trì' },
               ]
           ).map((item) => (
             <button
@@ -544,6 +801,22 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           ))}
         </div>
       </div>
+
+      {/* GĐ34 ý 1 — banner giải thích khi không lấy được vị trí (không im lặng). */}
+      {!isAdmin && geoMsg && (
+        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+          <div className="flex-1">{geoMsg}</div>
+          <button
+            type="button"
+            onClick={() => setGeoMsg(null)}
+            className="text-amber-700 hover:text-amber-900 cursor-pointer p-0.5"
+            aria-label="Đóng"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* 4. Main Interactive Canvas (Map + Station Detail Cards) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -580,12 +853,12 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
             </div>
 
             <div className="max-h-[580px] overflow-y-auto pr-1 space-y-3 custom-scrollbar">
-            {filteredLockers.length === 0 ? (
+            {hienThiLockers.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500 liquid-glass-card rounded-3xl border border-white/90 shadow-sm">
                 Không tìm thấy trạm tủ phù hợp với bộ lọc hiện tại.
               </div>
             ) : (
-              filteredLockers.map((locker) => {
+              hienThiLockers.map((locker) => {
                 const isSelected = locker.lockerId === selectedLockerId;
                 const statusInfo = getLockerStatusInfo(locker);
                 const avail = locker.availableCompartments ?? (Array.isArray(locker.compartments) ? locker.compartments.filter(c => c.status === 'EMPTY').length : 0);
@@ -631,6 +904,84 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                       <MapPin className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
                       <span>{locker.address}</span>
                     </p>
+
+                    {/* GĐ34 ý 4a + ý 1 — nhãn "Lấy được ngay" và khoảng cách (chỉ nhánh khách).
+                        Nhãn dựa trên trạng thái THẬT: có ngăn EMPTY và tủ không bảo trì. */}
+                    {!isAdmin && (() => {
+                      const baoTri = String(locker.connectionStatus || locker.connection_status || '')
+                        .toUpperCase() === 'MAINTENANCE';
+                      const conTrong = Number(avail) > 0;
+                      const km = khoangCachToi(locker);
+                      const nhan = baoTri
+                        ? { text: 'Đang bảo trì', cls: 'bg-slate-100 text-slate-600 border-slate-200' }
+                        : conTrong
+                          ? { text: `Lấy được ngay · còn ${avail} ngăn`, cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+                          : { text: 'Tạm hết ngăn', cls: 'bg-slate-100 text-slate-600 border-slate-200' };
+                      return (
+                        <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${nhan.cls}`}>
+                            {nhan.text}
+                          </span>
+                          {/* Tủ ảo: khách không hiểu "tủ ảo" — nói rõ là tủ demo, chưa có thiết bị. */}
+                          {locker.isVirtual === true && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-800 border-amber-200">
+                              tủ demo — chưa có thiết bị
+                            </span>
+                          )}
+                          {km != null && (
+                            <span className="text-[10px] font-mono font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                              {formatKm(km)}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* GĐ34 ý 2 — "Xem đường đi": cần vị trí khách; chưa có thì nút mờ + tooltip. */}
+                    {!isAdmin && (
+                      <div className="mb-2 space-y-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleShowRoute(locker); }}
+                          disabled={!userPos || routeBusy}
+                          title={!userPos ? 'Bấm "Gần tôi" trước' : 'Xem đường đi thật tới trạm này'}
+                          className="w-full py-1.5 rounded-xl border border-blue-200 bg-blue-50/70 text-blue-700 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-100 transition"
+                        >
+                          <Route className="w-3.5 h-3.5" />
+                          {routeBusy ? 'Đang tính…' : 'Xem đường đi'}
+                        </button>
+
+                        {routeInfo && routeInfo.lockerId === locker.lockerId && (
+                          <div className="text-[10px] leading-snug">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-mono font-bold text-slate-900">
+                                {routeInfo.distanceKm != null ? `${routeInfo.distanceKm} km` : '—'}
+                                {routeInfo.durationMin != null ? ` · ~${routeInfo.durationMin} phút đi xe` : ''}
+                              </span>
+                              {/* Nhãn NGUỒN bắt buộc: đường đi thật vs chim bay (amber). */}
+                              {routeInfo.source === 'osrm' ? (
+                                <span className="px-1.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold">
+                                  đường đi thực tế
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded-full border bg-amber-50 text-amber-800 border-amber-300 font-semibold">
+                                  chim bay
+                                </span>
+                              )}
+                            </div>
+                            <a
+                              href={`https://www.google.com/maps/dir/?api=1&origin=${userPos.lat},${userPos.lng}&destination=${locker.latitude},${locker.longitude}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-block mt-1 text-blue-600 font-bold underline"
+                            >
+                              Mở Google Maps
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Capacity Progress Bar */}
                     <div className="space-y-1.5 mb-3">
