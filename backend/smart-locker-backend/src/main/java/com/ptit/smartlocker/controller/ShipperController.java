@@ -250,6 +250,38 @@ public class ShipperController {
     }
 
     /**
+     * GĐ51 — shipper TẠO một đơn quá hạn để demo/thử luồng thu hồi ("+ Thêm đơn quá hạn").
+     *
+     * <p><b>Vì sao ở đây chứ không phải ADMIN:</b> user chốt 17/11 — "nút thêm đơn quá hạn để ở tab
+     * thu hồi hàng quá hạn của tài khoản shipper". Thu hồi là nghiệp vụ của shipper (GĐ41: ADMIN
+     * không có quyền thu hồi), nên công cụ tạo dữ liệu cho luồng đó cũng thuộc shipper.
+     *
+     * <p><b>Danh tính người tạo lấy từ {@code Principal}</b> — không nhận {@code createdBy} từ body
+     * (cùng luật với {@code recall-overdue}). {@code customerUsername} thì nhận từ body vì đó là
+     * <i>đối tượng</i> của đơn, không phải danh tính người gọi.
+     *
+     * <p>Mã đơn + số ngăn trả về trong {@code data} để UI hiện ngay và tự chọn đơn mới.
+     */
+    @PostMapping("/overdue-orders")
+    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> createOverdueOrder(
+            @RequestBody(required = false) ShipperDTO.CreateOverdueOrderRequest request,
+            java.security.Principal principal) {
+        String lockerId = request != null ? request.getLockerId() : null;
+        String customerUsername = request != null ? request.getCustomerUsername() : null;
+
+        OrderDTO.OrderResponse created = shipperService.createOverdueOrder(
+                lockerId,
+                customerUsername,
+                principal != null ? principal.getName() : null);
+
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Đã tạo đơn quá hạn " + created.getOrderId()
+                        + " tại ngăn #" + created.getCompartmentIndex()
+                        + " của " + created.getLockerName() + ".",
+                created));
+    }
+
+    /**
      * GĐ46 — shipper mở cửa ngăn để LẤY hàng quá hạn ra (bấm "Mở Cửa Ngăn #N").
      *
      * <p><b>Trước GĐ46 nút này không gửi lệnh nào:</b> frontend chỉ phát tiếng solenoid bằng Web

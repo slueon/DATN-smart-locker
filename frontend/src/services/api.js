@@ -147,6 +147,21 @@ export const shipperApi = {
   verifyToken: (lockerId, dynamicToken) => api.post('/shipper/token/verify', { lockerId, dynamicToken }),
   depositPackage: (data) => api.post('/shipper/deposit', data),
   getOverdueOrders: (lockerId) => api.get(`/shipper/overdue-orders${lockerId ? `?lockerId=${lockerId}` : ''}`),
+
+  /**
+   * GĐ51 — TẠO một đơn quá hạn để demo/thử luồng thu hồi (nút "+ Thêm đơn quá hạn").
+   *
+   * <p>Chỉ SHIPPER gọi được (backend `hasRole("SHIPPER")`). Body chỉ có 2 trường tuỳ chọn: tủ và
+   * khách; <b>không</b> gửi "người tạo" — backend lấy từ phiên đăng nhập.
+   *
+   * <p>Không gửi `current_weight`/`ir_detected`: đó là số của cảm biến, không phải của đơn. Đơn tạo
+   * thử không được gõ cân (bài học GĐ50).
+   */
+  createOverdueOrder: (lockerId, customerUsername) => api.post(
+    '/shipper/overdue-orders',
+    { lockerId: lockerId || null, customerUsername: customerUsername || null },
+  ),
+
   // GĐ41 — thu hồi phải kèm `dynamicToken` (mã QR shipper THẬT). Trước GĐ41 chỉ gửi `orderId`
   // nên backend không có gì để kiểm danh tính, và tab thu hồi tự bịa mã ở client.
   recallOverdue: (orderId, dynamicToken) => api.post(

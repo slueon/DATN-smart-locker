@@ -212,6 +212,10 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/shipper/suggest-lockers").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/assign-locker").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.GET, "/api/shipper/overdue-orders").hasAnyRole("SHIPPER", "ADMIN")
+                // GĐ51 — TẠO đơn quá hạn để demo/thử luồng thu hồi. CHỈ SHIPPER: đây là công cụ của
+                // nghiệp vụ thu hồi, mà GĐ41 đã chốt "quyền thu hồi chỉ có tài khoản shipper".
+                // Tách riêng dòng khỏi GET ở trên (GET vẫn cho ADMIN ĐỌC danh sách, POST thì không).
+                .requestMatchers(HttpMethod.POST, "/api/shipper/overdue-orders").hasRole("SHIPPER")
                 // GĐ21 — danh sách khách để shipper chọn khi tạo đơn hộ. Chỉ SHIPPER/ADMIN vì trả
                 // tên + SĐT của mọi khách; thiếu dòng này là 403 vì denyAll() ở dưới.
                 .requestMatchers(HttpMethod.GET, "/api/shipper/customers").hasAnyRole("SHIPPER", "ADMIN")

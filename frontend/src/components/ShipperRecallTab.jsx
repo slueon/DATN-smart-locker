@@ -10,7 +10,7 @@ import {
   Check, MapPin, User, Timer, PackageX, Truck, RefreshCw,
   BellRing, X, QrCode, ShieldCheck, Unlock, Lock,
   Sparkles, CheckCheck, Radio, Volume2, ArrowRight,
-  Shield, AlertCircle, ChevronRight, XCircle
+  Shield, AlertCircle, ChevronRight, XCircle, Plus
 } from 'lucide-react';
 
 export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
@@ -20,6 +20,22 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   const [selectedRecallOrderId, setSelectedRecallOrderId] = useState(null);
   const [lastScanTime, setLastScanTime] = useState(null);
   const [alertNotice, setAlertNotice] = useState(null);
+
+  /**
+   * GĐ51 — nút "+ Thêm đơn quá hạn" (công cụ demo/thử luồng thu hồi).
+   *
+   * <p>Vì sao cần: sau khi xoá `ORD-OVERDUE01` theo yêu cầu user, muốn có đơn quá hạn để thử thì
+   * phải gõ SQL tay — người dùng không làm được trên web.
+   *
+   * <p>`showThemDon` mở hộp chọn; `taoDonBusy` chặn bấm lặp; `taoDonMsg` là thông báo thật từ
+   * backend (không báo thành công giả khi 409 hết ngăn / tủ bảo trì).
+   */
+  const [showThemDon, setShowThemDon] = useState(false);
+  const [taoDonBusy, setTaoDonBusy] = useState(false);
+  const [taoDonMsg, setTaoDonMsg] = useState(null); // { type: 'success'|'error', text }
+  const [taoDonLockerId, setTaoDonLockerId] = useState('LOCKER_HN_01');
+  const [taoDonCustomer, setTaoDonCustomer] = useState('');
+  const [customerOptions, setCustomerOptions] = useState([]);
 
   // ===== BƯỚC 1: XÁC THỰC DANH TÍNH SHIPPER TẠI KIOSK =====
   const [dynamicToken, setDynamicToken] = useState(null);
@@ -256,6 +272,73 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     if (selectedLockerFilter === 'ALL') return true;
     return o.lockerId === selectedLockerFilter;
   });
+
+  /**
+   * GĐ51 — mở hộp "+ Thêm đơn quá hạn": nạp danh sách khách từ API (không ghi cứng như GĐ21 đã bỏ)
+   * và mặc định chọn đúng trạm đang lọc (nếu đang lọc một trạm cụ thể).
+   */
+  const handleOpenThemDon = async () => {
+    setTaoDonMsg(null);
+    setShowThemDon(true);
+    setTaoDonLockerId(selectedLockerFilter !== 'ALL' ? selectedLockerFilter : 'LOCKER_HN_01');
+    try {
+      const res = await shipperApi.getCustomers();
+      const ds = res?.data?.data || [];
+      setCustomerOptions(ds);
+      // GĐ51 — value là `username` (KHOÁ DUY NHẤT), không phải họ tên: hai khách trùng tên là gán
+      // nhầm đơn. `fullName` chỉ để hiển thị.
+      if (ds.length > 0 && !taoDonCustomer) {
+        setTaoDonCustomer(ds[0].username || '');
+      }
+    } catch (err) {
+      // Không tải được danh sách khách ⇒ để trống, backend dùng khách mặc định 'khachhang'.
+      console.warn('[ShipperRecallTab] Không tải được danh sách khách:', err?.message);
+      setCustomerOptions([]);
+    }
+  };
+
+  /**
+   * GĐ51 — TẠO đơn quá hạn thật.
+   *
+   * <p>Sau khi thành công: **nạp lại danh sách** (`loadOrders`) và **tự chọn đơn vừa tạo** để shipper
+   * thu hồi được ngay (đúng yêu cầu thẻ). KHÔNG tự đổi `selectedLockerFilter` để danh sách không bị
+   * lọc mất đơn ở trạm khác.
+   */
+  const handleTaoDonQuaHan = async () => {
+    if (taoDonBusy) return;
+    setTaoDonBusy(true);
+    setTaoDonMsg(null);
+    try {
+      const res = await shipperApi.createOverdueOrder(taoDonLockerId, taoDonCustomer || null);
+      const don = res?.data?.data;
+      if (!don?.orderId) {
+        // 200 nhưng thiếu dữ liệu ⇒ báo lỗi thật, không bịa mã đơn.
+        setTaoDonMsg({ type: 'error', text: 'Máy chủ không trả về mã đơn. Vui lòng thử lại.' });
+        return;
+      }
+      setTaoDonMsg({
+        type: 'success',
+        text: `Đã tạo đơn quá hạn ${don.orderId} — ngăn #${don.compartmentIndex} của ${don.lockerName}.`,
+      });
+      setShowThemDon(false);
+      // Nạp lại danh sách rồi chọn đơn mới. `loadOrders` tự chọn `overdue[0]` khi đơn đang chọn
+      // không còn, nhưng ta cần chọn ĐÚNG đơn vừa tạo ⇒ đặt sau khi danh sách về.
+      await loadOrders();
+      setSelectedRecallOrderId(don.orderId);
+      // Đưa bộ lọc về "Tất cả trạm" nếu đơn mới ở trạm khác bộ lọc hiện tại, nếu không đơn sẽ bị ẩn.
+      if (selectedLockerFilter !== 'ALL' && selectedLockerFilter !== don.lockerId) {
+        setSelectedLockerFilter('ALL');
+      }
+    } catch (err) {
+      // Hiện nguyên văn message backend: 409 "không còn ngăn trống" / "tủ đang bảo trì" rất rõ nghĩa.
+      setTaoDonMsg({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không tạo được đơn quá hạn. Vui lòng thử lại.',
+      });
+    } finally {
+      setTaoDonBusy(false);
+    }
+  };
 
   const activeRecallOrder =
     orders.find((o) => o.orderId === selectedRecallOrderId) || filteredOverdue[0] || null;
@@ -576,23 +659,119 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* PANE 1: OVERDUE LIST (5 cols) */}
         <div className="lg:col-span-5 space-y-3">
-          <div className="flex items-center justify-between px-1">
+          <div className="flex items-center justify-between px-1 gap-2">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
               Danh Sách Quá Hạn ({filteredOverdue.length})
             </span>
-            <select
-              value={selectedLockerFilter}
-              onChange={(e) => setSelectedLockerFilter(e.target.value)}
-              className="text-xs bg-white/80 backdrop-blur-md border border-white/90 rounded-xl px-3 py-1.5 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-rose-500/30 shadow-xs cursor-pointer max-w-[150px] truncate"
-            >
-              <option value="ALL">📍 Tất cả trạm</option>
-              {allLockers.map((lk) => (
-                <option key={lk.lockerId} value={lk.lockerId}>
-                  {lk.name.replace('Tủ Giao Nhận ', '')}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedLockerFilter}
+                onChange={(e) => setSelectedLockerFilter(e.target.value)}
+                className="text-xs bg-white/80 backdrop-blur-md border border-white/90 rounded-xl px-3 py-1.5 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-rose-500/30 shadow-xs cursor-pointer max-w-[150px] truncate"
+              >
+                <option value="ALL">📍 Tất cả trạm</option>
+                {allLockers.map((lk) => (
+                  <option key={lk.lockerId} value={lk.lockerId}>
+                    {lk.name.replace('Tủ Giao Nhận ', '')}
+                  </option>
+                ))}
+              </select>
+              {/* GĐ51 — công cụ tạo dữ liệu để thử luồng thu hồi (chỉ SHIPPER). */}
+              <button
+                type="button"
+                onClick={handleOpenThemDon}
+                title="Tạo một đơn quá hạn để thử luồng thu hồi"
+                className="text-xs font-bold px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white shadow-xs flex items-center gap-1 cursor-pointer whitespace-nowrap transition active:scale-95"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Thêm đơn quá hạn</span>
+              </button>
+            </div>
           </div>
+
+          {/* GĐ51 — hộp chọn tủ + khách. Chỉ hiện khi bấm nút; tạo xong tự đóng. */}
+          {showThemDon && (
+            <div className="p-4 rounded-2xl bg-white border border-rose-200 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <PackageX className="w-4 h-4 text-rose-600" /> Tạo đơn quá hạn (thử luồng thu hồi)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowThemDon(false)}
+                  className="p-1 rounded-lg hover:bg-slate-100 cursor-pointer"
+                  title="Đóng"
+                >
+                  <X className="w-4 h-4 text-slate-500" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label className="block">
+                  <span className="text-[11px] font-bold text-slate-600 block mb-1">Trạm tủ</span>
+                  <select
+                    value={taoDonLockerId}
+                    onChange={(e) => setTaoDonLockerId(e.target.value)}
+                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-rose-500/30 cursor-pointer"
+                  >
+                    {allLockers.length === 0 && <option value="LOCKER_HN_01">LOCKER_HN_01</option>}
+                    {allLockers.map((lk) => (
+                      <option key={lk.lockerId} value={lk.lockerId}>
+                        {lk.name} ({lk.lockerId})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-bold text-slate-600 block mb-1">Khách nhận</span>
+                  <select
+                    value={taoDonCustomer}
+                    onChange={(e) => setTaoDonCustomer(e.target.value)}
+                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-rose-500/30 cursor-pointer"
+                  >
+                    {customerOptions.length === 0 && (
+                      <option value="">Khách mặc định (khachhang)</option>
+                    )}
+                    {customerOptions.map((c) => (
+                      <option key={c.userId} value={c.username || String(c.userId)}>
+                        {c.fullName} — {c.phone}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] text-slate-600 leading-snug">
+                  Đơn được tạo ở trạng thái <strong>quá hạn</strong> trên một ngăn trống.
+                  Cân nặng giữ nguyên số cảm biến (không gõ tay).
+                </p>
+                <button
+                  type="button"
+                  onClick={handleTaoDonQuaHan}
+                  disabled={taoDonBusy}
+                  className="text-xs font-bold px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white shadow-sm flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition"
+                >
+                  {taoDonBusy ? 'Đang tạo…' : 'Tạo đơn'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {taoDonMsg && (
+            <div
+              className={`p-3 rounded-2xl text-xs flex items-start gap-2 border ${
+                taoDonMsg.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}
+            >
+              {taoDonMsg.type === 'success'
+                ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+                : <XCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />}
+              <span>{taoDonMsg.text}</span>
+            </div>
+          )}
 
           <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1">
             {filteredOverdue.length === 0 ? (

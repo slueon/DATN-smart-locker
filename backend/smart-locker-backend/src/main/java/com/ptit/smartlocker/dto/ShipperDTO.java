@@ -156,14 +156,23 @@ public class ShipperDTO {
     @Builder
     public static class CustomerOptionResponse {
         private Long userId;
+        /**
+         * GĐ51 — tên đăng nhập, KHOÁ DUY NHẤT để chọn khách.
+         *
+         * <p>Trước GĐ51 DTO này cố ý không trả `username` (GĐ21 chỉ cần hiển thị), nên hộp chọn chỉ
+         * có họ tên. Họ tên KHÔNG duy nhất — hai khách cùng tên là chọn nhầm người. Nay UI gửi
+         * `username` (hoặc `userId`) và backend tra theo khoá đó; `fullName` chỉ để HIỂN THỊ.
+         */
+        private String username;
         private String fullName;
         private String phone;
 
         public CustomerOptionResponse() {
         }
 
-        public CustomerOptionResponse(Long userId, String fullName, String phone) {
+        public CustomerOptionResponse(Long userId, String username, String fullName, String phone) {
             this.userId = userId;
+            this.username = username;
             this.fullName = fullName;
             this.phone = phone;
         }
@@ -202,6 +211,38 @@ public class ShipperDTO {
 
         public AssignLockerRequest(String lockerId, Integer compartmentIndex) {
             this(lockerId, compartmentIndex, null);
+        }
+    }
+
+    /**
+     * GĐ51 — body của {@code POST /api/shipper/overdue-orders} (nút "+ Thêm đơn quá hạn").
+     *
+     * <p><b>KHÔNG có trường "người tạo":</b> danh tính lấy từ {@code Principal} của phiên đăng nhập
+     * (cùng luật với {@code recall-overdue}) — client không được tự khai danh tính.
+     *
+     * <p>Cả hai trường đều tuỳ chọn: bỏ trống thì backend dùng tủ {@code LOCKER_HN_01} và khách
+     * {@code khachhang} (đúng bộ dữ liệu mẫu của dự án).
+     */
+    @Getter
+    @Setter
+    @Builder
+    public static class CreateOverdueOrderRequest {
+        /** Mã tủ trong CSDL (vd. {@code LOCKER_HN_01}); bỏ trống = tủ mặc định. */
+        private String lockerId;
+        /**
+         * KHOÁ DUY NHẤT của khách: tên đăng nhập (hoặc mã {@code userId} dạng chuỗi).
+         *
+         * <p>Bỏ trống = {@code khachhang}. <b>KHÔNG nhận họ tên</b> — họ tên có thể trùng nên sẽ gán
+         * nhầm đơn cho người khác (Chief chốt 16:41). `fullName` chỉ để hiển thị ở UI.
+         */
+        private String customerUsername;
+
+        public CreateOverdueOrderRequest() {
+        }
+
+        public CreateOverdueOrderRequest(String lockerId, String customerUsername) {
+            this.lockerId = lockerId;
+            this.customerUsername = customerUsername;
         }
     }
 }

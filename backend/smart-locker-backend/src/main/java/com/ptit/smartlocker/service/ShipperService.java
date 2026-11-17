@@ -82,6 +82,8 @@ public class ShipperService {
                         .thenComparing(u -> u.getId() == null ? 0L : u.getId()))
                 .map(u -> ShipperDTO.CustomerOptionResponse.builder()
                         .userId(u.getId())
+                        // GĐ51 — trả `username` để UI có KHOÁ DUY NHẤT (họ tên có thể trùng).
+                        .username(u.getUsername())
                         .fullName(u.getFullName())
                         .phone(u.getPhone())
                         .build())
@@ -1140,6 +1142,181 @@ public class ShipperService {
         // `EMPTY`: thứ tự ngược (DB báo ngăn trống trong khi hàng còn trong tủ) và cửa bị mở
         // **lần hai** ngay sau khi shipper vừa đóng. Nay cửa được mở ở bước riêng
         // `openForRecall` (nút "Mở Cửa Ngăn"), trước khi lấy hàng; hàm này chỉ chốt nghiệp vụ.
+    }
+
+    /**
+     * GĐ51 — TẠO "ĐƠN QUÁ HẠN" ĐỂ DEMO/THỬ luồng thu hồi (nút "+ Thêm đơn quá hạn" ở tab thu hồi).
+     *
+     * <p><b>Vì sao cần endpoint này:</b> sau khi xoá {@code ORD-OVERDUE01} (yêu cầu user 17/11),
+     * muốn có một đơn quá hạn để thử luồng thu hồi thì phải gõ SQL tay
+     * ({@code scripts/evidence/mk-overdue.sql}) — người dùng không làm được trên web. Đây là công
+     * cụ demo, cùng loại với "Quét đơn quá hạn" của ADMIN.
+     *
+     * <p><b>Điều cấm #1 — KHÔNG GÕ CÂN GIẢ.</b> Hàm này <b>không</b> chạm
+     * {@code current_weight}/{@code ir_detected}: đó là số của cảm biến HX711/IR, không phải của
+     * đơn hàng. Bài học GĐ50: {@code mk-overdue.sql} ghi tay {@code current_weight=850} rồi hệ
+     * thống tin đó là hàng thật, và retained cũ còn làm số đó sống lại sau mỗi lần restart.
+     *
+     * <p><b>Điều cấm #2 — chỉ lấy ngăn {@code EMPTY} và tủ không bảo trì.</b> Dùng
+     * {@link CompartmentRepository#findWithLockByLockerIdAndStatus} (khoá bi quan) đúng như luồng
+     * đặt ngăn, nên hai shipper bấm cùng lúc không thể nhận cùng một ngăn.
+     *
+     * <p><b>Điều cấm #3 — KHÔNG viết quy tắc quá hạn thứ hai.</b> Đơn được tạo với
+     * {@code expiryDeadline} trong quá khứ rồi đặt thẳng {@code OVERDUE}: đó <b>chính là</b> kết quả
+     * mà {@link OverdueSchedulerService} sẽ tạo ra cho một đơn {@code DEPOSITED} đã hết hạn. Không
+     * sửa, không gọi lại scheduler (nó quét cả bảng và bắn sự kiện).
+     *
+     * @param lockerId        tủ nhận đơn (null/rỗng ⇒ tủ mặc định {@code mqtt.locker.id.default})
+     * @param customerUsername tên đăng nhập khách (null/rỗng ⇒ {@code khachhang})
+     * @param createdBy       <b>lấy từ {@code Principal}</b> — không nhận từ body
+     */
+    @Transactional
+    public OrderDTO.OrderResponse createOverdueOrder(String lockerId, String customerUsername,
+                                                     String createdBy) {
+        String maTu = (lockerId == null || lockerId.isBlank()) ? "LOCKER_HN_01" : lockerId.trim();
+        Locker locker = lockerRepository.findById(maTu)
+                .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
+                        "Không tìm thấy tủ: " + maTu));
+
+        // Cùng luật với luồng đặt ngăn: tủ đang bảo trì thì không nhận đơn.
+        if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Tủ " + locker.getName() + " đang bảo trì, không thể tạo đơn quá hạn tại đây. "
+                            + "Vui lòng chọn tủ khác hoặc mở khoá bảo trì trước.");
+        }
+
+        // Khoá bi quan ngăn EMPTY — đúng cơ chế chống tranh chấp của `OrderService.createOrder`.
+        List<Compartment> nganTrong = compartmentRepository
+                .findWithLockByLockerIdAndStatus(locker.getLockerId(), "EMPTY");
+        if (nganTrong.isEmpty()) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Tủ " + locker.getName() + " không còn ngăn trống nào — không tạo được đơn quá hạn. "
+                            + "Hãy thu hồi hoặc giải phóng một ngăn trước.");
+        }
+        Compartment ngan = nganTrong.get(0);
+
+        // Khách: mặc định `khachhang` (đúng khách mẫu của dự án). Không có thì báo rõ, KHÔNG bịa tên.
+        //
+        // GĐ51 (Chief chốt 16:41) — CHỈ tra theo KHOÁ DUY NHẤT: `username`, hoặc `userId` dạng chuỗi.
+        // KHÔNG khớp theo họ tên: họ tên không duy nhất, hai khách cùng tên là gán nhầm đơn cho
+        // người khác mà không ai biết. `fullName` chỉ để HIỂN THỊ ở hộp chọn.
+        String khoa = (customerUsername == null || customerUsername.isBlank())
+                ? "khachhang" : customerUsername.trim();
+        User khach = userRepository.findByUsername(khoa)
+                .orElseGet(() -> {
+                    try {
+                        return userRepository.findById(Long.parseLong(khoa)).orElse(null);
+                    } catch (NumberFormatException e) {
+                        return null; // không phải số ⇒ chỉ có thể là username, đã tra ở trên
+                    }
+                });
+        if (khach == null) {
+            throw new com.ptit.smartlocker.exception.ResourceNotFoundException(
+                    "Không tìm thấy khách hàng có tài khoản hoặc mã '" + khoa + "' để gán cho đơn.");
+        }
+        if (!"CUSTOMER".equalsIgnoreCase(khach.getRole())) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Tài khoản '" + khoa + "' không phải khách hàng (vai trò: " + khach.getRole()
+                            + ") — không gán đơn được.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        String orderId = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+
+        Order don = Order.builder()
+                .orderId(orderId)
+                .customerName(khach.getFullName() != null ? khach.getFullName() : khoa)
+                .customerPhone(khach.getPhone() != null ? khach.getPhone() : "")
+                .deliveryType("LOCKER")
+                .locker(locker)
+                .compartment(ngan)
+                // Giữ đúng ngữ nghĩa của `OverdueSchedulerService`: đơn đã nằm trong tủ từ hôm kia và
+                // hạn lưu kho đã qua ⇒ chắc chắn quá hạn theo quy tắc 24h00 N+1.
+                .expectedDate(LocalDate.now().minusDays(3))
+                .depositedAt(now.minusDays(2))
+                .expiryDeadline(now.minusDays(1))
+                .status("OVERDUE")
+                .totalAmount(java.math.BigDecimal.ZERO)
+                .paymentMethod("ONLINE_VIETQR")
+                .paymentStatus("PAID")
+                .productName("Đơn quá hạn (tạo thử)")
+                .build();
+        orderRepository.save(don);
+
+        // Cấp mã nhận hàng như mọi đơn đã nạp: KHÔNG dùng lại `OrderService.generateRandomQrToken`
+        // (private) và KHÔNG sửa `OrderService` (ngoài phạm vi) — sinh cùng thuật toán ở đây.
+        PickupCredential cred = PickupCredential.builder()
+                .order(don)
+                .otpCode(sinhOtp6So())
+                .qrToken(sinhQrTokenDuyNhat())
+                .isUsed(false)
+                .failedAttempts(0)
+                // Đơn đã quá hạn nên mã cũng hết hạn — khách tra sẽ thấy "quá hạn", đúng phép thử (3).
+                .expiredAt(now.minusDays(1))
+                .build();
+        credentialRepository.save(cred);
+
+        ngan.setStatus("OCCUPIED");
+        compartmentRepository.save(ngan);
+
+        deviceEventRepository.save(DeviceEvent.builder()
+                .locker(locker)
+                .compartmentId(ngan.getCompartmentId())
+                .eventType("OVERDUE_ORDER_CREATED")
+                .eventPayload("Đơn quá hạn tạo thử " + orderId + " (ngăn " + ngan.getCompIndex()
+                        + ") — người tạo: " + (createdBy == null || createdBy.isBlank() ? "?" : createdBy))
+                .build());
+
+        return OrderDTO.OrderResponse.builder()
+                .orderId(don.getOrderId())
+                .customerName(don.getCustomerName())
+                .customerPhone(don.getCustomerPhone())
+                .deliveryType(don.getDeliveryType())
+                .lockerId(locker.getLockerId())
+                .lockerName(locker.getName())
+                .lockerAddress(locker.getAddress())
+                .compartmentIndex(ngan.getCompIndex())
+                .compartmentSize(ngan.getSize())
+                .expectedDate(don.getExpectedDate())
+                .depositedAt(don.getDepositedAt())
+                .expiryDeadline(don.getExpiryDeadline())
+                .status(don.getStatus())
+                .productName(don.getProductName())
+                .totalAmount(don.getTotalAmount())
+                .paymentMethod(don.getPaymentMethod())
+                .paymentStatus(don.getPaymentStatus())
+                .qrToken(cred.getQrToken())
+                .otpCode(cred.getOtpCode())
+                .otpExpiresAt(cred.getExpiredAt())
+                .createdAt(don.getCreatedAt())
+                .build();
+    }
+
+    /**
+     * GĐ51 — OTP 6 số ngẫu nhiên an toàn.
+     *
+     * <p>KHÔNG kiểm trùng ở đây: {@code findValidByLockerAndOtp} chỉ trả credential của đơn
+     * {@code DEPOSITED}, còn đơn tạo thử là {@code OVERDUE} ⇒ lọc đó luôn rỗng, kiểm cũng bằng không.
+     * Trùng OTP giữa hai đơn quá hạn không phải vấn đề: cửa nhận hàng chặn đơn {@code OVERDUE}
+     * trước khi so mã ({@code PickupService:388}), nên mã của đơn quá hạn không mở được tủ.
+     */
+    private String sinhOtp6So() {
+        java.security.SecureRandom rnd = new java.security.SecureRandom();
+        return String.format("%06d", rnd.nextInt(1_000_000));
+    }
+
+    /** GĐ51 — qrToken 32 byte ngẫu nhiên Base64URL, kiểm trùng như `OrderService`. */
+    private String sinhQrTokenDuyNhat() {
+        java.security.SecureRandom rnd = new java.security.SecureRandom();
+        for (int attempt = 0; attempt < 5; attempt++) {
+            byte[] bytes = new byte[32];
+            rnd.nextBytes(bytes);
+            String candidate = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+            if (credentialRepository.findByQrToken(candidate).isEmpty()) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Không sinh được qrToken duy nhất sau 5 lần thử");
     }
 
     /**
