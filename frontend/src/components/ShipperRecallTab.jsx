@@ -646,6 +646,67 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
 
         {/* PANE 2: RECALL WORKSPACE & REAL-TIME SENSORS (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
+          {/*
+            GĐ49c — THANH 4 BƯỚC THU HỒI, **CHỈ ĐỌC** state có sẵn (điều cấm #1):
+              • bước 1 "Chọn đơn quá hạn": chưa có `activeRecallOrder`
+              • bước 2 "Quét QR": đã chọn đơn nhưng `shipperVerified === false`
+              • bước 3 "Mở cửa ngăn": đã xác thực, chưa mở (`recallPhase` còn `IDLE`)
+              • bước 4 "Lấy hàng & đóng cửa": `DOOR_OPEN` / `PROCESSING` / `SUCCESS`
+            KHÔNG đổi điều kiện hiện nút mở ngăn của GĐ44 (điều cấm #3) và KHÔNG đổi nhịp poll
+            (điều cấm #4) — component này chỉ hiển thị.
+          */}
+          {(() => {
+            const buocThuHoi = !activeRecallOrder
+              ? 1
+              : !shipperVerified
+              ? 2
+              : (recallPhase === 'DOOR_OPEN' || recallPhase === 'PROCESSING' || recallPhase === 'SUCCESS')
+              ? 4
+              : 3;
+            const buoc = [
+              { n: 1, nhan: 'Chọn đơn quá hạn' },
+              { n: 2, nhan: 'Quét QR shipper' },
+              { n: 3, nhan: 'Mở cửa ngăn' },
+              { n: 4, nhan: 'Lấy hàng & đóng cửa' },
+            ];
+            return (
+              <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="recall-steps" data-buoc={buocThuHoi}>
+                {buoc.map((b) => {
+                  const xong = b.n < buocThuHoi;
+                  const dang = b.n === buocThuHoi;
+                  return (
+                    <li
+                      key={b.n}
+                      data-testid={`recall-step-${b.n}`}
+                      data-done={xong ? '1' : '0'}
+                      data-active={dang ? '1' : '0'}
+                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-[11px] font-semibold ${
+                        dang
+                          ? 'bg-rose-600 border-rose-600 text-white'
+                          : xong
+                          ? 'bg-white border-emerald-300 text-emerald-800'
+                          : 'bg-white border-slate-200 text-slate-600'
+                      }`}
+                    >
+                      <span
+                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                          dang
+                            ? 'bg-white text-rose-700'
+                            : xong
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-100 text-slate-600 border border-slate-300'
+                        }`}
+                      >
+                        {xong ? <Check className="w-3 h-3" /> : b.n}
+                      </span>
+                      <span className="truncate">{b.nhan}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            );
+          })()}
+
           {activeRecallOrder ? (
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-6 sm:p-8 shadow-xl space-y-6">
               {/* Active Recall Order Header */}
@@ -685,8 +746,9 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                       </p>
                     </div>
                   </div>
-                  <span className="text-xs bg-white/20 backdrop-blur-md font-mono px-3 py-1 rounded-xl border border-white/30 font-bold">
-                    Zero-Touch ✓
+                  {/* GĐ49c — BỎ "Zero-Touch" (thuật ngữ tiếng Anh không rõ nghĩa với người dùng). */}
+                  <span className="text-xs bg-white/20 font-mono px-3 py-1 rounded-xl border border-white/30 font-bold">
+                    Đã thu hồi ✓
                   </span>
                 </div>
               )}

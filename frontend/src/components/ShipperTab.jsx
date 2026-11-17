@@ -15,6 +15,63 @@ import {
   Shield, Volume2, Cpu, Clock, PlusCircle, Radio
 } from 'lucide-react';
 
+/**
+ * GĐ49c — THANH TIẾN TRÌNH 4 BƯỚC (CHỈ ĐỌC state có sẵn — điều cấm #1).
+ *
+ * <p><b>Vì sao chỉ đọc:</b> quy trình nạp đã có state máy trạng thái thật (`depositStep` 1..4 do
+ * tủ/firmware dẫn dắt, GĐ31b). Component này <b>không</b> đổi state, không gọi API, không thêm
+ * timer — nó chỉ HIỂN THỊ bước hiện tại để shipper biết mình đang ở đâu. Mọi logic giữ nguyên.
+ *
+ * <p><b>Bốn bước</b> (đúng nhãn nghiệp vụ, không phải trang trí):
+ * Chọn đơn → Quét QR shipper → Mở ngăn &amp; bỏ hàng → Đóng cửa xác nhận.
+ *
+ * @param buocHiệnTại 1..4
+ */
+function DepositSteps({ buocHienTai }) {
+  const buoc = [
+    { n: 1, nhan: 'Chọn đơn' },
+    { n: 2, nhan: 'Quét QR shipper' },
+    { n: 3, nhan: 'Mở ngăn & bỏ hàng' },
+    { n: 4, nhan: 'Đóng cửa xác nhận' },
+  ];
+  return (
+    <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="deposit-steps" data-buoc={buocHienTai}>
+      {buoc.map((b) => {
+        const xong = b.n < buocHienTai;
+        const dang = b.n === buocHienTai;
+        return (
+          <li
+            key={b.n}
+            data-testid={`deposit-step-${b.n}`}
+            data-done={xong ? '1' : '0'}
+            data-active={dang ? '1' : '0'}
+            className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-[11px] font-semibold ${
+              dang
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : xong
+                ? 'bg-white border-emerald-300 text-emerald-800'
+                : 'bg-white border-slate-200 text-slate-600'
+            }`}
+          >
+            <span
+              className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                dang
+                  ? 'bg-white text-blue-700'
+                  : xong
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-100 text-slate-600 border border-slate-300'
+              }`}
+            >
+              {xong ? <Check className="w-3 h-3" /> : b.n}
+            </span>
+            <span className="truncate">{b.nhan}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [orders, setOrders] = useState([]);
   const [allLockers, setAllLockers] = useState([]);
@@ -989,8 +1046,10 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
           </div>
           <div className="text-3xl font-extrabold text-rose-600 mt-1 font-mono flex items-center gap-1.5">
             <span>{overdueOrders.length}</span>
-            <span className="text-xs font-bold text-rose-600 bg-rose-50/80 px-2 py-0.5 rounded-full border border-rose-200">
-              Zero-Touch →
+            {/* GĐ49c — BỎ thuật ngữ "Zero-Touch" (tiếng Anh, hội đồng hỏi nghĩa). Đổi sang tiếng
+                Việt dễ hiểu; tương phản `text-rose-700` trên `bg-rose-50` đạt ≥4.5:1. */}
+            <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200 whitespace-nowrap">
+              Xem danh sách →
             </span>
           </div>
         </div>
@@ -1017,11 +1076,31 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         </button>
       </div>
 
+      {/* GĐ49c — THANH TIẾN TRÌNH 4 BƯỚC Ở ĐẦU KHU LÀM VIỆC.
+          CHỈ ĐỌC state có sẵn (điều cấm #1) — không đổi state, không gọi API, không timer.
+
+          ⚠ VÌ SAO KHÔNG DÙNG THẲNG `depositStep`: đo thật cho thấy `handleStartDepositProcess`
+          (nơi `setDepositStep(1)` + `setIsDepositing(true)`) **không được gọi ở đâu cả** sau GĐ17,
+          nên `depositStep` luôn = 1 dù shipper đã chọn đơn — thanh sẽ đứng nguyên bước 1 mãi.
+          Vì thế bước được SUY từ hai nguồn THẬT đang có:
+            • `activeOrder` — đã chọn đơn chưa;
+            • `kioskEvents` — sự kiện phần cứng đã báo (`SHIPPER_VERIFIED`, `ORDER_VALID`,
+              `COMPARTMENT_SELECTED`, `DEPOSIT_SUCCESS`), đúng nguồn mà thanh 3 bước GĐ38 dùng.
+          Đây là suy ra từ dữ liệu thật, không phải bịa tiến trình. */}
+      <DepositSteps
+        buocHienTai={(() => {
+          if (!activeOrder) return 1;                       // chưa chọn đơn
+          const co = (loai) => kioskEvents.some((e) => e.type === loai);
+          if (co('DEPOSIT_SUCCESS')) return 4;              // tủ đã chốt nạp xong
+          if (co('SHIPPER_VERIFIED') || co('ORDER_VALID') || co('COMPARTMENT_SELECTED')) return 3;
+          return 2;                                        // đã chọn đơn, chờ quét QR tại tủ
+        })()}
+      />
+
       {/* Main Workspace (Deposit Flow & Queue) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* PANE 1: PENDING ORDERS LIST (5 cols) */}
-        <div className="lg:col-span-5 space-y-3">
-          <div className="flex flex-wrap items-center justify-between px-1 gap-2">
+        <div className="lg:col-span-5 space-y-3">          <div className="flex flex-wrap items-center justify-between px-1 gap-2">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
               Hàng Chờ Nạp ({filteredPending.length})
             </span>
@@ -1673,10 +1752,15 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
               </div>
             </div>
           ) : (
-            <div className="bg-white rounded-3xl border border-slate-200/90 p-12 text-center">
-              <Package className="w-12 h-12 text-slate-300 mx-auto mb-2" />
-              <h4 className="font-bold text-slate-800 text-sm">Chưa chọn kiện hàng nào để nạp</h4>
-              <p className="text-xs text-slate-500 mt-1">Chọn đơn bên danh sách để kích hoạt quy trình nạp tủ 4 bước.</p>
+            /* GĐ49c — THU GỌN ô trống: trước đây `p-12` + icon 12 đơn vị chiếm gần nửa cột phải
+               trong khi chẳng có thông tin gì. Nay gọn + có hướng dẫn ngắn đúng 3 việc cần làm. */
+            <div className="bg-white rounded-xl border border-dashed border-slate-300 p-5 text-center">
+              <Package className="w-7 h-7 text-slate-300 mx-auto mb-1.5" />
+              <p className="font-semibold text-slate-800 text-xs">Chưa chọn kiện hàng nào để nạp</p>
+              <p className="text-[11px] text-slate-600 mt-1">
+                Chọn một đơn ở cột «Hàng Chờ Nạp» bên trái để bắt đầu: chọn đơn → quét mã QR shipper
+                tại tủ → bỏ kiện vào ngăn → đóng cửa để hệ thống xác nhận.
+              </p>
             </div>
           )}
         </div>
