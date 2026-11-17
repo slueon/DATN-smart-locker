@@ -620,15 +620,12 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
             <div className="flex items-center gap-2 mb-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
               <span className="text-xs font-mono font-bold text-blue-600 tracking-wider uppercase bg-blue-50/80 px-2.5 py-0.5 rounded-md border border-blue-200/60">
-                Bản Đồ Số • Leaflet GIS
+                Bản Đồ Số
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
               Bản Đồ Mạng Lưới Trạm Tủ
             </h1>
-            <p className="text-xs sm:text-sm text-slate-600 mt-1.5 max-w-2xl leading-relaxed">
-              Vị trí địa lý, sức chứa thực tế và trạng thái kết nối của mạng lưới trạm tủ thời gian thực.
-            </p>
           </div>
 
           <button

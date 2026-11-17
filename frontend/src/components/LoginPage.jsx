@@ -6,7 +6,7 @@ import BrandLogo from './BrandLogo';
 import {
   LogIn, UserPlus, Shield, Truck, User,
   AlertCircle, Eye, EyeOff, Lock, Phone,
-  CheckCircle2, Sparkles, ArrowRight, Cpu, Layers,
+  CheckCircle2, Sparkles, ArrowRight, Layers,
   ChevronRight, Activity
 } from 'lucide-react';
 
@@ -133,11 +133,6 @@ export default function LoginPage({ onLoginSuccess }) {
       <div className="w-full max-w-md relative z-10">
         {/* Brand Header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-slate-200 text-blue-700 text-xs font-semibold mb-3">
-            <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-            <span>Đồ Án Tốt Nghiệp IoT • PTIT 2026</span>
-          </div>
-
           <div className="flex items-center justify-center gap-2.5 mb-2">
             {/* GĐ52 — logo "ngăn tủ" (44px). Nền bo góc nằm trong SVG nên bỏ lớp `div` nền xanh. */}
             <BrandLogo className="w-11 h-11" />
@@ -145,9 +140,6 @@ export default function LoginPage({ onLoginSuccess }) {
               Smart<span className="text-blue-600">Locker</span>
             </h1>
           </div>
-          <p className="text-slate-600 text-xs">
-            Hệ thống tủ giao nhận hàng thông minh & bảo mật IoT Kiosk 24/7
-          </p>
         </div>
 
         {/* Card Container — GĐ49a: thẻ trắng viền rõ, không kính mờ */}
@@ -258,10 +250,9 @@ export default function LoginPage({ onLoginSuccess }) {
                   <div className="flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-blue-600" />
                     <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-                      Đăng Nhập Nhanh 1-Chạm (Tài Khoản Mẫu)
+                      Tài khoản mẫu
                     </p>
                   </div>
-                  <span className="text-[10px] text-slate-500 font-mono">BCrypt Demo</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -389,17 +380,6 @@ export default function LoginPage({ onLoginSuccess }) {
         </div>
 
         {/* High-Trust Security Badge — GĐ49a: `text-slate-600` để đạt ≥4.5:1 (slate-400 chỉ 2.4:1). */}
-        <div className="mt-6 flex items-center justify-center gap-4 text-xs text-slate-600">
-          <div className="flex items-center gap-1.5">
-            <Shield className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Mã hóa BCrypt & OTP 5 phút</span>
-          </div>
-          <span className="text-slate-400">•</span>
-          <div className="flex items-center gap-1.5">
-            <Cpu className="w-3.5 h-3.5 text-blue-600" />
-            <span>Xác thực cảm biến kép MC-38 & HX711</span>
-          </div>
-        </div>
       </div>
     </div>
   );

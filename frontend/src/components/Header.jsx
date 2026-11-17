@@ -5,8 +5,6 @@ import {
   AlertTriangle, CheckCircle2, Key, Info
 } from 'lucide-react';
 import { store } from '../services/store';
-import { lockerApi } from '../services/api';
-import { getLockerHealth } from '../utils/lockerHealth';
 
 export default function Header({
   activeTab,
@@ -16,57 +14,6 @@ export default function Header({
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [filterNotifType, setFilterNotifType] = useState('ALL');
-
-  /**
-   * GĐ49a (gộp GĐ48) — TRẠNG THÁI TRẠM THẬT thay cho chip "Online 14ms" gõ cứng.
-   *
-   * <p><b>Vì sao phải bỏ số gõ cứng:</b> `Online 14ms` trước đây là chuỗi JSX không đọc từ đâu,
-   * hiện ở MỌI vai trò kể cả khi tủ thật mất nhịp tim hàng giờ. Đó là số bịa trên màn hình mà
-   * hội đồng sẽ hỏi nguồn.
-   *
-   * <p><b>Nay:</b> đọc `/api/lockers` (endpoint mở cho cả 3 vai trò — CẤM gọi `/api/mqtt/status`
-   * vì 403 với khách/shipper) rồi suy trạng thái bằng `getLockerHealth` của GĐ12. Chỉ đếm tủ
-   * THẬT (`isVirtual === false`), vì 9/10 tủ là tủ ảo demo và hiện chúng là "mất kết nối" sẽ sai.
-   *
-   * <p>Chưa tải được / không có tủ thật → `null` ⇒ <b>bỏ hẳn chip</b>, không hiện số đoán.
-   */
-  const [station, setStation] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await lockerApi.getAll();
-        if (cancelled) return;
-        const list = res?.data?.data || [];
-        const real = list.filter((l) => l.isVirtual !== true);
-        if (real.length === 0) {
-          setStation(null);
-          return;
-        }
-        const fresh = real.filter((l) => getLockerHealth(l).tone === 'emerald').length;
-        // Lấy nhịp tim MỚI NHẤT trong các tủ thật để nói "cập nhật lúc nào".
-        const newest = real
-          .map((l) => (l.lastHeartbeat ? new Date(l.lastHeartbeat).getTime() : 0))
-          .reduce((a, b) => Math.max(a, b), 0);
-        setStation({
-          total: real.length,
-          fresh,
-          rel: newest > 0 ? getLockerHealth({ lastHeartbeat: new Date(newest).toISOString() }).rel : null,
-          allFresh: fresh === real.length,
-        });
-      } catch {
-        if (!cancelled) setStation(null); // lỗi mạng: KHÔNG hiện số đoán
-      }
-    };
-    load();
-    // Nhịp 60 s là đủ: nhịp tim tủ thật ~5 s/lần, nhưng chip chỉ cần "còn tươi hay không".
-    const timer = setInterval(load, 60000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
 
   useEffect(() => {
     if (currentUser) {
@@ -146,7 +93,7 @@ export default function Header({
 
   return (
     <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30 select-none">
-      {/* Breadcrumb Path & Station Pill */}
+      {/* Breadcrumb Path */}
       <div className="flex items-center gap-3 text-xs min-w-0">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-slate-500 hidden sm:inline font-medium">{breadcrumb.category}</span>
@@ -154,28 +101,6 @@ export default function Header({
           <span className="font-semibold text-slate-900 truncate">{breadcrumb.title}</span>
         </div>
 
-        {/* GĐ49a — TRẠNG THÁI TRẠM THẬT (thay chip "Online 14ms" gõ cứng).
-            Không tải được hoặc không có tủ thật ⇒ KHÔNG render gì (không bịa số). */}
-        {station && (
-          <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-50 border border-slate-200 text-[11px] text-slate-600 font-medium">
-            <span className={`w-2 h-2 rounded-full ${
-              station.allFresh ? 'bg-emerald-500' : 'bg-amber-500'
-            }`} />
-            <span className="font-semibold text-slate-800">
-              Trạm thật: {station.fresh}/{station.total} trực tuyến
-            </span>
-            {station.rel && (
-              <>
-                <span className="text-slate-300">|</span>
-                <span className={`font-mono font-semibold ${
-                  station.allFresh ? 'text-emerald-700' : 'text-amber-700'
-                }`}>
-                  nhịp tim {station.rel}
-                </span>
-              </>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Right Command Actions */}

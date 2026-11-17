@@ -432,9 +432,6 @@ export default function AdminTab() {
             <Shield className="w-6 h-6 text-purple-600" />
             Bảng Điều Khiển KPI & Giám Sát Vận Hành
           </h1>
-          <p className="text-xs text-slate-600 mt-0.5">
-            Trung tâm kiểm soát hiệu suất tủ, ma trận ngăn vật lý thời gian thực và điều phối vận hành.
-          </p>
         </div>
       </div>
 
@@ -475,9 +472,7 @@ export default function AdminTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md relative overflow-hidden">
               <div className="flex justify-between items-center text-xs font-bold text-slate-600 uppercase tracking-wider">
-                <span>Tỷ lệ lấp đầy tủ</span>
-                <span className="text-blue-600 font-mono text-[10px] bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 font-bold">Real-time</span>
-              </div>
+                <span>Tỷ lệ lấp đầy tủ</span>              </div>
               <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
                 {kpi.occupancyRate}%
               </div>
@@ -548,9 +543,7 @@ export default function AdminTab() {
               chữ đậm hơn; nhóm demo nằm dưới, có ghi rõ "không có thiết bị". */}
           <div className="liquid-glass-card rounded-3xl border border-white/80 p-6 sm:p-7 shadow-lg space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm">Tỷ lệ lấp đầy theo trạm</h3>
-              <span className="text-xs text-slate-600 font-mono">Cập nhật thời gian thực</span>
-            </div>
+              <h3 className="font-bold text-slate-900 text-sm">Tỷ lệ lấp đầy theo trạm</h3>            </div>
             {[
               {
                 key: 'real',

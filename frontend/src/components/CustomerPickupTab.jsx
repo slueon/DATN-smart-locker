@@ -1002,9 +1002,6 @@ export default function CustomerPickupTab({ currentUser }) {
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-8 text-center" data-testid="waiting-empty">
               <Package className="w-9 h-9 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-800">Chưa có bưu kiện nào về tủ</p>
-              <p className="text-xs text-slate-600 mt-1">
-                Khi shipper nạp kiện vào tủ, kiện hàng sẽ hiện ở đây kèm mã QR và OTP để bạn mở tủ.
-              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1155,7 +1152,6 @@ export default function CustomerPickupTab({ currentUser }) {
             <Clock className="w-4 h-4 text-slate-600" />
             Lịch sử đơn
           </h2>
-          <span className="text-[11px] text-slate-600">{filteredOrders.length} đơn</span>
         </div>
 
         {/* Search & Filter Toolbar */}
@@ -1603,9 +1599,7 @@ export default function CustomerPickupTab({ currentUser }) {
 
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-3 text-xs text-slate-700 text-left space-y-1 mb-4">
               <p><strong>Trạm tủ:</strong> {qrModalOrder.lockerName}</p>
-              <p><strong>Vị trí:</strong> Ngăn #{qrModalOrder.compartmentIndex}</p>
-              <p className="text-[11px] text-slate-500">Đưa mã QR này vào trước camera GM65 của tủ để mở chốt.</p>
-            </div>
+              <p><strong>Vị trí:</strong> Ngăn #{qrModalOrder.compartmentIndex}</p>            </div>
 
             <div className="flex gap-2">
               <button

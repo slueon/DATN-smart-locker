@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Lock, Unlock, DoorOpen, Weight, Layers, ShieldCheck,
-  AlertTriangle, CheckCircle2, Box, Cpu, Wifi
+  AlertTriangle, CheckCircle2, Box
 } from 'lucide-react';
 
 /**
@@ -21,7 +21,7 @@ export default function LockerCabinetVisualizer({
   // hai con số không đọc từ đâu, và `1883` SAI SỰ THẬT (hệ thống dùng TLS 8883).
   // Shape: { isVirtual: boolean, lastHeartbeat: string|null, health: {tone, rel, key} } | null.
   // `null` = caller chưa đọc được ⇒ hiện "Chưa có dữ liệu", TUYỆT ĐỐI không bịa số.
-  telemetry = null,
+  telemetry: _telemetry = null,
   compact = false
 }) {
   // Dữ liệu ngăn tủ mặc định nếu không truyền từ store (Hệ thống chuẩn 2 ngăn: Nhỏ & Lớn)
@@ -71,61 +71,6 @@ export default function LockerCabinetVisualizer({
           </div>
         </div>
 
-        {/* Real-time Telemetry Status Pill — GĐ40: dữ liệu THẬT, không hard-code.
-            Trước GĐ40 khối này ghi cứng `ESP32 12ms` + `MQTT 1883`: không đọc từ đâu, và `1883`
-            sai sự thật vì backend dùng TLS `8883`. Bốn trường hợp:
-              • tủ ảo              → "Tủ demo — không có thiết bị" (KHÔNG hiện "mất kết nối")
-              • tủ thật, hb = null → "Chưa từng gửi nhịp tim"
-              • tủ thật, còn sống  → "MQTT 8883 TLS" + "Nhịp tim N phút trước" (xanh)
-              • tủ thật, hb cũ     → như trên nhưng VÀNG
-              • telemetry = null   → "Chưa có dữ liệu" (KHÔNG bịa số) */}
-        <div
-          data-testid="locker-telemetry"
-          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-mono shadow-2xs"
-        >
-          {(() => {
-            if (!telemetry) {
-              return (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-slate-500" />
-                  {/* GĐ49b — `text-slate-500` trên nền `slate-100` chỉ 2.98:1; đổi `slate-700` (≥4.5:1). */}
-                  <span className="font-semibold text-slate-700">Chưa có dữ liệu</span>
-                </>
-              );
-            }
-            if (telemetry.isVirtual === true) {
-              return (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-slate-500" />
-                  <span className="font-semibold text-slate-700">Tủ demo — không có thiết bị</span>
-                </>
-              );
-            }
-            if (!telemetry.lastHeartbeat) {
-              return (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-slate-500" />
-                  <span className="font-semibold text-slate-700">Chưa từng gửi nhịp tim</span>
-                </>
-              );
-            }
-            const conSong = (telemetry.health?.tone || '') === 'emerald';
-            return (
-              <>
-                <span className={`w-2 h-2 rounded-full ${conSong
-                  ? 'bg-emerald-500 animate-pulse'
-                  : 'bg-amber-500'}`} />
-                <span className="font-semibold">MQTT 8883 TLS</span>
-                <span className="text-slate-400">•</span>
-                {/* GĐ49b — chữ vàng `text-amber-600` trên nền `slate-100` chỉ ~3.0:1; dùng
-                    `text-amber-700` (≥4.5:1), giữ nguyên màu xanh cho ca tươi. */}
-                <span className={`font-bold ${conSong ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  Nhịp tim {(telemetry.health?.rel || '').replace('chưa từng gửi', '—')}
-                </span>
-              </>
-            );
-          })()}
-        </div>
       </div>
 
       {/* Compartment Rack Grid — GĐ18: bỏ phân biệt size, 2 ngăn dùng như nhau */}
@@ -228,9 +173,6 @@ export default function LockerCabinetVisualizer({
                       <div className="min-w-0">
                         <span className="text-xs font-bold block text-slate-900 whitespace-nowrap">
                           {isOpen ? 'Cửa Đang Mở' : 'Cửa Đang Khóa'}
-                        </span>
-                        <span className="text-[10px] text-slate-600 font-medium whitespace-nowrap">
-                          {isOpen ? 'Sẵn sàng nạp/lấy hàng' : 'Chốt khóa an toàn'}
                         </span>
                       </div>
                     </div>

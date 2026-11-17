@@ -1059,11 +1059,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       <div className="liquid-glass-card border border-amber-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm bg-gradient-to-r from-amber-50/80 via-orange-50/40 to-amber-50/80">
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-amber-900 text-xs font-bold uppercase tracking-wide">
-            <ShieldCheck className="w-4 h-4 text-amber-700" /> Xác thực danh tính Shipper tại Kiosk
+            <ShieldCheck className="w-4 h-4 text-amber-700" /> Xác thực danh tính Shipper
           </div>
-          <p className="text-xs text-slate-600 max-w-xl leading-relaxed">
-            Quét mã QR tại trạm tủ để cấp quyền nạp kiện hàng.
-          </p>
         </div>
 
         <button
@@ -1248,17 +1245,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   <h3 className="text-base font-bold text-slate-900 mt-1.5">
                     {activeOrder.productName}
                   </h3>
-                </div>
-
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-400 block font-semibold">Vị trí ngăn chỉ định</span>
-                  <span className={`font-extrabold text-sm ${activeOrder.lockerId ? 'text-blue-600' : 'text-amber-600'}`}>
-                    {activeOrder.lockerId
-                      // GĐ18 — bỏ "(Size …)": mọi ngăn đều nhận được mọi kiện nên cỡ không còn
-                      // là thông tin quyết định; hiện ra chỉ khiến shipper tưởng phải chọn tủ khác.
-                      ? `Ngăn #${activeOrder.compartmentIndex}`
-                      : 'Chưa gán tủ'}
-                  </span>
                 </div>
               </div>
 
@@ -1791,14 +1777,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
             </div>
 
             {/* GĐ15 — KHÔNG còn đếm ngược. Mã QR shipper là VĨNH VIỄN (user chốt). */}
-            <div className="my-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-800 flex items-center justify-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-              <span>Mã QR cố định — dùng được nhiều lần, không cần tạo lại</span>
-            </div>
-
-            <p className="text-[11px] text-slate-500 mb-4 px-2">
-              Đưa mã QR này trước camera GM65 của tủ để mở khóa quyền nạp hàng.
-            </p>
+            <div className="mb-4" />
 
             <button
               onClick={() => setShowQrModal(false)}

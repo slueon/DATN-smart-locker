@@ -624,9 +624,6 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
           <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900">
             Thu Hồi Hàng Quá Hạn
           </h2>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Thu hồi hàng quá hạn 24h để giải phóng ngăn tủ phục vụ đơn mới.
-          </p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center gap-4 shrink-0">
@@ -903,14 +900,6 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                     {activeRecallOrder.productName}
                   </h3>
                 </div>
-
-                <div className="text-right bg-white/60 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-white/80 shadow-2xs">
-                  <span className="text-[10px] text-slate-500 block font-semibold">Vị trí ngăn tủ</span>
-                  <span className="text-rose-600 font-extrabold text-sm">
-                    {/* GĐ19 — bỏ cỡ ngăn, xem ghi chú phía trên. */}
-                    Ngăn #{activeRecallOrder.compartmentIndex}
-                  </span>
-                </div>
               </div>
 
               {/* Success Notification Banner */}
@@ -950,9 +939,6 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-bold text-slate-800 uppercase tracking-wider">
                     Bảng Điều Khiển Thu Hồi 1-Chạm
-                  </span>
-                  <span className="text-slate-500 font-mono text-[11px] bg-white/60 px-2 py-0.5 rounded-md border border-white/80">
-                    Phase: {recallPhase}
                   </span>
                 </div>
 
@@ -1087,13 +1073,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
 
             {/* GĐ41 — BỎ vòng đếm ngược 60 giây. Mã QR shipper là mã CỐ ĐỊNH (GĐ33) nên đếm ngược
                 vừa sai sự thật vừa khiến shipper tưởng phải tạo lại mã. Thay bằng khối nói rõ. */}
-            <div className="my-2 p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
-              Mã QR cố định — dùng được nhiều lần, không cần tạo lại
-            </div>
-
-            <p className="text-[11px] text-slate-500 mb-5 px-2">
-              Đưa mã QR này trước camera GM65 của tủ để mở khóa quyền thu hồi.
-            </p>
+            <div className="mb-5" />
 
             <button
               onClick={() => setShowQrModal(false)}
