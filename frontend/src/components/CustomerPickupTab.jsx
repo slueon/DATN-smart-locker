@@ -463,7 +463,16 @@ export default function CustomerPickupTab({ currentUser }) {
     } catch (e) {}
   };
 
+  /**
+   * GĐ49b — LỌC MẶC ĐỊNH **ẨN ĐƠN ĐÃ HUỶ**.
+   *
+   * <p><b>Vì sao:</b> trước GĐ49b mặc định là `ALL` nên danh sách 13 đơn phần lớn là "Đơn đã huỷ" —
+   * khách phải tự lọc mới thấy đơn thật sự cần nhận. Nay tab "Tất cả" ẩn `CANCELLED`;
+   * bộ lọc "Đơn đã huỷ" vẫn xem được (điều cấm #4: KHÔNG bỏ bộ lọc, chỉ đổi mặc định + thêm tab).
+   */
   const filteredOrders = orders.filter((o) => {
+    if (filterStatus === 'CANCELLED') return o.status === 'CANCELLED';
+    if (o.status === 'CANCELLED') return false;      // mặc định (và mọi tab khác) ẩn đơn huỷ
     if (filterStatus !== 'ALL' && o.status !== filterStatus) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -475,7 +484,24 @@ export default function CustomerPickupTab({ currentUser }) {
     return true;
   });
 
+  /**
+   * GĐ49b — "BƯU KIỆN ĐANG CHỜ BẠN": các đơn ĐANG NẰM TRONG TỦ, chờ khách tới lấy.
+   *
+   * <p>Chỉ 2 trạng thái: `DEPOSITED` (hàng đã vào ngăn) và `PICKUP_OPENED` (khách đã mở cửa nhưng
+   * cảm biến CHƯA chốt là hàng đã ra — GĐ31a). Đây là định nghĩa "đang chờ", không phải `PENDING`
+   * (đơn chưa được nạp thì khách chưa làm gì được).
+   */
+  const donDangCho = orders.filter(
+    (o) => o.status === 'DEPOSITED' || o.status === 'PICKUP_OPENED',
+  );
+
   const selectedOrder = orders.find((o) => o.orderId === selectedOrderId) || filteredOrders[0] || null;
+
+  /**
+   * GĐ49b — đơn dùng cho KHỐI TRUNG TÂM + SƠ ĐỒ TỦ: ưu tiên đơn đang chờ, nếu không có thì đơn
+   * đang chọn trong lịch sử. Nhờ vậy sơ đồ tủ luôn có chủ thể ngay màn đầu, không phải cuộn.
+   */
+  const donTrungTam = donDangCho[0] || selectedOrder || null;
 
   // GĐ5 — đọc cảm biến của ngăn chứa đơn đang xem, để hiển thị đúng cân nặng thật.
   // Chỉ đọc khi đơn đã có ngăn; đơn chưa nạp tủ thì không có gì để đọc.
@@ -618,7 +644,17 @@ export default function CustomerPickupTab({ currentUser }) {
     const conChoChot = orderId && daThayTrongTuRef.current.has(orderId);
 
     if (!lockerId) return undefined;
-    if (orderStatus !== 'DEPOSITED' && orderStatus !== 'PICKUP_OPENED' && !conChoChot) return undefined;
+    /**
+     * GĐ49b — POLL CẢ KHI ĐƠN CÒN `PENDING`.
+     *
+     * <p><b>Vì sao mở rộng:</b> trước GĐ49b poll chỉ chạy khi đơn đã `DEPOSITED`/`PICKUP_OPENED`.
+     * Nhưng khối "Bưu kiện đang chờ bạn" lại CẦN biết đúng lúc đơn vừa được nạp — mà lúc đó đơn
+     * còn `PENDING` trên UI nên poll đang TẮT, và khách phải F5 mới thấy kiện của mình (chính là
+     * lỗi GĐ42 quay lại ở giao diện mới). Nay poll cả `PENDING`; nhịp vẫn **1,5 giây** và dùng
+     * CHUNG `kioskSeq` (điều cấm #1: không tạo nhịp mới, không đổi API).
+     */
+    const TRANG_THAI_POLL = ['PENDING', 'PENDING_OPENED', 'DEPOSITED', 'PICKUP_OPENED'];
+    if (!TRANG_THAI_POLL.includes(orderStatus) && !conChoChot) return undefined;
 
     let cancelled = false;
 
@@ -736,6 +772,35 @@ export default function CustomerPickupTab({ currentUser }) {
               || `Cửa đã đóng nhưng kiện hàng vẫn trong tủ${lbOrder?.compartmentIndex != null
                 ? ` ngăn #${lbOrder.compartmentIndex}` : ''}. Bấm để mở lại.`,
             phone: lbOrder?.customerPhone || currentUser?.phone,
+            isRead: false,
+          });
+        }
+
+        // GĐ49b — KIỆN VỪA ĐƯỢC NẠP VÀO TỦ (`DEPOSIT_SUCCESS`).
+        //
+        // Trước GĐ49b chỉ TAB SHIPPER đọc sự kiện này; tab khách không đọc nên khối "Bưu kiện đang
+        // chờ bạn" chỉ cập nhật ở nhịp tải trang kế tiếp ⇒ khách phải F5 (đúng lỗi GĐ42 ở giao diện
+        // mới). Nay khách đọc: `loadOrders()` để đơn chuyển `PENDING` → `DEPOSITED`, thẻ xuất hiện
+        // trong khối trung tâm, + thông báo qua chuông (không popup — GĐ26: không tự bật popup).
+        const vuaNap = [...events]
+          .reverse()
+          .find((e) => e.type === 'DEPOSIT_SUCCESS'
+            && (!e.lockerId || e.lockerId === lockerId)
+            && !processedKioskSeqRef.current.has(e.seq));
+
+        if (vuaNap) {
+          processedKioskSeqRef.current.add(vuaNap.seq);
+          const napOrderId = vuaNap.orderId || null;
+          await loadOrders();
+          store.addNotification({
+            type: 'DEPOSIT_SUCCESS',
+            orderId: napOrderId,
+            method: 'qr',
+            title: 'Bưu kiện đã về tủ',
+            message: vuaNap.message
+              || `Kiện hàng đã được nạp vào tủ${vuaNap.compartment != null
+                ? ` ngăn #${vuaNap.compartment}` : ''}. Bấm để xem mã QR/OTP mở tủ.`,
+            phone: currentUser?.phone,
             isRead: false,
           });
         }
@@ -878,100 +943,270 @@ export default function CustomerPickupTab({ currentUser }) {
         </div>
       )}
 
-      {/* Top Stats Banner (Apple Liquid Glass Bento Grid) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
-            <span className="uppercase tracking-wider">Tổng bưu kiện</span>
-            <div className="w-8 h-8 rounded-2xl bg-blue-500/15 text-blue-600 flex items-center justify-center font-bold">
-              <Package className="w-4 h-4" />
+      {/* GĐ49b — 4 KPI THU GỌN thành 1 hàng nhỏ (trước: 4 thẻ lớn chiếm gần 1/3 màn đầu).
+          Nội dung + số liệu GIỮ NGUYÊN (không đổi logic đếm). */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        {[
+          { label: 'Tổng bưu kiện', value: orders.length, icon: Package, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
+          { label: 'Sẵn sàng mở tủ', value: orders.filter((o) => o.status === 'DEPOSITED').length, icon: CheckCircle2, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+          { label: 'Chờ shipper nạp', value: orders.filter((o) => o.status === 'PENDING').length, icon: Clock, tone: 'text-amber-800 bg-amber-50 border-amber-200' },
+          { label: 'Đã hoàn thành', value: orders.filter((o) => o.status === 'COMPLETED').length, icon: ShieldCheck, tone: 'text-slate-700 bg-slate-100 border-slate-200' },
+        ].map((k) => {
+          const Icon = k.icon;
+          return (
+            <div key={k.label} className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider block truncate">
+                  {k.label}
+                </span>
+                <span className="text-xl font-bold text-slate-900 font-mono leading-tight">
+                  <CountUp value={k.value} />
+                </span>
+              </div>
+              <span className={`w-7 h-7 rounded-lg border flex items-center justify-center shrink-0 ${k.tone}`}>
+                <Icon className="w-3.5 h-3.5" />
+              </span>
             </div>
-          </div>
-          <div className="text-3xl font-extrabold text-slate-900 font-mono"><CountUp value={orders.length} /></div>
-        </div>
-
-        <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
-          <div className="flex items-center justify-between text-xs text-emerald-700 font-semibold">
-            <span className="uppercase tracking-wider">Sẵn sàng mở tủ</span>
-            <div className="w-8 h-8 rounded-2xl bg-emerald-500/15 text-emerald-600 flex items-center justify-center font-bold">
-              <CheckCircle2 className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-3xl font-extrabold text-emerald-600 font-mono">
-            <CountUp value={orders.filter((o) => o.status === 'DEPOSITED').length} />
-          </div>
-        </div>
-
-        <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
-          <div className="flex items-center justify-between text-xs text-amber-700 font-semibold">
-            <span className="uppercase tracking-wider">Chờ shipper nạp</span>
-            <div className="w-8 h-8 rounded-2xl bg-amber-500/15 text-amber-600 flex items-center justify-center font-bold">
-              <Clock className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-3xl font-extrabold text-amber-600 font-mono">
-            <CountUp value={orders.filter((o) => o.status === 'PENDING').length} />
-          </div>
-        </div>
-
-        <div className="liquid-glass-card p-5 rounded-3xl border border-white/80 shadow-lg space-y-1">
-          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
-            <span className="uppercase tracking-wider">Đã hoàn thành</span>
-            <div className="w-8 h-8 rounded-2xl bg-slate-500/15 text-slate-600 flex items-center justify-center font-bold">
-              <ShieldCheck className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-3xl font-extrabold text-slate-700 font-mono">
-            <CountUp value={orders.filter((o) => o.status === 'COMPLETED').length} />
-          </div>
-        </div>
+          );
+        })}
       </div>
 
-      {/* Search & Filter Toolbar (Apple Liquid Glass) */}
-      <div className="liquid-glass-card p-3.5 rounded-3xl border border-white/80 shadow-md flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="relative flex-1 w-full sm:w-auto">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Tìm theo mã đơn (ORD-...), tên sản phẩm, trạm tủ..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-11 pr-4 py-2.5 liquid-glass-subtle hover:bg-white/70 focus:bg-white/80 border border-white/80 text-slate-900 placeholder:text-slate-400 text-xs rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-500/15 focus:border-blue-500 transition font-medium"
-          />
-        </div>
-
-        <div className="ios-segmented-tray flex flex-wrap gap-1 w-full sm:w-auto shadow-2xs">
-          {[
-            { id: 'ALL', label: 'Tất cả' },
-            { id: 'DEPOSITED', label: 'Hàng đã về tủ' },
-            { id: 'PENDING', label: 'Chờ giao' },
-            { id: 'COMPLETED', label: 'Đã nhận' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setFilterStatus(tab.id)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                filterStatus === tab.id
-                  ? 'bg-white text-slate-900 shadow-sm border border-black/[0.04]'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/40'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* MASTER-DETAIL WORKSPACE (Two-Pane Architecture) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* PANE 1: MASTER LIST (5 Columns) */}
-        <div className="lg:col-span-5 space-y-2.5">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Danh sách đơn ({filteredOrders.length})
-            </span>
-            <span className="text-[11px] text-slate-400">Chọn đơn để tra cứu</span>
+      {/* ═══════════════════════════════════════════════════════════════════════
+          GĐ49b — TRUNG TÂM: "BƯU KIỆN ĐANG CHỜ BẠN" + SƠ ĐỒ TỦ NGAY CẠNH
+          Trước: danh sách 13 đơn (phần lớn "Đơn đã huỷ") chiếm cột trái, sơ đồ tủ nằm CUỐI cột
+          phải nên phải cuộn mới thấy. Nay khối này ở đầu trang, sơ đồ cùng hàng (desktop) hoặc
+          ngay dưới (mobile) — đúng yêu cầu user.
+          ═══════════════════════════════════════════════════════════════════════ */}
+      <section aria-label="Bưu kiện đang chờ bạn" className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        {/* (A) Danh sách đơn ĐANG CHỜ — thẻ lớn, dùng LẠI handler QR/OTP hiện có. */}
+        <div className="lg:col-span-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Package className="w-4 h-4 text-blue-600" />
+              Bưu kiện đang chờ bạn
+              {donDangCho.length > 0 && (
+                <span className="text-[11px] font-bold text-white bg-blue-600 px-2 py-0.5 rounded-full">
+                  {donDangCho.length}
+                </span>
+              )}
+            </h2>
           </div>
+
+          {loadingOrders ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-6 animate-pulse" data-testid="waiting-skeleton">
+              <div className="h-4 w-40 rounded bg-slate-200 mb-3" />
+              <div className="h-3 w-2/3 rounded bg-slate-200" />
+            </div>
+          ) : donDangCho.length === 0 ? (
+            /* Trạng thái TRỐNG rõ ràng (phép thử #4) */
+            <div className="bg-white border border-dashed border-slate-300 rounded-xl p-8 text-center" data-testid="waiting-empty">
+              <Package className="w-9 h-9 text-slate-300 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-slate-800">Chưa có bưu kiện nào về tủ</p>
+              <p className="text-xs text-slate-600 mt-1">
+                Khi shipper nạp kiện vào tủ, kiện hàng sẽ hiện ở đây kèm mã QR và OTP để bạn mở tủ.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {donDangCho.map((ord) => {
+                const conHan = calculateRemainingTime(ord.expiryDeadline);
+                return (
+                  <div
+                    key={ord.orderId}
+                    data-testid={`waiting-order-${ord.orderId}`}
+                    className="bg-white border-2 border-blue-200 rounded-xl p-4 shadow-sm space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="font-mono text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                          {ord.orderId}
+                        </span>
+                        <h3 className="text-sm font-bold text-slate-900 mt-1.5 truncate">
+                          {ord.productName || 'Bưu kiện Smart Locker'}
+                        </h3>
+                        <p className="text-[11px] text-slate-600 flex items-center gap-1 mt-0.5">
+                          <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                          {ord.lockerName || 'Tủ KTX A1'} · Ngăn #{ord.compartmentIndex}
+                        </p>
+                      </div>
+                      {getStatusBadge(ord.status)}
+                    </div>
+
+                    {/* Hạn lưu kho đếm ngược — dùng LẠI `calculateRemainingTime` (không logic mới). */}
+                    <div className={`px-3 py-2 rounded-lg border text-[11px] font-semibold flex items-center justify-between ${
+                      conHan.isOverdue
+                        ? 'bg-rose-50 border-rose-200 text-rose-800'
+                        : conHan.color === 'rose'
+                        ? 'bg-rose-50 border-rose-200 text-rose-800'
+                        : conHan.color === 'amber'
+                        ? 'bg-amber-50 border-amber-200 text-amber-900'
+                        : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    }`}>
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        Hạn lưu kho
+                      </span>
+                      <span className="font-mono">{conHan.label}</span>
+                    </div>
+
+                    {/* 2 nút QR / OTP — DÙNG LẠI NGUYÊN handler hiện có (điều cấm #1). */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <button
+                        onClick={() => handleOpenQrModal(ord)}
+                        className="ios-btn px-3 py-3 rounded-lg border-2 border-blue-600 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <QrCode className="w-4 h-4" />
+                        <span>Mã QR Nhận Hàng</span>
+                      </button>
+                      <button
+                        onClick={() => handleGenerateOtp(ord)}
+                        disabled={generatingOtpId === ord.orderId}
+                        className="ios-btn px-3 py-3 rounded-lg border-2 border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        <Key className="w-4 h-4 text-blue-600" />
+                        <span>
+                          {generatingOtpId === ord.orderId ? 'Đang tạo OTP...' : 'Tạo Mã OTP (5 phút)'}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Nếu OTP đã có: hiện luôn mã + nút phóng to / đổi mã (tái dùng handler). */}
+                    {(() => {
+                      const st = getOtpStatus(ord);
+                      if (!st.isGenerated || st.isExpired) return null;
+                      return (
+                        <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                          <span className="font-mono text-lg font-bold text-blue-700 tracking-widest">
+                            {ord.otpCode}
+                          </span>
+                          <span className="text-[11px] font-mono font-semibold text-slate-700">
+                            còn {formatSeconds(st.remainingSeconds)}
+                          </span>
+                          <button
+                            onClick={() => setOtpModalOrder(ord)}
+                            className="text-[11px] font-bold text-blue-700 hover:underline cursor-pointer"
+                          >
+                            Phóng to
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* (B) SƠ ĐỒ TỦ — NGAY CẠNH khối trên (desktop) / ngay dưới (mobile).
+            GĐ39 giữ nguyên cách chọn số ngăn; ở đây chỉ DI CHUYỂN khối + dùng chung
+            `donTrungTam` để sơ đồ luôn có đơn hiển thị ngay màn đầu. */}
+        <div className="lg:col-span-6 space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-slate-900">Sơ đồ ngăn tủ</h2>
+            {donTrungTam && (
+              <span className="text-[11px] font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                Ngăn #{donTrungTam.compartmentIndex || 2}
+              </span>
+            )}
+          </div>
+
+          {donTrungTam ? (
+            <LockerCabinetVisualizer
+              lockerName={donTrungTam.lockerName || 'Trạm Tủ KTX A1'}
+              lockerId={donTrungTam.lockerId || 'LOCKER_HN_01'}
+              activeSlotId={donTrungTam.compartmentIndex || 2}
+              // GĐ39 (ĐIỀU CẤM #2) — SỐ NGĂN THEO TRẠNG THÁI ĐƠN, giữ NGUYÊN logic:
+              //   • Đơn CHƯA nạp (mọi trạng thái ngoài 3 cái dưới) → hiện ĐỦ 2 ngăn.
+              //   • Đơn ĐÃ nạp (`DEPOSITED`/`PICKUP_OPENED`/`COMPLETED`) → chỉ ngăn chứa đơn.
+              compartments={(() => {
+                if (!compartmentsDayDu) return null;
+                const DA_NAP = ['DEPOSITED', 'PICKUP_OPENED', 'COMPLETED'];
+                if (!DA_NAP.includes(donTrungTam.status)) return compartmentsDayDu;
+                const cuaDon = donTrungTam.compartmentIndex;
+                const loc = compartmentsDayDu.filter((c) => c.id === cuaDon);
+                return loc.length ? loc : compartmentsDayDu;
+              })()}
+              telemetry={lockerTelemetry}
+              doorState={compartmentSensor?.isDoorClosed != null
+                ? (compartmentSensor.isDoorClosed ? 'CLOSED' : 'OPEN')
+                : 'CLOSED'}
+              sensorWeight={compartmentSensor?.currentWeight != null
+                ? Number(compartmentSensor.currentWeight) / 1000
+                : 0}
+              compact={true}
+            />
+          ) : (
+            <div className="bg-white border border-dashed border-slate-300 rounded-xl p-8 text-center">
+              <Layers className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="text-xs text-slate-600 font-medium">Chưa có đơn để hiện sơ đồ tủ</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ═══════════════════════════════════════════════════════════════════════
+          GĐ49b — "LỊCH SỬ ĐƠN" (danh sách đầy đủ, đã đưa XUỐNG DƯỚI khối trung tâm)
+          Bộ lọc GIỮ NGUYÊN (điều cấm #4), chỉ thêm tab "Đơn đã huỷ" + đổi mặc định ẩn huỷ.
+          ═══════════════════════════════════════════════════════════════════════ */}
+      <section aria-label="Lịch sử đơn" className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Clock className="w-4 h-4 text-slate-600" />
+            Lịch sử đơn
+          </h2>
+          <span className="text-[11px] text-slate-600">{filteredOrders.length} đơn</span>
+        </div>
+
+        {/* Search & Filter Toolbar */}
+        <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="relative flex-1 w-full sm:w-auto">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Tìm theo mã đơn (ORD-...), tên sản phẩm, trạm tủ..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 text-slate-900 placeholder:text-slate-500 text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition font-medium"
+            />
+          </div>
+
+          <div className="ios-segmented-tray flex flex-wrap gap-1 w-full sm:w-auto">
+            {[
+              { id: 'ALL', label: 'Tất cả' },
+              { id: 'DEPOSITED', label: 'Hàng đã về tủ' },
+              { id: 'PENDING', label: 'Chờ giao' },
+              { id: 'COMPLETED', label: 'Đã nhận' },
+              // GĐ49b — tab MỚI: đơn huỷ bị ẩn mặc định nên phải có đường xem lại (điều cấm #4).
+              { id: 'CANCELLED', label: 'Đơn đã huỷ' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setFilterStatus(tab.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  filterStatus === tab.id
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-700 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Detail cũ (chi tiết + nút QR/OTP + sơ đồ) — GIỮ NGUYÊN để không mất chức năng nào;
+            sơ đồ tủ ở đây đã chuyển lên khối trung tâm nên chỉ còn phần chi tiết + nút. */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          {/* PANE 1: danh sách lịch sử */}
+          <div className="lg:col-span-5 space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Danh sách đơn ({filteredOrders.length})
+              </span>
+              {/* GĐ49b — `text-slate-600` thay `slate-400` (2.4:1 → ≥4.5:1). */}
+              <span className="text-[11px] text-slate-600">Chọn đơn để tra cứu</span>
+            </div>
 
           <div className="space-y-3 max-h-[780px] overflow-y-auto pr-1">
             {/* GĐ37 — SKELETON khi ĐANG TẢI THẬT. Trước đây API chậm thì hiện thẳng
@@ -1057,7 +1292,8 @@ export default function CustomerPickupTab({ currentUser }) {
                     <span className="font-mono text-xs font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md">
                       {selectedOrder.orderId}
                     </span>
-                    <span className="text-xs text-slate-400">
+                    {/* GĐ49b — `text-slate-400` chỉ 2.63:1 trên thẻ trắng; đổi `slate-600`. */}
+                    <span className="text-xs text-slate-600">
                       Ngày tạo: <span className="font-mono text-slate-700 font-semibold">{selectedOrder.orderDate || selectedOrder.expectedDate}</span>
                     </span>
                   </div>
@@ -1102,7 +1338,7 @@ export default function CustomerPickupTab({ currentUser }) {
                       style={{ width: `${calculateRemainingTime(selectedOrder.expiryDeadline).percent}%` }}
                     />
                   </div>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-slate-600">
                     Hạn lưu kho: Hết 24h00 hôm sau.
                   </p>
                 </div>
@@ -1277,61 +1513,22 @@ export default function CustomerPickupTab({ currentUser }) {
                 </div>
               )}
 
-              {/* Interactive Visual Locker Cabinet */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                    Sơ Đồ Ngăn Tủ & Cảm Biến
-                  </span>
-                  <span className="text-[11px] font-mono text-blue-600 font-bold bg-blue-50/80 px-2.5 py-0.5 rounded-full border border-blue-200">
-                    {/* GĐ18 — bỏ phần "({size})": mọi ngăn dùng được như nhau. */}
-                    Vị Trí: Ngăn #{selectedOrder.compartmentIndex || 2}
-                  </span>
-                </div>
-
-                <LockerCabinetVisualizer
-                  lockerName={selectedOrder.lockerName || 'Trạm Tủ KTX A1'}
-                  lockerId={selectedOrder.lockerId || 'LOCKER_HN_01'}
-                  activeSlotId={selectedOrder.compartmentIndex || 2}
-                  // GĐ39 — SỐ NGĂN THEO TRẠNG THÁI ĐƠN (user chốt 16/11):
-                  //   • Đơn CHƯA nạp (mọi trạng thái ngoài 3 cái dưới) → hiện ĐỦ 2 ngăn.
-                  //   • Đơn ĐÃ nạp (`DEPOSITED`/`PICKUP_OPENED`/`COMPLETED`) → chỉ ngăn chứa đơn.
-                  // Ngăn của đơn vẫn nổi bật nhờ `activeSlotId` (component tô `ring-2`), nên KHÔNG
-                  // lọc theo `activeSlotId` (điều cấm #3).
-                  // `compartmentsDayDu === null` (chưa đọc được) ⇒ `null` ⇒ component dùng
-                  // `defaultSlots`, KHÔNG bịa status (điều cấm #2).
-                  compartments={(() => {
-                    if (!compartmentsDayDu) return null;
-                    const DA_NAP = ['DEPOSITED', 'PICKUP_OPENED', 'COMPLETED'];
-                    if (!DA_NAP.includes(selectedOrder.status)) return compartmentsDayDu;
-                    const cuaDon = selectedOrder.compartmentIndex;
-                    const loc = compartmentsDayDu.filter((c) => c.id === cuaDon);
-                    return loc.length ? loc : compartmentsDayDu;
-                  })()}
-                  // GĐ40 — telemetry THẬT thay "ESP32 12ms"/"MQTT 1883".
-                  telemetry={lockerTelemetry}
-                  doorState={compartmentSensor?.isDoorClosed != null
-                    ? (compartmentSensor.isDoorClosed ? 'CLOSED' : 'OPEN')
-                    : 'CLOSED'}
-                  // GĐ5 — cân nặng THẬT thay số cứng 0.85. DB lưu gram, component hiểu kg.
-                  sensorWeight={compartmentSensor?.currentWeight != null
-                    ? Number(compartmentSensor.currentWeight) / 1000
-                    : 0}
-                  compact={true}
-                />
-              </div>
+              {/* GĐ49b — SƠ ĐỒ TỦ ĐÃ CHUYỂN LÊN KHỐI TRUNG TÂM ("Bưu kiện đang chờ bạn").
+                  Ở đây chỉ còn phần chi tiết + nút, KHÔNG vẽ sơ đồ lần hai: hai bản sao cùng một
+                  component làm trang dài gấp đôi và khách phải cuộn — đúng triệu chứng thẻ muốn sửa.
+                  Props của visualizer không đổi (GĐ39/GĐ40/GĐ5 giữ nguyên), chỉ đổi CHỖ ĐẶT. */}
 
               {/* GĐ35 — ĐÃ BỎ BẢN ĐỒ GIS ở tab nhận hàng của khách (user yêu cầu 16/11).
                   Lý do user: bản đồ nhỏ trong tab này chiếm chỗ, chữ trên tile bị cắt, và khách
                   đã có tab "Bản đồ mạng lưới tủ" riêng để xem vị trí + chỉ đường.
                   GIỮ LẠI khối thông tin trạm (tên + địa chỉ + số ngăn) vì khách vẫn cần biết
                   mình phải tới đâu — chỉ bỏ phần bản đồ. */}
-              <div className="space-y-2.5 pt-2 border-t border-slate-100">
+              <div className="space-y-2.5 pt-2 border-t border-slate-200">
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
                   Vị Trí Trạm Tủ
                 </span>
 
-                <div className="p-4 rounded-3xl liquid-glass-subtle border border-white/80 flex items-center justify-between text-xs shadow-sm">
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
                   <div>
                     <h5 className="font-bold text-slate-900 flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5 text-blue-600" />
@@ -1341,12 +1538,12 @@ export default function CustomerPickupTab({ currentUser }) {
                         (minh phát hiện khi nghiệm thu GĐ35). Nay backend trả địa chỉ thật. Vẫn phải
                         có nhánh dự phòng: đơn chưa gán tủ thì `lockerAddress` = null, in
                         "undefined" ra màn hình khách là lỗi tệ hơn để trống. */}
-                    <p className="text-[11px] text-slate-500 mt-0.5">
+                    <p className="text-[11px] text-slate-600 mt-0.5">
                       {selectedOrder.lockerAddress || 'Chưa có địa chỉ trạm'}
                     </p>
                   </div>
 
-                  <span className="bg-blue-50/90 text-blue-700 font-bold px-3 py-1 rounded-xl border border-blue-200 text-xs">
+                  <span className="bg-blue-50 text-blue-700 font-bold px-3 py-1 rounded-lg border border-blue-200 text-xs">
                     {/* GĐ18 — bỏ "(Size …)": mọi ngăn dùng được như nhau. */}
                     Ngăn #{selectedOrder.compartmentIndex || 2}
                   </span>
@@ -1362,6 +1559,7 @@ export default function CustomerPickupTab({ currentUser }) {
           )}
         </div>
       </div>
+      </section>
 
       {/* QR Modal — mã tĩnh theo đơn, không đếm ngược */}
       {qrModalOrder && (

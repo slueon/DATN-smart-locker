@@ -65,7 +65,7 @@ export default function LockerCabinetVisualizer({
                 {lockerId}
               </span>
             </h4>
-            <p className="text-[11px] text-slate-500 font-medium">
+            <p className="text-[11px] text-slate-600 font-medium">
               Sơ đồ cảm biến thời gian thực
             </p>
           </div>
@@ -81,30 +81,31 @@ export default function LockerCabinetVisualizer({
               • telemetry = null   → "Chưa có dữ liệu" (KHÔNG bịa số) */}
         <div
           data-testid="locker-telemetry"
-          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100/80 border border-slate-200/70 text-slate-700 text-[11px] font-mono shadow-2xs"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-mono shadow-2xs"
         >
           {(() => {
             if (!telemetry) {
               return (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-slate-400" />
-                  <span className="font-semibold text-slate-500">Chưa có dữ liệu</span>
+                  <span className="w-2 h-2 rounded-full bg-slate-500" />
+                  {/* GĐ49b — `text-slate-500` trên nền `slate-100` chỉ 2.98:1; đổi `slate-700` (≥4.5:1). */}
+                  <span className="font-semibold text-slate-700">Chưa có dữ liệu</span>
                 </>
               );
             }
             if (telemetry.isVirtual === true) {
               return (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-slate-400" />
-                  <span className="font-semibold text-slate-500">Tủ demo — không có thiết bị</span>
+                  <span className="w-2 h-2 rounded-full bg-slate-500" />
+                  <span className="font-semibold text-slate-700">Tủ demo — không có thiết bị</span>
                 </>
               );
             }
             if (!telemetry.lastHeartbeat) {
               return (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-slate-400" />
-                  <span className="font-semibold text-slate-500">Chưa từng gửi nhịp tim</span>
+                  <span className="w-2 h-2 rounded-full bg-slate-500" />
+                  <span className="font-semibold text-slate-700">Chưa từng gửi nhịp tim</span>
                 </>
               );
             }
@@ -115,8 +116,10 @@ export default function LockerCabinetVisualizer({
                   ? 'bg-emerald-500 animate-pulse'
                   : 'bg-amber-500'}`} />
                 <span className="font-semibold">MQTT 8883 TLS</span>
-                <span className="text-slate-300">•</span>
-                <span className={`font-bold ${conSong ? 'text-emerald-600' : 'text-amber-600'}`}>
+                <span className="text-slate-400">•</span>
+                {/* GĐ49b — chữ vàng `text-amber-600` trên nền `slate-100` chỉ ~3.0:1; dùng
+                    `text-amber-700` (≥4.5:1), giữ nguyên màu xanh cho ca tươi. */}
+                <span className={`font-bold ${conSong ? 'text-emerald-700' : 'text-amber-700'}`}>
                   Nhịp tim {(telemetry.health?.rel || '').replace('chưa từng gửi', '—')}
                 </span>
               </>
@@ -209,22 +212,24 @@ export default function LockerCabinetVisualizer({
                       boxShadow: isOpen ? 'none' : 'inset -6px 0 12px -8px rgba(15,23,42,0.25)',
                     }}
                   />
-                  <div className="flex items-center justify-between relative">
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-2 relative">
+                    <div className="flex items-center gap-2 min-w-0">
                       {isOpen ? (
-                        <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-600 animate-pulse">
+                        <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-600 animate-pulse shrink-0">
                           <DoorOpen className="w-5 h-5" />
                         </div>
                       ) : (
-                        <div className="p-1.5 rounded-xl bg-white/70 text-slate-600 shadow-xs">
+                        <div className="p-1.5 rounded-xl bg-white/70 text-slate-600 shadow-xs shrink-0">
                           <Lock className="w-5 h-5" />
                         </div>
                       )}
-                      <div>
-                        <span className="text-xs font-bold block text-slate-900">
+                      {/* GĐ49b — `whitespace-nowrap` để nhãn cửa KHÔNG xuống dòng từng chữ
+                          ("Cửa / Đang / Khóa" thành 3 dòng) khi cột hẹp. Chỉ chỉnh hiển thị. */}
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold block text-slate-900 whitespace-nowrap">
                           {isOpen ? 'Cửa Đang Mở' : 'Cửa Đang Khóa'}
                         </span>
-                        <span className="text-[10px] text-slate-500 font-medium">
+                        <span className="text-[10px] text-slate-600 font-medium whitespace-nowrap">
                           {isOpen ? 'Sẵn sàng nạp/lấy hàng' : 'Chốt khóa an toàn'}
                         </span>
                       </div>
@@ -232,7 +237,7 @@ export default function LockerCabinetVisualizer({
 
                     {/* Inside Package Tag: Chỉ hiện khi thực tế có kiện và trọng lượng > 0.05kg */}
                     {((slot.status === 'DEPOSITED' || slot.status === 'OCCUPIED' || slot.status === 'OVERDUE' || isTarget) && currentWeight > 0.05) && (
-                      <div className="flex items-center gap-1 bg-blue-50/90 border border-blue-200/80 px-2 py-0.5 rounded-full text-[10px] text-blue-700 font-bold shadow-2xs">
+                      <div className="flex items-center gap-1 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full text-[10px] text-blue-700 font-bold shrink-0">
                         <Box className="w-3 h-3" />
                         <span>Có kiện</span>
                       </div>
@@ -244,8 +249,10 @@ export default function LockerCabinetVisualizer({
               {/* Dual-Sensor Real-Time Readout Box */}
               <div className="mt-2 pt-2.5 border-t border-slate-100/70 grid grid-cols-2 gap-2 text-[11px] font-mono">
                 {/* 1. MC-38 Magnetic Door Sensor */}
-                <div className="liquid-glass-subtle p-2.5 rounded-2xl border border-white/70 flex flex-col shadow-2xs">
-                  <span className="text-[9px] text-slate-400 font-medium uppercase tracking-wider">Cảm biến cửa</span>
+                <div className="liquid-glass-subtle p-2.5 rounded-2xl border border-slate-200 flex flex-col shadow-2xs">
+                  {/* GĐ49b — `text-slate-400` chỉ đạt 2.51:1 trên nền thẻ; đổi `slate-600` (≥4.5:1).
+                      Chỉ đổi MÀU, không đổi nhãn/chữ (điều cấm #2). */}
+                  <span className="text-[9px] text-slate-600 font-semibold uppercase tracking-wider">Cảm biến cửa</span>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <span className={`w-2 h-2 rounded-full ${isOpen ? 'bg-rose-500 animate-ping' : 'bg-emerald-500'}`} />
                     <span className={`font-bold ${isOpen ? 'text-rose-600' : 'text-emerald-700'}`}>
@@ -255,8 +262,8 @@ export default function LockerCabinetVisualizer({
                 </div>
 
                 {/* 2. HX711 Load Cell Scale */}
-                <div className="liquid-glass-subtle p-2.5 rounded-2xl border border-white/70 flex flex-col shadow-2xs">
-                  <span className="text-[9px] text-slate-400 font-medium uppercase tracking-wider">Trọng lượng</span>
+                <div className="liquid-glass-subtle p-2.5 rounded-2xl border border-slate-200 flex flex-col shadow-2xs">
+                  <span className="text-[9px] text-slate-600 font-semibold uppercase tracking-wider">Trọng lượng</span>
                   <div className="flex items-center gap-1 mt-0.5">
                     <Weight className="w-3.5 h-3.5 text-blue-600" />
                     <span className="font-bold text-slate-900">
