@@ -116,12 +116,12 @@ export default function Sidebar({
     >
       {/* Top Branding Section — GĐ49a: chữ sáng trên nền tối, logo giữ màu chủ đạo blue-600. */}
       <div>
-        <div className="h-16 px-4 flex items-center justify-between border-b border-slate-800">
-          <div className="flex items-center gap-3 overflow-hidden">
+        <div className={`h-16 flex items-center justify-between border-b border-slate-800 ${collapsed ? 'px-2' : 'px-4'}`}>
+          <div className="flex items-center gap-3 overflow-hidden shrink-0">
             {/* GĐ52 — logo "ngăn tủ" dùng chung (`BrandLogo`). Trước đây là icon lucide `Package`
                 trong một `div` nền xanh; nay nền bo góc nằm trong chính SVG nên bỏ lớp `div` đó để
                 không có viền vuông lòi ra sau góc bo. Cỡ 36px (`w-9 h-9`) như cũ. */}
-            <BrandLogo className="w-9 h-9" />
+            <BrandLogo className="w-9 h-9" variant="dark" />
             {!collapsed && (
               <div className="min-w-0">
                 <span className="font-bold text-white text-sm tracking-tight block truncate">
