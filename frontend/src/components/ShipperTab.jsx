@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 // GĐ15 — KHÔNG còn CircularTimer ở file này (mã QR shipper giờ vĩnh viễn, không đếm ngược).
 // File `CircularTimer.jsx` VẪN GIỮ vì `CustomerPickupTab` + `ShipperRecallTab` còn dùng cho OTP khách.
@@ -45,12 +45,19 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
    * giả lập camera, nút "Mở Cửa" gọi API). Với tủ thật, shipper KHÔNG bấm gì trên web ở các
    * bước này — firmware tự quét GM65, tự mở cửa. Web chỉ cần HIỆN kết quả tủ đã làm.
    *
-   * <p><b>Vì sao `lastSeq`:</b> backend dùng `seq` tăng đơn điệu. Mỗi lần poll gửi `after=lastSeq`
-   * thì chỉ nhận sự kiện MỚI → popup không phát lại. Lần đầu `lastSeq = null` → backend trả
-   * `events: []` + `latestSeq`, nên mở tab không hiện lại popup của lần test trước.
+   * <p><b>Vì sao `lastSeqRef` (ref, không phải state):</b> backend dùng `seq` tăng đơn điệu. Mỗi
+   * lần poll gửi `after=mốc` thì chỉ nhận sự kiện MỚI → popup không phát lại. Lần đầu mốc là
+   * `null` → backend trả `events: []` + `latestSeq`, nên mở tab không hiện lại popup cũ.
+   *
+   * <p><b>GĐ42 vòng 2:</b> đổi từ state sang ref. Để state thì mốc nằm trong dependency của effect
+   * poll ⇒ mỗi 1,5 giây effect dựng lại (clear + tạo interval mới) và nhịp vừa bắn có thể rơi vào
+   * `cancelled` ⇒ sự kiện `DEPOSIT_SUCCESS` **không** được xử lý ngay. Đo thật: web vẫn mất
+   * **3471 ms / 2964 ms** dù backend đã bắn sự kiện.
    */
   const [kioskEvents, setKioskEvents] = useState([]);
-  const [lastSeq, setLastSeq] = useState(null);
+  const lastSeqRef = useRef(null);
+  // GĐ42 vòng 2 — tủ cuối cùng đã poll. Giữ lại để poll không chết khi danh sách PENDING rỗng.
+  const lastPolledLockerRef = useRef(null);
   const [kioskError, setKioskError] = useState(null);
 
   // GM65 Scanner State
@@ -108,6 +115,11 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   // GĐ39 — TOÀN BỘ danh sách ngăn của tủ đang xem (shape của `LockerCabinetVisualizer`).
   // `null` = chưa đọc được → component dùng `defaultSlots` (2 ngăn mặc định), không bịa status.
   // Shipper LUÔN thấy đủ ngăn, mọi lúc — không lọc theo ngăn của đơn.
+  // GĐ42 — tập `seq` sự kiện Kiosk đã dùng để reload danh sách (chống trùng).
+  // Dùng `useRef` chứ không `useState`: đây là bộ nhớ phụ, không tham gia render — nếu để state
+  // thì mỗi lần thêm lại kéo thêm một vòng render và có thể kích lại effect poll.
+  const processedKioskSeqRef = useRef(new Set());
+
   const [compartments, setCompartments] = useState(null);
 
   // GĐ40 — telemetry THẬT theo từng tủ: { [lockerId]: {isVirtual, lastHeartbeat, health} }.
@@ -191,10 +203,17 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     };
     const handleOverdueDetected = () => loadOrders();
 
-    // Poll lại danh sách từ API mỗi 30 giây (backend tự quét theo lịch riêng của nó).
+    // GĐ42 — lưới an toàn: poll lại danh sách mỗi **10 giây** (trước là 30 giây).
+    //
+    // Đường CHÍNH để web cập nhật là SỰ KIỆN (poll Kiosk 1,5 s bắt `DEPOSIT_SUCCESS` /
+    // `DEPOSIT_LEFT_EMPTY` → `loadOrders()` ngay, xem effect bên dưới). Nhịp này chỉ để cứu khi
+    // mất sự kiện (MQTT rơi, backend restart).
+    //
+    // ⚠ KHÔNG hạ xuống dưới 10 s (điều cấm #1): `orders/pending` là truy vấn danh sách, gọi quá
+    // dày sẽ nặng máy chủ — chữa cháy bằng tải nặng thay vì sửa đúng gốc.
     const scanTimer = setInterval(() => {
       loadOrders();
-    }, 30000);
+    }, 10000);
 
     window.addEventListener('smart_locker_store_updated', handleUpdate);
     window.addEventListener('smart_locker_overdue_detected', handleOverdueDetected);
@@ -839,16 +858,28 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
    * khi component unmount sẽ setState lên component đã chết (warning của React).
    */
   useEffect(() => {
-    if (!activeOrder?.lockerId) {
+    // GĐ42 vòng 2 — GIỮ TỦ CUỐI CÙNG đã theo dõi.
+    //
+    // Vì sao cần: `activeOrder` chỉ là đơn **PENDING** đang chọn. Ngay khi `loadOrders()` chạy
+    // (do sự kiện), đơn vừa nạp rời danh sách PENDING ⇒ nếu đó là đơn cuối thì `activeOrder`
+    // thành `null` ⇒ effect này **cleanup** và poll Kiosk **dừng hẳn**. Đo thật: `kiosk-events`
+    // ngừng sau 2 697 ms, nên sự kiện `DEPOSIT_SUCCESS` (`seq 11`) không bao giờ được đọc — web
+    // chỉ cập nhật nhờ nhịp dự phòng 10 s (3,4 s).
+    //
+    // Nay: nhớ tủ cuối cùng trong ref, để poll tiếp tục sau khi hết đơn PENDING. Chỉ dừng khi
+    // component unmount (cleanup ở dưới).
+    const lockerIdHienTai = activeOrder?.lockerId || null;
+    if (lockerIdHienTai) lastPolledLockerRef.current = lockerIdHienTai;
+    const lockerId = lockerIdHienTai || lastPolledLockerRef.current;
+    if (!lockerId) {
       return undefined;
     }
 
-    const lockerId = activeOrder.lockerId;
     let cancelled = false;
 
     const poll = async () => {
       try {
-        const res = await shipperApi.getKioskEvents(lockerId, lastSeq);
+        const res = await shipperApi.getKioskEvents(lockerId, lastSeqRef.current);
         if (cancelled) return;
 
         const payload = res?.data?.data;
@@ -858,12 +889,34 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
         if (events.length > 0) {
           // Nối vào đầu danh sách, chỉ giữ 20 sự kiện gần nhất để UI không phình.
           setKioskEvents((prev) => [...events, ...prev].slice(0, 20));
+
+          // GĐ42 — SỰ KIỆN PHẢI RELOAD DỮ LIỆU, không chỉ nạp danh sách sự kiện.
+          //
+          // Trước GĐ42 khối này chỉ `setKioskEvents` ⇒ danh sách đơn + KPI **không đổi** dù
+          // `DEPOSIT_SUCCESS` về trong 1,5 giây; phải chờ nhịp `loadOrders()` 30 giây (lỗi user báo
+          // "nạp hàng xong web đứng yên"). Nay thấy sự kiện chốt là gọi `loadOrders()` NGAY.
+          //
+          // Chống trùng bằng ref Set (giống `processedKioskSeqRef` của CustomerPickupTab): poll
+          // 1,5 giây gặp lại cùng sự kiện nhiều lần, không chặn thì mỗi nhịp gọi API một lần.
+          const CO_SU_KIEN_CHOT = ['DEPOSIT_SUCCESS', 'DEPOSIT_LEFT_EMPTY', 'COMPARTMENT_SELECTED'];
+          const canReload = events.some((e) => CO_SU_KIEN_CHOT.includes(e.type)
+            && !processedKioskSeqRef.current.has(e.seq));
+          if (canReload) {
+            events.forEach((e) => {
+              if (CO_SU_KIEN_CHOT.includes(e.type)) processedKioskSeqRef.current.add(e.seq);
+            });
+            // Không await: poll phải tiếp tục, và `loadOrders` tự lo state của nó.
+            loadOrders();
+          }
         }
-        // Luôn cập nhật latestSeq, kể cả khi không có sự kiện: nếu chỉ cập nhật khi có sự kiện
-        // thì lần poll sau vẫn hỏi từ mốc cũ → nhận lại đúng những sự kiện vừa xử lý.
-        if (payload.latestSeq != null) {
-          setLastSeq(payload.latestSeq);
-        }
+        // GĐ42 vòng 2 — mốc `seq` ghi vào REF, không dùng state.
+        //
+        // Nếu để state và đưa `lastSeq` vào dependency của effect (như bản vòng 1), mỗi nhịp 1,5
+        // giây effect bị dựng lại: interval cũ bị clear rồi tạo interval mới, và nhịp vừa bắn có
+        // thể rơi vào `cancelled = true` ⇒ sự kiện **không** được xử lý ngay, phải chờ nhịp dự
+        // phòng 10 s. Đo thật vòng 2: vẫn **3471 ms / 2964 ms** dù backend đã bắn
+        // `DEPOSIT_SUCCESS` (kiểm riêng: `seq: 3` xuất hiện sau 1,2 s).
+        if (payload.latestSeq != null) lastSeqRef.current = payload.latestSeq;
         setKioskError(null);
       } catch (err) {
         if (cancelled) return;
@@ -882,8 +935,12 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       cancelled = true;
       clearInterval(timer);
     };
+    // GĐ42 vòng 2 — CỐ Ý không đưa `lockerId` vào dependency: nếu đưa, mỗi lần danh sách đơn đổi
+    // (vd. sau khi nạp xong, `activeOrder` chuyển sang đơn khác/`null`) effect dựng lại và poll
+    // gián đoạn đúng lúc cần đọc sự kiện. Poll bám tủ qua `lastPolledLockerRef`; khi đổi tủ thật
+    // thì `selectLockerFilter`/chọn đơn vẫn làm effect chạy lại qua `activeOrder?.orderId`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrder?.lockerId, lastSeq]);
+  }, [activeOrder?.orderId]);
 
   return (
     <div className="space-y-5 notranslate select-none">

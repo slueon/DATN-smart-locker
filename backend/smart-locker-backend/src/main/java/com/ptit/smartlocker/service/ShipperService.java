@@ -32,6 +32,18 @@ public class ShipperService {
     @Lazy
     private MqttService mqttService;
 
+    /**
+     * GĐ42 — bộ đệm sự kiện Kiosk, để báo cho web khi shipper quên nạp hàng.
+     *
+     * <p><b>Vì sao {@code required = false} + {@code @Lazy}:</b> {@code KioskEventService} là bean
+     * đơn giản (không phụ thuộc ngược lại), nhưng dùng đúng mẫu của {@code mqttService} ở trên để
+     * <b>không tạo vòng phụ thuộc cứng</b> nếu sau này KioskEventService có thêm phụ thuộc
+     * (điều cấm #5 của thẻ GĐ42). Luôn guard {@code != null} khi dùng.
+     */
+    @Autowired(required = false)
+    @Lazy
+    private KioskEventService kioskEventService;
+
     public ShipperService(
             ShipperIdentityTokenRepository tokenRepository,
             OrderRepository orderRepository,
@@ -369,6 +381,26 @@ public class ShipperService {
             mqttService.publishCommand(order.getLocker().getLockerId(), compartment.getCompIndex(), "OPEN_DOOR", "SHIPPER_DEPOSIT", order.getOrderId());
         }
 
+        // GĐ42 vòng 2 — BẮN SỰ KIỆN KIOSK CHO ĐƯỜNG NẠP QUA **API**.
+        //
+        // `DEPOSIT_SUCCESS` trước vòng này CHỈ được bắn từ nhánh MQTT `deposit_success`
+        // (`MqttService`), tức đường **firmware báo**. Đường **API** (`POST /api/shipper/deposit`,
+        // đúng đường web shipper dùng) chỉ ghi `device_events` rồi trả về ⇒ web shipper không có
+        // sự kiện nào để bắt, chỉ cập nhật nhờ nhịp dự phòng 10 giây.
+        //
+        // Đo thật (minh, 2 lần chạy): đơn tự cập nhật sau **3738 ms** và **3602 ms** — vượt ngưỡng
+        // ≤3 s của phép thử #2/#3.
+        //
+        // Guard `!= null` giống nhánh `!conHang` bên dưới, vì bean được tiêm
+        // `@Autowired(required=false)`.
+        if (kioskEventService != null && order.getLocker() != null) {
+            kioskEventService.record(order.getLocker().getLockerId(),
+                    KioskEventService.DEPOSIT_SUCCESS,
+                    order.getOrderId(), order.getTrackingCode(),
+                    compartment.getCompIndex(), null,
+                    "Nạp hàng thành công ngăn #" + compartment.getCompIndex());
+        }
+
         return ShipperDTO.DepositResponse.builder()
                 .success(true)
                 .message("Gửi hàng vào ngăn tủ số " + compartment.getCompIndex() + " thành công!")
@@ -633,6 +665,22 @@ public class ShipperService {
         if (compartment != null && !"OCCUPIED".equalsIgnoreCase(compartment.getStatus())) {
             compartment.setStatus("EMPTY");
             compartmentRepository.save(compartment);
+        }
+
+        // GĐ42 — BẮN SỰ KIỆN "shipper quên nạp hàng".
+        //
+        // Trước GĐ42 khối này đổi DB đúng nhưng KHÔNG báo gì cho web, nên shipper không biết ngăn
+        // đã được trả lại và phải F5 (lỗi user báo "web đứng yên"). Đo thật: đóng cửa không bỏ
+        // hàng → DB `PENDING`/`EMPTY` mà `kiosk-events` trả **0 sự kiện**.
+        //
+        // Đây là sự kiện THẤT BẠI: frontend phải hiện thông báo khác `DEPOSIT_SUCCESS` (điều cấm #2).
+        // Guard `!= null` vì bean được tiêm `@Autowired(required=false)`.
+        if (kioskEventService != null && order.getLocker() != null) {
+            kioskEventService.record(order.getLocker().getLockerId(),
+                    KioskEventService.DEPOSIT_LEFT_EMPTY,
+                    order.getOrderId(), order.getTrackingCode(),
+                    compartment != null ? compartment.getCompIndex() : null, null,
+                    "Chưa phát hiện kiện hàng — ngăn đã trả lại, vui lòng nạp lại");
         }
         return false;
     }

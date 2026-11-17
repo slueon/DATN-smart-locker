@@ -702,6 +702,44 @@ export default function CustomerPickupTab({ currentUser }) {
           });
         }
 
+        // GĐ42 — KHÁCH QUÊN LẤY HÀNG.
+        //
+        // Backend (GĐ31a) **đã** bắn `PICKUP_LEFT_BEHIND` kèm câu tiếng Việt, nhưng trước GĐ42
+        // `grep frontend/src` = **0 hit** ⇒ sự kiện được ghi rồi bị bỏ. Nay frontend đọc:
+        // `loadOrders()` để đơn quay về `DEPOSITED` trên UI (backend đã đổi), + thông báo bấm được
+        // qua chuông.
+        //
+        // ⚠ KHÔNG hiện popup "Lấy hàng thành công" — đây là THẤT BẠI, hai sự kiện loại trừ nhau
+        // (điều cấm #2 của thẻ GĐ42).
+        const leftBehind = [...events]
+          .reverse()
+          .find((e) => e.type === 'PICKUP_LEFT_BEHIND'
+            && (!e.lockerId || e.lockerId === lockerId)
+            && !processedKioskSeqRef.current.has(e.seq));
+
+        if (leftBehind) {
+          processedKioskSeqRef.current.add(leftBehind.seq);
+          const lbOrderId = leftBehind.orderId || selectedOrder?.orderId || null;
+          const lbOrder = orders.find((o) => o.orderId === lbOrderId) || selectedOrder;
+
+          await loadOrders();
+          // Mở lại modal QR/OTP để khách mở lại bằng CHÍNH mã cũ — dữ liệu đã về DEPOSITED.
+          setCompartmentSensor(null);
+
+          store.addNotification({
+            type: 'PICKUP_LEFT_BEHIND',
+            orderId: lbOrderId,
+            method: 'qr',
+            title: 'Bạn chưa lấy kiện hàng',
+            // Dùng nguyên văn câu backend viết (đã đúng ngữ cảnh), fallback nếu thiếu.
+            message: leftBehind.message
+              || `Cửa đã đóng nhưng kiện hàng vẫn trong tủ${lbOrder?.compartmentIndex != null
+                ? ` ngăn #${lbOrder.compartmentIndex}` : ''}. Bấm để mở lại.`,
+            phone: lbOrder?.customerPhone || currentUser?.phone,
+            isRead: false,
+          });
+        }
+
         // Luôn cập nhật mốc, kể cả khi không có sự kiện — nếu chỉ cập nhật khi có sự kiện thì
         // lần poll sau vẫn hỏi từ mốc cũ và xử lý lại đúng sự kiện vừa rồi.
         if (payload.latestSeq != null) {

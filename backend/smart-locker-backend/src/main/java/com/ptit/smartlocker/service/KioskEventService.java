@@ -73,6 +73,20 @@ public class KioskEventService {
      */
     public static final String PICKUP_SUCCESS = "PICKUP_SUCCESS";
 
+    /**
+     * GĐ42 — shipper mở cửa nạp hàng nhưng đóng lại mà <b>KHÔNG có kiện nào</b> trong ngăn.
+     *
+     * <p><b>Vì sao cần:</b> {@code ShipperService.chotPhienNapHang} nhánh {@code !conHang} đổi đơn về
+     * {@code PENDING}, nhả ngăn về {@code EMPTY} và xoá dấu đặt trước — nhưng trước GĐ42
+     * <b>không bắn sự kiện nào</b>. Đo thật: đóng cửa không bỏ hàng → DB đổi đúng
+     * ({@code PENDING}/{@code EMPTY}) mà {@code kiosk-events} trả <b>0 sự kiện</b> ⇒ web shipper
+     * không biết gì, phải F5 (đúng lỗi user báo "web đứng yên").
+     *
+     * <p><b>Đây là sự kiện THẤT BẠI, không phải thành công</b> — frontend phải hiện thông báo khác
+     * màu/nội dung với {@link #DEPOSIT_SUCCESS} (điều cấm #2 của thẻ GĐ42).
+     */
+    public static final String DEPOSIT_LEFT_EMPTY = "DEPOSIT_LEFT_EMPTY";
+
     private final AtomicLong seq = new AtomicLong(0L);
     private final Deque<KioskEvent> events = new ArrayDeque<>(MAX_EVENTS);
 

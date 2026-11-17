@@ -101,6 +101,38 @@ public class MqttService implements MqttCallbackExtended {
     /** topic|payload → thời điểm phát, dùng để nhận ra bản tin của chính mình. */
     private final Map<String, Long> recentlyPublished = new ConcurrentHashMap<>();
 
+    /**
+     * GĐ45 — EXECUTOR PUBLISH BẤT ĐỒNG BỘ, <b>ĐÚNG 1 LUỒNG</b>.
+     *
+     * <p><b>Vì sao cần:</b> `mqttClient.publish(...)` tới `ssl://broker.emqx.io:8883` mất
+     * **1,5–3,2 giây** mỗi lần (bắt tay TLS + round-trip broker công cộng), và lời gọi đó nằm
+     * **bên trong `@Transactional`** của `depositPackage`/`recallOverduePackage`/… ⇒ mọi endpoint
+     * nghiệp vụ chậm theo. Đo thật: `POST /api/shipper/deposit` = 2090–2334 ms trong khi
+     * `GET /kiosk-events` chỉ 3–23 ms.
+     *
+     * <p><b>Vì sao ĐÚNG 1 luồng (điều cấm #3):</b> thứ tự `verified/order=1` phải tới tủ **trước**
+     * `locker/open`, nếu không tủ có thể mở cửa trước khi được xác thực. Hiện chúng được gọi tuần
+     * tự trong cùng một thread nên thứ tự được đảm bảo; pool nhiều luồng sẽ làm đảo thứ tự đó.
+     *
+     * <p><b>Hàng đợi có giới hạn 1000:</b> `newSingleThreadExecutor` mặc định dùng
+     * `LinkedBlockingQueue` **không giới hạn** — nếu broker chết lâu, bộ nhớ tăng vô hạn. Giới hạn
+     * 1000 để hàng đợi đầy thì `RejectedExecutionException` bị bắt và ghi log, không làm chết luồng
+     * nghiệp vụ.
+     */
+    private final java.util.concurrent.ExecutorService publishExecutor =
+            new java.util.concurrent.ThreadPoolExecutor(
+                    1, 1,
+                    0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(1000),
+                    r -> {
+                        Thread t = new Thread(r, "mqtt-pub-1");
+                        t.setDaemon(true); // không giữ JVM sống khi tắt ứng dụng
+                        return t;
+                    });
+
+    /** GĐ45 — chỉ log MỘT lần rằng publish đã chuyển bất đồng bộ (tránh rác log 17 chỗ gọi). */
+    private final java.util.concurrent.atomic.AtomicBoolean daLogAsync = new java.util.concurrent.atomic.AtomicBoolean(false);
+
     @Autowired
     public MqttService(
             @Autowired(required = false) MqttClient mqttClient,
@@ -743,11 +775,38 @@ public class MqttService implements MqttCallbackExtended {
                 MqttMessage msg = new MqttMessage(payload.getBytes(StandardCharsets.UTF_8));
                 msg.setQos(qos);
                 msg.setRetained(retain);
-                mqttClient.publish(topic, msg);
-                // Ghi lại để nhận ra bản tin của chính mình khi broker đẩy ngược về.
+
+                // GĐ45 — ghi `recentlyPublished` TRƯỚC khi đẩy vào hàng đợi (điều cấm #1).
+                //
+                // Đây là cơ chế nhận ra bản tin của CHÍNH MÌNH khi broker đẩy ngược về. Nếu ghi
+                // SAU (bên trong task), bản tin do mình publish có thể được xử lý như bản tin của
+                // tủ trước khi kịp đánh dấu — sai nghiệp vụ và khó truy vết.
                 recentlyPublished.put(echoKey(topic, payload), System.currentTimeMillis());
-                log.info("📡 [MQTT Hardware Bridge] Phát bản tin thành công tới [{}]: {}", topic, payload);
+
+                if (daLogAsync.compareAndSet(false, true)) {
+                    log.info("GĐ45 — publish MQTT chuyển sang BẤT ĐỒNG BỘ (executor 1 luồng "
+                            + "'mqtt-pub-1', hàng đợi 1000). Luồng nghiệp vụ không còn chờ broker.");
+                }
+
+                // CHỈ lời gọi `mqttClient.publish` được đẩy ra khỏi luồng nghiệp vụ.
+                //
+                // Không đẩy phần đọc DB của `publishLockerRetainedState` (điều cấm #4): ra ngoài
+                // transaction sẽ gặp `LazyInitializationException`.
+                publishExecutor.execute(() -> {
+                    try {
+                        mqttClient.publish(topic, msg);
+                        log.debug("📡 [MQTT] Đã phát bất đồng bộ tới [{}]", topic);
+                    } catch (Exception e) {
+                        // Bắt TRONG task: lỗi publish không được làm chết thread của executor
+                        // (thread chết thì mọi bản tin sau mất im lặng).
+                        log.error("Lỗi khi phát bản tin raw MQTT tới [{}]: {}", topic, e.getMessage());
+                    }
+                });
             }
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // Hàng đợi đầy (broker chết lâu): báo rõ để người vận hành biết đã MẤT bản tin này,
+            // thay vì im lặng. Không ném ra luồng nghiệp vụ.
+            log.error("Hàng đợi publish MQTT đầy (1000) — BỎ bản tin tới [{}]. Broker có thể đang chết.", topic);
         } catch (Exception e) {
             log.error("Lỗi khi phát bản tin raw MQTT tới [{}]: {}", topic, e.getMessage());
         }
@@ -1622,8 +1681,7 @@ public class MqttService implements MqttCallbackExtended {
     }
 
     /** Đọc N trong {@code .../compartment/N/...} (1-based). */
-    private Integer parseCompartmentSegment(String[] seg) {
-        for (int i = 0; i < seg.length - 1; i++) {
+    private Integer parseCompartmentSegment(String[] seg) {        for (int i = 0; i < seg.length - 1; i++) {
             if ("compartment".equalsIgnoreCase(seg[i])) {
                 try {
                     return Integer.parseInt(seg[i + 1]);
@@ -1633,5 +1691,33 @@ public class MqttService implements MqttCallbackExtended {
             }
         }
         return null;
+    }
+
+    /**
+     * GĐ45 — đóng executor publish ÊM khi tắt ứng dụng.
+     *
+     * <p><b>Vì sao bắt buộc:</b> publish giờ chạy nền. Nếu tắt backend ngay, các bản tin đang trong
+     * hàng đợi (có thể là lệnh `locker/open`) sẽ **mất im lặng**. `shutdown()` cho phép các task
+     * đã nhận chạy nốt; chờ tối đa 5 giây; còn thừa thì ghi log rõ số bản tin chưa gửi được rồi
+     * mới `shutdownNow()` — để người vận hành biết có lệnh bị bỏ, chứ không im lặng.
+     *
+     * <p>Thứ tự này cũng đảm bảo 20 bản tin của phép thử #7 (publish rồi `devctl down`) được gửi
+     * hết trước khi tiến trình thoát.
+     */
+    @jakarta.annotation.PreDestroy
+    public void shutdownPublishExecutor() {
+        publishExecutor.shutdown();
+        try {
+            if (!publishExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                int conLai = publishExecutor.shutdownNow().size();
+                log.error("GĐ45 — hết 5 giây chờ, còn {} bản tin MQTT CHƯA gửi được (đã huỷ).", conLai);
+            } else {
+                log.info("GĐ45 — đã gửi hết bản tin MQTT đang chờ trước khi tắt.");
+            }
+        } catch (InterruptedException e) {
+            publishExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+            log.warn("GĐ45 — bị ngắt khi đang chờ gửi nốt bản tin MQTT.");
+        }
     }
 }
