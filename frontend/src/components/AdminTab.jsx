@@ -399,6 +399,30 @@ export default function AdminTab() {
 
   const overdueList = orders.filter((o) => o.status === 'OVERDUE');
 
+  /**
+   * GĐ49d — hai nhóm tủ, và TỶ LỆ THẬT thay cho 2 con số gõ cứng của GĐ48.
+   *
+   * <p><b>Vì sao phải tách "tủ thật" / "tủ ảo":</b> phần cứng chỉ có 1 tủ (`Tu_1` → `LOCKER_HN_01`),
+   * 9 tủ còn lại là dữ liệu mẫu (`isVirtual = true`) nên KHÔNG bao giờ có nhịp tim. Trộn lẫn thì
+   * admin đọc "10 trạm" rồi tưởng 10 thiết bị đang chạy, trong khi 9 cái không tồn tại về phần cứng.
+   *
+   * <p><b>"X/Y tủ thật có nhịp tim &lt; 5 phút"</b> — thay hẳn chuỗi gõ cứng "100% Cảm biến kết nối
+   * ổn định". Nguồn: `lockerApi.getAll()` (`isVirtual`) + `getLockerHealth` (`key === 'ONLINE'`
+   * nghĩa là `ageMs &lt;= HEARTBEAT_FRESH_MS = 5 phút`). KHÔNG đọc `connectionStatus`: DB ghi
+   * `ONLINE` cho cả 10 tủ dù có tủ im 3 ngày (MAP — bẫy #2), nên con số đó sẽ luôn là "10/10".
+   *
+   * <p><b>"Tỷ lệ hoàn tất"</b> — thay hẳn "Tỷ lệ mở khóa đúng hạn: 98.5%". Con số 98.5% đó không
+   * có nguồn nào trong CSDL/API (không có bảng nào ghi "lần mở khoá có đúng hạn hay không"), nên
+   * GIỮ nó là bịa số (điều cấm #3). Tỷ lệ hoàn tất thì tính được từ chính danh sách đơn admin đã
+   * tải: `deliveredCount / orders.length`.
+   */
+  const realLockers = lockers.filter((l) => l?.isVirtual !== true);
+  const virtualLockers = lockers.filter((l) => l?.isVirtual === true);
+  const realOnline = realLockers.filter((l) => getLockerHealth(l).key === 'ONLINE').length;
+  const completionRate = orders.length > 0
+    ? Math.round((kpi.deliveredCount / orders.length) * 100)
+    : 0;
+
   return (
     <div className="space-y-6 notranslate select-none">
       {/* Header */}
@@ -408,19 +432,21 @@ export default function AdminTab() {
             <Shield className="w-6 h-6 text-purple-600" />
             Bảng Điều Khiển KPI & Giám Sát Vận Hành
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Trung tâm kiểm soát hiệu suất tủ, ma trận ngăn vật lý thời gian thực và tự động hóa tác vụ DevSecOps.
+          <p className="text-xs text-slate-600 mt-0.5">
+            Trung tâm kiểm soát hiệu suất tủ, ma trận ngăn vật lý thời gian thực và điều phối vận hành.
           </p>
         </div>
       </div>
 
-      {/* Admin Subtabs (Apple iOS Segmented Control) */}
-      <div className="ios-segmented-tray flex max-w-xl mx-auto gap-1 shadow-sm">
+      {/* Admin Subtabs — GĐ49d: 1 DÒNG, nhãn ngắn. `max-w-xl` cũ (576px) chia 5 tab còn 115px/nút
+          nên "Người dùng & RBAC" gãy 2–3 dòng, mà tiêu đề trang lại rộng hơn thanh tab trông lệch.
+          Nay tray rộng hết hàng, `whitespace-nowrap` chống gãy chữ, `overflow-x-auto` phòng màn hẹp. */}
+      <div className="ios-segmented-tray flex w-full gap-1 shadow-sm overflow-x-auto">
         {[
-          { id: 'kpi', label: 'Tổng quan KPI', icon: BarChart3 },
-          { id: 'matrix', label: 'Sơ đồ ngăn tủ', icon: Radio },
-          { id: 'overdue', label: 'Đơn quá hạn', icon: AlertTriangle },
-          { id: 'users', label: 'Người dùng & RBAC', icon: Users },
+          { id: 'kpi', label: 'Tổng quan', icon: BarChart3 },
+          { id: 'matrix', label: 'Sơ đồ ngăn', icon: Radio },
+          { id: 'overdue', label: 'Quá hạn', icon: AlertTriangle },
+          { id: 'users', label: 'Người dùng', icon: Users },
           // GĐ7 — xem lại lịch sử mở tủ: ai mở, tủ nào, ngăn nào, lúc nào.
           { id: 'logs', label: 'Lịch sử mở tủ', icon: Key },
         ].map((tab) => {
@@ -430,10 +456,10 @@ export default function AdminTab() {
             <button
               key={tab.id}
               onClick={() => setActiveAdminSubTab(tab.id)}
-              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              className={`flex-1 min-w-0 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
                 isActive
                   ? 'bg-white text-slate-900 shadow-sm border border-black/[0.04]'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-white/60'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
               }`}
             >
               <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -448,7 +474,7 @@ export default function AdminTab() {
         <div className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md relative overflow-hidden">
-              <div className="flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
+              <div className="flex justify-between items-center text-xs font-bold text-slate-600 uppercase tracking-wider">
                 <span>Tỷ lệ lấp đầy tủ</span>
                 <span className="text-blue-600 font-mono text-[10px] bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 font-bold">Real-time</span>
               </div>
@@ -464,89 +490,138 @@ export default function AdminTab() {
             </div>
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">
                 Hạ tầng Tủ & Ngăn
               </div>
               <div className="text-3xl font-extrabold text-slate-900 mt-2 font-mono">
-                {kpi.totalLockers} <span className="text-base text-slate-400 font-normal">Trạm</span> / {kpi.totalSlots} <span className="text-base text-slate-400 font-normal">Ngăn</span>
+                {kpi.totalLockers} <span className="text-base text-slate-600 font-normal">Trạm</span> / {kpi.totalSlots} <span className="text-base text-slate-600 font-normal">Ngăn</span>
               </div>
-              <div className="text-xs text-emerald-600 mt-2.5 flex items-center gap-1.5 font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                <span>100% Cảm biến kết nối ổn định</span>
+              {/* GĐ49d — THAY "100% Cảm biến kết nối ổn định". Câu cũ là số gõ cứng, và nó nói
+                  ngược màn hình ngay bên cạnh (HN_01 lúc đó đang "Mất kết nối · 1 giờ trước").
+                  Nay: đếm tủ THẬT có nhịp tim < 5 phút (`getLockerHealth` = nguồn sự thật duy nhất). */}
+              <div className="text-xs text-slate-600 mt-2.5 flex items-center gap-1.5 font-medium">
+                <span className={`w-2 h-2 rounded-full inline-block ${
+                  realLockers.length > 0 && realOnline === realLockers.length
+                    ? 'bg-emerald-500 animate-pulse'
+                    : 'bg-amber-500'
+                }`} />
+                <span>
+                  <strong className={realLockers.length > 0 && realOnline === realLockers.length ? 'text-emerald-700' : 'text-amber-700'}>
+                    {realOnline}/{realLockers.length}
+                  </strong>
+                  {' '}tủ thật có nhịp tim &lt; 5 phút
+                </span>
               </div>
             </div>
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">
                 Lượt giao hoàn tất
               </div>
               <div className="text-3xl font-extrabold text-emerald-600 mt-2 font-mono">
-                {kpi.deliveredCount} <span className="text-base text-slate-400 font-normal">Đơn</span>
+                {kpi.deliveredCount} <span className="text-base text-slate-600 font-normal">Đơn</span>
               </div>
-              <div className="text-xs text-slate-500 mt-2.5 font-medium">
-                Tỷ lệ mở khóa đúng hạn: <strong className="text-slate-800 font-mono">98.5%</strong>
+              {/* GĐ49d — THAY "Tỷ lệ mở khóa đúng hạn: 98.5%" (số gõ cứng, không nguồn).
+                  Nay là tỷ lệ hoàn tất tính từ danh sách đơn admin vừa tải. */}
+              <div className="text-xs text-slate-600 mt-2.5 font-medium">
+                Tỷ lệ hoàn tất: <strong className="text-slate-800 font-mono">{completionRate}%</strong>
+                <span className="text-slate-600"> ({kpi.deliveredCount}/{orders.length} đơn)</span>
               </div>
             </div>
 
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">
                 Tổng giá trị đơn hàng
               </div>
               <div className="text-2xl font-extrabold text-slate-900 mt-2 font-mono">
                 {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(kpi.totalRevenue)}
               </div>
-              <div className="text-xs text-slate-500 mt-2.5 font-medium">
+              <div className="text-xs text-slate-600 mt-2.5 font-medium">
                 Từ các giao dịch qua trạm tủ PTIT
               </div>
             </div>
           </div>
 
-          {/* Station Occupancy Overview */}
-          <div className="liquid-glass-card rounded-3xl border border-white/80 p-6 sm:p-7 shadow-lg space-y-4">
+          {/* Station Occupancy Overview — GĐ49d: TÁCH "Tủ thật" (lên đầu) và "Tủ ảo (demo)".
+              Trước đây 10 dòng trộn lẫn: 1 tủ có thiết bị + 9 tủ dữ liệu mẫu, cùng một kiểu chữ,
+              nên admin không phân biệt được cái nào là hạ tầng thật. Nhóm "Tủ thật" đứng trước,
+              chữ đậm hơn; nhóm demo nằm dưới, có ghi rõ "không có thiết bị". */}
+          <div className="liquid-glass-card rounded-3xl border border-white/80 p-6 sm:p-7 shadow-lg space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm">Tỷ lệ lấp đầy từng trạm tủ PTIT</h3>
-              <span className="text-xs text-slate-400 font-mono">Cập nhật thời gian thực</span>
+              <h3 className="font-bold text-slate-900 text-sm">Tỷ lệ lấp đầy theo trạm</h3>
+              <span className="text-xs text-slate-600 font-mono">Cập nhật thời gian thực</span>
             </div>
-            <div className="space-y-4">
-              {lockers.map((locker) => {
-                const total = locker.compartments.length;
-                const occ = locker.compartments.filter((c) => c.status === 'OCCUPIED' || c.status === 'OVERDUE').length;
-                // Chống chia cho 0: tủ lỗi API (compartments rỗng) sẽ cho percent = NaN → thanh bar vỡ.
-                const percent = total > 0 ? Math.round((occ / total) * 100) : 0;
-                const health = getLockerHealth(locker);
+            {[
+              {
+                key: 'real',
+                tieuDe: 'Tủ thật',
+                phu: `${realLockers.length} trạm có thiết bị`,
+                ds: realLockers,
+                noiBat: true,
+              },
+              {
+                key: 'virtual',
+                tieuDe: 'Tủ ảo (demo)',
+                phu: `${virtualLockers.length} trạm khai báo trong CSDL, không có thiết bị`,
+                ds: virtualLockers,
+                noiBat: false,
+              },
+            ].map((nhom) => (
+              <div key={nhom.key} className="space-y-4">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className={`text-[11px] font-bold uppercase tracking-wider ${
+                    nhom.noiBat ? 'text-slate-900' : 'text-slate-600'
+                  }`}>
+                    {nhom.tieuDe}
+                  </span>
+                  <span className="text-[11px] text-slate-600 font-medium">{nhom.phu}</span>
+                </div>
+                {nhom.ds.length === 0 ? (
+                  <p className="text-xs text-slate-600 italic">Không có trạm nào trong nhóm này.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {nhom.ds.map((locker) => {
+                      const total = locker.compartments.length;
+                      const occ = locker.compartments.filter((c) => c.status === 'OCCUPIED' || c.status === 'OVERDUE').length;
+                      // Chống chia cho 0: tủ lỗi API (compartments rỗng) sẽ cho percent = NaN → thanh bar vỡ.
+                      const percent = total > 0 ? Math.round((occ / total) * 100) : 0;
+                      const health = getLockerHealth(locker);
 
-                return (
-                  <div key={locker.lockerId} className="space-y-2">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-slate-800 flex items-center gap-2">
-                        {/* GĐ5-B2 — chấm màu theo trạng thái kết nối thật, không còn luôn xanh. */}
-                        <span
-                          className={`w-2 h-2 rounded-full inline-block ${healthDotClass(health.tone)}`}
-                          title={`${health.label} — ${health.rel}`}
-                        />
-                        {locker.name} ({locker.lockerId})
-                        {health.key !== 'ONLINE' && (
-                          <span
-                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${healthBadgeClass(health.tone)}`}
-                          >
-                            {health.label} · {health.rel}
-                          </span>
-                        )}
-                      </span>
-                      <span className="font-mono text-slate-700 font-bold">
-                        {occ}/{total} ngăn ({percent}%)
-                      </span>
-                    </div>
-                    <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
-                      <div
-                        className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${percent}%` }}
-                      />
-                    </div>
+                      return (
+                        <div key={locker.lockerId} className="space-y-2">
+                          <div className="flex justify-between items-center text-xs gap-2">
+                            <span className="font-bold text-slate-800 flex items-center gap-2 min-w-0">
+                              {/* GĐ5-B2 — chấm màu theo trạng thái kết nối thật, không còn luôn xanh. */}
+                              <span
+                                className={`w-2 h-2 rounded-full inline-block shrink-0 ${healthDotClass(health.tone)}`}
+                                title={`${health.label} — ${health.rel}`}
+                              />
+                              <span className="truncate">{locker.name} ({locker.lockerId})</span>
+                              {health.key !== 'ONLINE' && (
+                                <span
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${healthBadgeClass(health.tone)}`}
+                                >
+                                  {health.label} · {health.rel}
+                                </span>
+                              )}
+                            </span>
+                            <span className="font-mono text-slate-700 font-bold shrink-0">
+                              {occ}/{total} ngăn ({percent}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
+                            <div
+                              className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-500"
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -559,7 +634,7 @@ export default function AdminTab() {
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                 <Radio className="w-4 h-4 text-blue-600" /> Sơ đồ ngăn tủ vật lý
               </h3>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-600">
                 Theo dõi cảm biến cửa, trọng lượng và điều khiển mở khóa khẩn cấp.
               </p>
             </div>
@@ -583,8 +658,8 @@ export default function AdminTab() {
                         {locker.lockerId}
                       </span>
                     </h4>
-                    <p className="text-xs text-slate-500 mt-0.5">{locker.address}</p>
-                    <div className="flex items-center gap-2 mt-1.5 text-[11px] font-mono text-slate-500">
+                    <p className="text-xs text-slate-600 mt-0.5">{locker.address}</p>
+                    <div className="flex items-center gap-2 mt-1.5 text-[11px] font-mono text-slate-600">
                       <span>IP: {locker.ipAddress}</span>
                       <span>•</span>
                       <span>ESP32 NodeMCU • Port 1883</span>
@@ -602,7 +677,7 @@ export default function AdminTab() {
                       />
                       {getLockerHealth(locker).label}
                     </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
+                    <span className="text-[10px] text-slate-600 font-mono">
                       {getLockerHealth(locker).rel}
                     </span>
                   </div>
@@ -672,13 +747,13 @@ export default function AdminTab() {
                             )}
                           </div>
 
-                          <div className="text-[11px] text-slate-500 flex items-center justify-center gap-1 py-0.5">
+                          <div className="text-[11px] text-slate-600 flex items-center justify-center gap-1 py-0.5">
                             {isDoorOpen ? (
                               <span className="text-amber-700 flex items-center gap-1 font-bold">
                                 <DoorOpen className="w-3.5 h-3.5" /> Đang mở chốt
                               </span>
                             ) : (
-                              <span className="text-slate-500 flex items-center gap-1">
+                              <span className="text-slate-600 flex items-center gap-1">
                                 <Lock className="w-3.5 h-3.5 text-slate-400" /> Đã chốt Solenoid
                               </span>
                             )}
@@ -746,7 +821,7 @@ export default function AdminTab() {
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-rose-600" /> Quản Lý Đơn Quá Hạn (24h)
               </h3>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-600">
                 Quét và điều phối thu hồi bưu kiện quá hạn lưu kho 24h.
               </p>
             </div>
@@ -774,7 +849,7 @@ export default function AdminTab() {
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-12 text-center shadow-md">
               <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
               <h4 className="font-bold text-slate-900 text-sm">Hiện không có bưu kiện nào quá hạn</h4>
-              <p className="text-xs text-slate-500 mt-1">Tất cả khách hàng đã nhận đồ đúng thời hạn quy định.</p>
+              <p className="text-xs text-slate-600 mt-1">Tất cả khách hàng đã nhận đồ đúng thời hạn quy định.</p>
             </div>
           ) : (
             <div className="liquid-glass-card rounded-3xl border border-white/90 overflow-hidden shadow-md">
@@ -795,7 +870,7 @@ export default function AdminTab() {
                         <span className="font-mono text-xs font-bold text-rose-700 bg-rose-50 px-2.5 py-0.5 rounded-md border border-rose-200">{ord.orderId}</span>
                         <span className="text-xs font-bold text-slate-900">{ord.productName}</span>
                       </div>
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-slate-600 mt-1">
                         Khách: <strong className="text-slate-800">{ord.customerName}</strong> (<span className="font-mono">{ord.customerPhone}</span>) • Trạm: <strong>{ord.lockerName} (Ngăn #{ord.compartmentIndex})</strong>
                       </p>
                       <p className="text-[11px] text-rose-600 font-mono mt-0.5">
@@ -807,7 +882,7 @@ export default function AdminTab() {
                         User chốt: "quyền thu hồi chỉ có tài khoản shipper". Backend cũng đã
                         chặn (`SecurityConfig` → `hasRole("SHIPPER")`), nên để nút lại chỉ tạo
                         nút chết ra 403. */}
-                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-3 py-2 rounded-xl whitespace-nowrap">
+                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-3 py-2 rounded-xl whitespace-nowrap">
                       <Lock className="w-3.5 h-3.5" />
                       Chỉ tài khoản Shipper được thu hồi
                     </span>
@@ -934,7 +1009,7 @@ export default function AdminTab() {
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <thead className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-bold text-slate-600 uppercase tracking-wider">
                   <tr>
                     <th className="py-3 px-4">ID</th>
                     <th className="py-3 px-4">Họ và tên</th>
@@ -946,7 +1021,7 @@ export default function AdminTab() {
                 <tbody className="divide-y divide-slate-100">
                   {users.map((u) => (
                     <tr key={u.id} className="hover:bg-slate-50/50 transition">
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-500">#{u.id}</td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-slate-600">#{u.id}</td>
                       <td className="py-3.5 px-4 font-bold text-slate-900">{getDisplayName(u)}</td>
                       <td className="py-3.5 px-4 font-mono text-slate-600">{u.phone}</td>
                       <td className="py-3.5 px-4 font-mono text-slate-800">{u.username}</td>
@@ -968,7 +1043,7 @@ export default function AdminTab() {
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                 <Key className="w-4 h-4 text-blue-600" /> Lịch sử mở tủ
               </h3>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-600">
                 20 lệnh gần nhất từ <code className="font-mono">command_logs</code> — mỗi lần
                 Solenoid được lệnh bung đều có một dòng ở đây.
               </p>
@@ -994,7 +1069,7 @@ export default function AdminTab() {
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-10 text-center shadow-sm">
               <Key className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <h4 className="font-bold text-slate-800 text-sm">Chưa có lệnh mở tủ nào</h4>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-600 mt-1">
                 Bấm nút tải lại ở trên, hoặc lịch sử đang trống trong CSDL.
               </p>
             </div>
@@ -1004,7 +1079,7 @@ export default function AdminTab() {
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-4 shadow-md overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-left text-slate-500 border-b border-slate-200">
+                  <tr className="text-left text-slate-600 border-b border-slate-200">
                     <th className="py-2 pr-3 font-semibold">Thời gian</th>
                     <th className="py-2 pr-3 font-semibold">Người mở</th>
                     <th className="py-2 pr-3 font-semibold">Tủ</th>
@@ -1016,7 +1091,7 @@ export default function AdminTab() {
                 <tbody>
                   {loadingLogs && commandLogs.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-6 text-center text-slate-500 italic">
+                      <td colSpan={6} className="py-6 text-center text-slate-600 italic">
                         Đang tải lịch sử…
                       </td>
                     </tr>
@@ -1038,7 +1113,7 @@ export default function AdminTab() {
                           {actor.label}
                         </span>
                         {actor.detail && (
-                          <div className="text-[10px] text-slate-500 mt-0.5 font-mono">{actor.detail}</div>
+                          <div className="text-[10px] text-slate-600 mt-0.5 font-mono">{actor.detail}</div>
                         )}
                       </td>
                       <td className="py-2 pr-3 font-mono text-slate-700">{log.lockerId || '—'}</td>
