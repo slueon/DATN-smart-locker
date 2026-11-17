@@ -33,6 +33,7 @@ Broker dùng chung cho N tủ. Phải trả lời hai câu ngược nhau: *làm 
 
 ### Cách chọn
 - **Uplink** (tủ → backend): topic **chung**, không chứa id — `ptit/status`, `ptit/qr/order`, `ptit/compartment/N/status`. Tủ nào gửi thì nói trong payload: `{"locker_id":"Tu_1", ...}`.
+  - **GĐ50:** backend **không được** phát trạng thái ngăn lên `ptit/compartment/N/status` — đó là topic uplink của tủ, phát lên đó là backend tự nghe lại chính mình (cân giả + nhịp tim giả sau mỗi restart). Ảnh chụp trạng thái ngăn do backend phát đi ở `ptit/{id}/state/compartment/N`.
 - **Downlink** (backend → tủ): topic **riêng từng tủ**, có `{id}` — `ptit/{dev}/verified/order`, `ptit/{dev}/locker/open`.
 
 Lý do bất đối xứng: uplink mà có id thì mỗi tủ phải biết mình là ai để publish đúng topic, và backend phải subscribe wildcard nhiều tầng. Còn downlink mà **không** có id thì **mọi tủ đều nhận lệnh và đều mở cửa** — đây là thảm hoạ, nên bắt buộc phải có id.

@@ -120,6 +120,15 @@ Firmware subscribe các topic dưới đây theo QoS 1. Payload gửi xuống l�
 | `ptit/{id}/locker/open` | `<index>,<mode>` ví dụ `0,deposit` hoặc `1,pickup` | Mở ngăn. `index` bắt đầu từ 0; `mode` là `deposit` khi gửi hàng hoặc `pickup` khi nhận hàng. Tủ bắt đầu theo dõi giao dịch để gửi event cảm biến. |
 | `ptit/{id}/maintenance/locker` | `1` / `0` | Bật/tắt bảo trì toàn tủ. Khi bật, tủ khóa luồng thao tác thường và hiện màn hình bảo trì. Nên publish retained để khôi phục trạng thái sau reconnect. |
 | `ptit/{id}/maintenance/compartment` | `<index>,<state>` ví dụ `0,1` hoặc `1,0` | Bật/tắt bảo trì một ngăn. Index bắt đầu từ 0; state `1` là bảo trì, `0` là hoạt động. Nên publish retained. |
+| `ptit/{id}/state/compartment/N` | `{"locker_id":"Tu_1","has_item":1,"door_closed":1,"weight":120.5}` | **Ảnh chụp trạng thái ngăn do backend phát (retained)** để dashboard/MQTTX đọc — dùng cho giám sát, **không phải hợp đồng uplink**. Firmware không publish lên topic này và không cần subscribe. Trước GĐ50 backend phát nhầm lên `ptit/compartment/N/status` (topic uplink của tủ) nên tự nghe lại chính mình ⇒ cân giả 850 g và nhịp tim giả sau mỗi lần restart. |
+
+> **GĐ50 — vì sao không được phát trạng thái ngăn lên `ptit/compartment/N/status`:** đó là topic
+> **uplink** của tủ mà backend subscribe (`ptit/#`). Phát lên đó thì backend nhận lại bản tin của chính
+> mình như dữ liệu cảm biến thật: ghi đè `compartments` và làm tươi `last_heartbeat` (tủ đang TẮT vẫn
+> hiện "trực tuyến"). Bản tin retained còn nằm trên broker nên lặp lại sau **mọi** lần restart.
+> Backend nay chỉ phát lên `{id}/state/compartment/N`, và bản tin `isRetained()` trên topic
+> `compartment/N/status` hoặc `{id}/status` chỉ được ghi `device_events` (`*_RETAINED_IGNORED`),
+> không đổi dữ liệu nghiệp vụ.
 
 ### Lưu ý lệnh mở ngăn
 

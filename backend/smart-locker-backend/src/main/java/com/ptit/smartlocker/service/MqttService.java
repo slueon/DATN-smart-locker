@@ -311,6 +311,10 @@ public class MqttService implements MqttCallbackExtended {
             mqttClient.subscribe(filter, 1);
             log.info("✅ Đã subscribe toàn bộ không gian topic phần cứng nhúng: {}", filter);
             publishBackendOnlineStatus();
+            // GĐ50 — dọn retained GIẢ mà các phiên bản trước đã lỡ phát lên topic uplink
+            // `{base}/compartment/N/status`. Phải chạy SAU subscribe để không tự nghe lại lần nữa,
+            // và chỉ chạy các lần đầu (idempotent — phát lại payload rỗng vô hại).
+            clearLegacyRetainedCompartmentState();
         } catch (MqttException e) {
             log.error("Không thể subscribe topic {}: {}", topic("#"), e.getMessage());
         }
@@ -349,9 +353,88 @@ public class MqttService implements MqttCallbackExtended {
             if (relativePath(topic) == null) {
                 return;
             }
+            // GĐ50 — PAYLOAD RỖNG = LỆNH XOÁ RETAINED, KHÔNG PHẢI DỮ LIỆU.
+            //
+            // Theo MQTT 3.1.1 §3.3.1.3, publish payload rỗng với retain=true là cách XOÁ retained
+            // của topic. Chính {@link #clearLegacyRetainedCompartmentState} dùng cách đó, nên backend
+            // nghe lại 20 bản tin rỗng mỗi lần restart. Đo thật 15:57:28: các bản tin rỗng này rơi
+            // vào `handleCompartmentStatus` → `setLastHeartbeat(now)` → tủ TẮT mà vẫn "ONLINE",
+            // đúng lỗi mà GĐ50 phải diệt. Payload rỗng không mang dữ liệu nào để xử lý.
+            if (payloadStr == null || payloadStr.isBlank()) {
+                log.debug("GĐ50 — bỏ qua bản tin payload rỗng (lệnh xoá retained) trên [{}]", topic);
+                return;
+            }
+            // GĐ50 — BẢN TIN RETAINED KHÔNG PHẢI DỮ LIỆU SỐNG.
+            //
+            // Broker phát lại retained ngay khi backend subscribe (mỗi lần restart/reconnect), và
+            // ta cũng nhận lại retained do chính mình phát. Đó là ẢNH CHỤP CŨ, không phải cảm biến
+            // vừa đọc: ghi vào `compartments` là tự xác nhận số cũ vĩnh viễn, còn `setLastHeartbeat`
+            // là biến tủ đang TẮT thành "trực tuyến".
+            //
+            // Đo thật 17/11: `device_events` 4088/4089 lúc 15:23:59 = đúng lúc restart backend
+            // ⇒ web báo tủ thật "trực tuyến" ~5 phút sau mỗi lần restart; cặp 4085/4086 lúc
+            // 14:00:28 đặt ngăn 1 thành `OCCUPIED/0` (phải trả tay).
+            //
+            // Điều cấm #2 vẫn giữ: chỉ bản tin **retained** mới bị chặn. Bản tin không retained là
+            // dữ liệu sống của firmware → xử lý như cũ.
+            if (message.isRetained() && laTopicTrangThaiCamBien(topic)) {
+                recordRetainedOnly(topic, payloadStr);
+                return;
+            }
             handleEmbeddedHardwareMessage(topic, payloadStr);
         } catch (Exception e) {
             log.error("Lỗi khi xử lý bản tin MQTT từ topic {}: {}", topic, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * GĐ50 — topic mang TRẠNG THÁI cảm biến/nhịp tim (bản tin retained ở đây không phải dữ liệu sống).
+     *
+     * <p>Chỉ đúng 2 nhóm:
+     * <ul>
+     *   <li>Trạng thái ngăn: {@code .../compartment/N/status} (kể cả topic phẳng cũ
+     *       {@code {base}/compartment/N/status} và {@code {base}/chung2004/compartment/N/status}).</li>
+     *   <li>Nhịp tim tủ: {@code {base}/status} và {@code {base}/{dev}/status} — chính
+     *       {@link #isStatusPath} dùng cho heartbeat.</li>
+     * </ul>
+     *
+     * <p><b>KHÔNG</b> chặn {@code .../compartment/N/event}, {@code qr/*}, {@code receive/*},
+     * {@code locker/*}: các luồng đó không được đổi (điều cấm #1).
+     */
+    private boolean laTopicTrangThaiCamBien(String topic) {
+        String rel = relativePath(topic);
+        if (rel == null) {
+            return false;
+        }
+        String[] seg = rel.split("/");
+        if (seg.length >= 3
+                && "compartment".equalsIgnoreCase(seg[seg.length - 3])
+                && "status".equalsIgnoreCase(seg[seg.length - 1])) {
+            return true;
+        }
+        return isStatusPath(seg);
+    }
+
+    /**
+     * GĐ50 — ghi vết bản tin retained nhưng KHÔNG đổi dữ liệu nghiệp vụ.
+     *
+     * <p>Vì sao vẫn ghi: cần truy vết được "broker đã đẩy retained gì về", nếu không thì lần sau
+     * gặp lại sự cố sẽ không có bằng chứng. Nhãn có hậu tố {@code _RETAINED_IGNORED} để phân biệt
+     * với bản tin sống trong {@code device_events}.
+     */
+    private void recordRetainedOnly(String topic, String payloadStr) {
+        try {
+            String rel = relativePath(topic);
+            Payload payload = parsePayload(payloadStr);
+            Locker locker = resolveLocker(deviceIdFromTopicOrPayload(rel, payload), rel, payloadStr);
+            String loai = rel != null && rel.toLowerCase(Locale.ROOT).contains("compartment")
+                    ? "HW_MQTT_COMPARTMENT_STATUS_RETAINED_IGNORED"
+                    : "HW_MQTT_STATUS_RETAINED_IGNORED";
+            saveEvent(locker, loai, payloadStr);
+            log.debug("GĐ50 — bỏ qua bản tin RETAINED [{}] (chỉ ghi vết, không đổi DB): {}",
+                    topic, payloadStr);
+        } catch (Exception e) {
+            log.warn("GĐ50 — không ghi được vết retained từ [{}]: {}", topic, e.getMessage());
         }
     }
 
@@ -428,6 +511,13 @@ public class MqttService implements MqttCallbackExtended {
             // và các topic khác dưới `locker/` là uplink của firmware.
             String third = seg.length > 2 ? seg[2].toLowerCase(Locale.ROOT) : "";
             return "open".equals(third);
+        }
+
+        // GĐ50 — `{dev}/state/...` là DOWNLINK do backend phát (đồng bộ trạng thái ngăn).
+        // Trước GĐ50 trạng thái ngăn được phát lên `compartment/N/status` (uplink) nên backend
+        // nghe lại chính mình; đổi sang đây và bỏ qua khi nghe lại.
+        if (second.equals("state")) {
+            return true;
         }
 
         return second.equals("verified") || second.equals("maintenance");
@@ -631,8 +721,25 @@ public class MqttService implements MqttCallbackExtended {
 
     /**
      * Đồng bộ trạng thái Giữ Chậm (Retained) cho từng ngăn.
-     * Topic theo hợp đồng uplink chung ({@code {base}/compartment/N/status}) vì đó là nơi
-     * thiết bị và dashboard cùng đọc; payload mang {@code locker_id}.
+     *
+     * <h2>GĐ50 — TOPIC ĐÃ ĐỔI: KHÔNG còn phát lên uplink</h2>
+     *
+     * <p><b>Lỗi thật:</b> trước GĐ50 hàm này phát lên {@code {base}/compartment/N/status} — **đúng
+     * topic uplink** mà {@link #handleCompartmentStatus} xử lý. Backend subscribe {@code {base}/#}
+     * nên nghe lại bản tin của chính mình như thể tủ gửi: ghi đè {@code compartments} và
+     * {@code setLastHeartbeat(now)} + {@code ONLINE}. Đo thật 17/11: tủ {@code Tu_1} TẮT mà
+     * {@code device_events} 4088/4089 lúc 15:23:59 (= lúc restart) làm web báo "trực tuyến"; cặp
+     * 4085/4086 lúc 14:00:28 đặt ngăn 1 thành {@code OCCUPIED/0}. Số {@code 850 g} của ngăn 2 do
+     * {@code mk-overdue.sql} ghi tay cũng được vòng lặp này "xác nhận" lại sau mỗi lần restart.
+     *
+     * <p><b>Vì sao {@code isOwnEcho} không chặn được:</b> nó chỉ so {@code topic|payload} trong
+     * {@link #ECHO_WINDOW_MS} = 5 giây và map {@code recentlyPublished} **rỗng sau restart**. Bản
+     * tin retained broker phát lại khi subscribe không có khoá nào trong map ⇒ lọt qua.
+     *
+     * <p><b>Nay:</b> phát lên {@code {base}/{dev}/state/compartment/N} — topic **downlink riêng**,
+     * {@link #isDownlinkTopic} nhận diện theo segment {@code state} nên backend tự bỏ qua khi nghe
+     * lại, và firmware thật không publish lên đó (không đụng hợp đồng uplink). Dashboard/MQTTX vẫn
+     * thấy trạng thái ngăn nếu cần.
      */
     public boolean publishLockerRetainedState(String lockerId) {
         if (mqttClient == null || !mqttClient.isConnected()) {
@@ -642,20 +749,79 @@ public class MqttService implements MqttCallbackExtended {
             String dev = deviceIdOf(lockerId);
             List<Compartment> compartments = compartmentRepository.findByLocker_LockerId(lockerId);
             for (Compartment c : compartments) {
-                String topic = topic("compartment", String.valueOf(c.getCompIndex()), "status");
+                // GĐ50 — `{dev}/state/compartment/N` chứ KHÔNG phải `compartment/N/status`.
+                String topic = topic(dev, "state", "compartment", String.valueOf(c.getCompIndex()));
                 Map<String, Object> statusMap = new LinkedHashMap<>();
                 statusMap.put("locker_id", dev);
-                statusMap.put("has_item", "OCCUPIED".equalsIgnoreCase(c.getStatus()) ? 1 : 0);
+                statusMap.put("has_item", coHangTrongNgan(c.getStatus()) ? 1 : 0);
                 statusMap.put("door_closed", Boolean.TRUE.equals(c.getIsDoorClosed()) ? 1 : 0);
                 statusMap.put("weight", c.getCurrentWeight() != null ? c.getCurrentWeight() : 0.0);
 
                 publishRawMessage(topic, objectMapper.writeValueAsString(statusMap), 1, retainEnabled);
             }
-            log.info("Đã đồng bộ trạng thái Retained cho các ngăn của tủ {} (thiết bị: {})", lockerId, dev);
+            log.info("Đã đồng bộ trạng thái Retained cho các ngăn của tủ {} (thiết bị: {}, topic {}/{}/state/compartment/N)",
+                    lockerId, dev, topicBase, dev);
             return true;
         } catch (Exception e) {
             log.error("Lỗi khi phát retained status cho tủ {}: {}", lockerId, e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * GĐ50 — "ngăn đang có hàng" dùng cho payload đồng bộ.
+     *
+     * <p>Trước đây chỉ {@code OCCUPIED}. Nhưng ngăn của đơn {@code OVERDUE} cũng đang có hàng thật
+     * (khách chưa lấy) — báo {@code has_item:0} cho nó là sai sự thật và chính là mầm của lỗi
+     * "has_item:0 đặt ngăn EMPTY trong khi đơn quá hạn vẫn trỏ vào". Giữ đối xứng với danh sách
+     * bảo vệ trạng thái ngăn ở {@link #handleCompartmentStatus}.
+     */
+    private boolean coHangTrongNgan(String status) {
+        if (status == null) {
+            return false;
+        }
+        String st = status.toUpperCase(Locale.ROOT);
+        return "OCCUPIED".equals(st) || "OVERDUE".equals(st)
+                || "RESERVED".equals(st)
+                || "DEPOSITED".equals(st) || "PICKUP_OPENED".equals(st) || "PENDING_OPENED".equals(st);
+    }
+
+    /**
+     * GĐ50 (phần 2) — DỌN RETAINED GIẢ ĐÃ LỠ GHI LÊN TOPIC UPLINK.
+     *
+     * <p>Broker vẫn đang giữ bản tin retained cũ trên {@code {base}/compartment/N/status} do các
+     * phiên bản trước phát (payload {@code weight 850} của ngăn 2). Chỉ đổi topic ở
+     * {@link #publishLockerRetainedState} là chưa đủ: mỗi lần backend subscribe, broker vẫn đẩy
+     * retained cũ về. Muốn xoá retained thì phải publish **payload rỗng** với {@code retain=true}
+     * lên đúng topic đó.
+     *
+     * <p><b>Chỉ chạm {@code compartment/+/status}</b> (điều cấm #4): KHÔNG đụng
+     * {@code {base}/{id}/maintenance/*} và {@code {base}/{id}/status} (LWT của tủ).
+     *
+     * <p>Idempotent: chạy lại nhiều lần chỉ phát lại payload rỗng, không hỏng gì. Số ngăn lấy từ
+     * CSDL (tối đa mọi tủ đã biết) để không đoán.
+     */
+    public void clearLegacyRetainedCompartmentState() {
+        if (mqttClient == null || !mqttClient.isConnected()) {
+            return;
+        }
+        try {
+            int soTopic = 0;
+            for (Locker locker : lockerRepository.findAll()) {
+                List<Compartment> compartments = compartmentRepository
+                        .findByLocker_LockerId(locker.getLockerId());
+                for (Compartment c : compartments) {
+                    String topic = topic("compartment", String.valueOf(c.getCompIndex()), "status");
+                    // Payload RỖNG + retain=true = lệnh XOÁ retained theo đặc tả MQTT 3.1.1 §3.3.1.3.
+                    publishRawMessage(topic, "", 1, true);
+                    soTopic++;
+                }
+            }
+            log.info("GĐ50 — đã phát {} payload rỗng retained để dọn retained giả trên {}/compartment/N/status",
+                    soTopic, topicBase);
+        } catch (Exception e) {
+            log.warn("GĐ50 — không dọn được retained cũ trên {}/compartment/N/status: {}",
+                    topicBase, e.getMessage());
         }
     }
 
@@ -1518,6 +1684,15 @@ public class MqttService implements MqttCallbackExtended {
                         // khác đúng lúc shipper đang mở cửa nạp hàng.
                         || orderRepository
                         .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PENDING_OPENED").stream()
+                        .anyMatch(o -> o.getCompartment() != null && o.getCompartment().getCompIndex().equals(compIndex))
+                        // GĐ50 — ĐƠN QUÁ HẠN CŨNG ĐANG GIỮ NGĂN.
+                        //
+                        // Thiếu nhánh này thì `ORD-OVERDUE01` (OVERDUE, trỏ vào ngăn 2) bị một bản
+                        // tin `has_item:0` đặt ngăn về EMPTY ⇒ ngăn được cấp cho đơn khác trong khi
+                        // đơn quá hạn vẫn trỏ vào đó (đúng lỗi "hai đơn một ngăn"). Ngăn của đơn quá
+                        // hạn chỉ được giải phóng qua luồng thu hồi của shipper (GĐ46).
+                        || orderRepository
+                        .findByLockerAndStatusWithCompartment(locker.getLockerId(), "OVERDUE").stream()
                         .anyMatch(o -> o.getCompartment() != null && o.getCompartment().getCompIndex().equals(compIndex));
 
                 if (coDonTrongNgan) {
