@@ -63,6 +63,8 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   // và quy đổi gram → kg (DB lưu gram theo `MqttService:1069`).
   const [sensorWeightKg, setSensorWeightKg] = useState(null);
   const [failsafeMessage, setFailsafeMessage] = useState(null);
+  /** GĐ46 — lỗi khi gửi lệnh mở cửa (tủ không nhận / broker chưa kết nối / token hết hiệu lực). */
+  const [doorOpenError, setDoorOpenError] = useState(null);
   const [successRecallInfo, setSuccessRecallInfo] = useState(null);
 
   // ===== HIỆU ỨNG ÂM THANH WEB AUDIO API =====
@@ -350,6 +352,8 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     setDoorSensorState('CLOSED');
     setRecallPhase('IDLE');
     setFailsafeMessage(null);
+    // GĐ46 — lỗi mở cửa của đơn TRƯỚC không được hiện sang đơn mới.
+    setDoorOpenError(null);
 
     const lockerId = activeRecallOrder.lockerId;
     const compIndex = activeRecallOrder.compartmentIndex;
@@ -381,12 +385,44 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   }, [selectedRecallOrderId, activeRecallOrder?.lockerId, activeRecallOrder?.compartmentIndex]);
 
   // BƯỚC 2: CHẠM 1 NÚT MỞ SOLENOID
-  const handleOneTouchUnlockSolenoid = () => {
-    if (!activeRecallOrder) return;
+  //
+  // GĐ46 — TRƯỚC ĐÂY HÀM NÀY KHÔNG GỬI LỆNH NÀO XUỐNG TỦ: chỉ `playSolenoidSound()` (Web Audio ở
+  // client) rồi `setRecallPhase('DOOR_OPEN')`. Hệ quả đo được: bấm nút thì giao diện báo "cửa đang
+  // mở", shipper mở cánh cửa thật nhưng tủ vẫn KHOÁ — và lệnh mở duy nhất của luồng thu hồi lại
+  // nằm ở cuối `recallOverduePackage`, tức phải bấm "Đã Lấy Hàng & Đóng Cửa" mới có lệnh.
+  //
+  // Nay: gọi API THẬT `POST /api/shipper/recall-overdue/open` (SecurityConfig: chỉ SHIPPER), thành
+  // công mới phát tiếng + sang `DOOR_OPEN`; lỗi thì Ở LẠI `IDLE` và hiện message của server —
+  // đúng cách AdminTab báo "cửa VẪN ĐANG ĐÓNG" ở nút mở khẩn cấp.
+  const [openingDoor, setOpeningDoor] = useState(false);
+
+  const handleOneTouchUnlockSolenoid = async () => {
+    if (!activeRecallOrder || openingDoor) return;
+    setOpeningDoor(true);
+    setFailsafeMessage(null);
+
+    let message;
+    try {
+      await shipperApi.openForRecall(activeRecallOrder.orderId, dynamicToken);
+    } catch (e) {
+      message = e?.response?.data?.message
+        || 'Không gửi được lệnh mở cửa tới tủ. Cửa VẪN ĐANG ĐÓNG — vui lòng thử lại.';
+    } finally {
+      setOpeningDoor(false);
+    }
+
+    if (message) {
+      // Báo lỗi NGAY TRONG panel điều khiển: `FAILSAFE_ERROR` là banner cảnh báo đỏ đã có sẵn,
+      // nhưng nó gắn với phase và sẽ mất khi shipper bấm lại. Dùng `doorOpenError` riêng để hiện
+      // ở nhánh IDLE mà không phá luồng phase hiện tại.
+      setDoorOpenError(message);
+      return;   // KHÔNG phát tiếng solenoid, KHÔNG sang DOOR_OPEN
+    }
+
+    setDoorOpenError(null);
     playSolenoidSound();
     setDoorSensorState('OPEN');
     setRecallPhase('DOOR_OPEN');
-    setFailsafeMessage(null);
     // Mốc khối lượng để so sánh ở bước fail-safe: lấy đúng số cân đã đọc được.
     setLoadcellWeight(sensorWeightKg != null ? sensorWeightKg : 0);
   };
@@ -690,11 +726,22 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                       </div>
                       <button
                         onClick={handleOneTouchUnlockSolenoid}
-                        className="ios-btn w-full bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-bold py-3.5 px-4 rounded-2xl text-xs transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-rose-400/30"
+                        disabled={openingDoor}
+                        className="ios-btn w-full bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 disabled:from-slate-400 disabled:to-slate-500 disabled:cursor-not-allowed text-white font-bold py-3.5 px-4 rounded-2xl text-xs transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-rose-400/30"
                       >
                         <Unlock className="w-4 h-4" />
-                        <span>Mở Cửa Ngăn #{activeRecallOrder.compartmentIndex}</span>
+                        <span>
+                          {openingDoor
+                            ? 'Đang gửi lệnh mở cửa…'
+                            : `Mở Cửa Ngăn #${activeRecallOrder.compartmentIndex}`}
+                        </span>
                       </button>
+                      {doorOpenError && (
+                        <div className="flex items-start gap-2 p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-[11px] font-semibold text-rose-800">
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                          <span>{doorOpenError}</span>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     // GĐ44 — CHƯA xác thực: KHÔNG render nút mở ngăn, chỉ hướng dẫn.

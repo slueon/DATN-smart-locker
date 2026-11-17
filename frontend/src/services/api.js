@@ -154,6 +154,18 @@ export const shipperApi = {
     + `&dynamicToken=${encodeURIComponent(dynamicToken || '')}`,
   ),
 
+  /**
+   * GĐ46 — MỞ CỬA NGĂN để lấy hàng quá hạn ra (nút "Mở Cửa Ngăn #N").
+   *
+   * <p>Trước GĐ46 nút đó chỉ phát tiếng solenoid ở client rồi đổi state UI — không có lệnh nào
+   * xuống tủ, nên màn hình báo "cửa đang mở" trong khi tủ thật vẫn khoá. Endpoint này KHÔNG đổi
+   * trạng thái đơn/ngăn: đơn vẫn OVERDUE, ngăn vẫn OCCUPIED cho tới bước "Đã Lấy Hàng & Đóng Cửa".
+   */
+  openForRecall: (orderId, dynamicToken) => api.post(
+    `/shipper/recall-overdue/open?orderId=${encodeURIComponent(orderId)}`
+    + `&dynamicToken=${encodeURIComponent(dynamicToken || '')}`,
+  ),
+
   // T3 — đặt trước ngăn trên web.
   getPendingOrders: (lockerId) =>
     api.get('/shipper/orders/pending' + (lockerId ? '?lockerId=' + encodeURIComponent(lockerId) : '')),

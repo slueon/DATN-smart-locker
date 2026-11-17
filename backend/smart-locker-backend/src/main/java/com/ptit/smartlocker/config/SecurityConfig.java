@@ -197,6 +197,12 @@ public class SecurityConfig {
                 // gọi được API dù UI đã bỏ nút.
                 .requestMatchers(HttpMethod.POST, "/api/shipper/recall-overdue")
                         .hasRole("SHIPPER")
+                // GĐ46 — mở cửa ngăn để LẤY hàng quá hạn. Cùng một nghiệp vụ thu hồi nên cùng
+                // một chủ thể: chỉ SHIPPER. Khai riêng dòng này vì `/recall-overdue` ở trên là
+                // khớp CHÍNH XÁC, không bao phủ `/recall-overdue/open` ⇒ thiếu dòng này là 403
+                // vì `anyRequest().denyAll()` ở dưới.
+                .requestMatchers(HttpMethod.POST, "/api/shipper/recall-overdue/open")
+                        .hasRole("SHIPPER")
                 // T3: đặt trước ngăn. Thiếu 3 dòng này là 403 vì anyRequest().denyAll() ở dưới.
                 .requestMatchers(HttpMethod.GET, "/api/shipper/orders/pending").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")

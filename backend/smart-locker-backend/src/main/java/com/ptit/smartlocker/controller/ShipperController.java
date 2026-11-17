@@ -247,4 +247,40 @@ public class ShipperController {
                 principal != null ? principal.getName() : null);
         return ResponseEntity.ok(ApiResponse.ok("Thu hồi bưu kiện " + orderId + " về kho bãi thành công!", null));
     }
+
+    /**
+     * GĐ46 — shipper mở cửa ngăn để LẤY hàng quá hạn ra (bấm "Mở Cửa Ngăn #N").
+     *
+     * <p><b>Trước GĐ46 nút này không gửi lệnh nào:</b> frontend chỉ phát tiếng solenoid bằng Web
+     * Audio API rồi đổi state UI sang {@code DOOR_OPEN}, nên màn hình báo "cửa đang mở" trong khi
+     * tủ thật vẫn khoá. Endpoint này là đường THẬT để mở cửa.
+     *
+     * <p><b>Điều cấm #1 — KHÔNG tái dùng {@code /api/lockers/{id}/compartments/{i}/unlock}:</b>
+     * endpoint đó chỉ ADMIN và nó đặt ngăn {@code EMPTY} ngay lúc mở, tức báo "ngăn trống" trong khi
+     * hàng còn trong tủ. Ở đây đơn vẫn {@code OVERDUE}, ngăn vẫn {@code OCCUPIED}.
+     *
+     * <p><b>Danh tính lấy từ {@code Principal}</b> (như {@code recall-overdue}) — không nhận
+     * {@code shipperId} từ query/body.
+     */
+    @PostMapping("/recall-overdue/open")
+    public ResponseEntity<ApiResponse<Void>> openForRecall(
+            @RequestParam String orderId,
+            @RequestParam(required = false) String dynamicToken,
+            java.security.Principal principal) {
+        boolean daPhat = shipperService.openForRecall(
+                orderId,
+                dynamicToken,
+                principal != null ? principal.getName() : null);
+
+        // Không phát được lệnh (broker chưa kết nối) KHÔNG được báo thành công: frontend chỉ đổi
+        // sang `DOOR_OPEN`/phát tiếng khi server xác nhận, đúng yêu cầu "giống nút mở khẩn cấp"
+        // (AdminTab báo "cửa VẪN ĐANG ĐÓNG" khi lỗi).
+        if (!daPhat) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Chưa kết nối được tới tủ " + orderId
+                            + " — lệnh đã ghi nhật ký nhưng cửa VẪN ĐANG ĐÓNG. Vui lòng thử lại.");
+        }
+        return ResponseEntity.ok(ApiResponse.ok(
+                "Đã gửi lệnh mở cửa ngăn để thu hồi bưu kiện " + orderId + "!", null));
+    }
 }

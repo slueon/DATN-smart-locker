@@ -1099,40 +1099,7 @@ public class ShipperService {
      */
     @Transactional
     public void recallOverduePackage(String orderId, String dynamicToken, String currentUsername) {
-        // (1)(2)(3) — cùng thứ tự và cùng câu chữ với `depositPackage`.
-        if (dynamicToken == null || dynamicToken.isBlank()) {
-            throw new RuntimeException("Vui lòng quét mã QR xác thực danh tính Shipper trước khi gửi hàng!");
-        }
-
-        ShipperIdentityToken token = tokenRepository.findByDynamicToken(dynamicToken.trim())
-                .orElseThrow(() -> new RuntimeException("Mã QR định danh Shipper không hợp lệ!"));
-
-        if (!Boolean.TRUE.equals(token.getIsVerified())) {
-            throw new RuntimeException("Mã QR Shipper chưa được quét xác thực tại trạm tủ!");
-        }
-
-        // (4) Token phải thuộc CHÍNH người đang đăng nhập. 403 vì đây là lỗi quyền, không phải
-        // dữ liệu sai — token hợp lệ nhưng không phải của bạn.
-        if (currentUsername == null || token.getShipperId() == null
-                || !token.getShipperId().equalsIgnoreCase(currentUsername)) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Mã QR này không thuộc tài khoản đang đăng nhập!");
-        }
-
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
-                        "Không tìm thấy đơn hàng: " + orderId));
-
-        // GĐ13 — lỗi trạng thái là vi phạm nghiệp vụ → BusinessException → 409, KHÔNG phải 400.
-        //
-        // Lý do quan trọng: nút "Thu hồi" trên web giờ gọi API thật. Nếu bấm lần thứ hai (đơn đã
-        // COMPLETED) mà server trả 400 thì client khó phân biệt "request sai" với "đơn này rồi".
-        // 409 = tài nguyên đang ở trạng thái không cho phép thao tác, đúng bản chất.
-        if (!"OVERDUE".equalsIgnoreCase(order.getStatus())) {
-            throw new com.ptit.smartlocker.exception.BusinessException(
-                    "Đơn " + orderId + " không ở trạng thái quá hạn lưu kho (hiện tại: "
-                            + order.getStatus() + "), không thể thu hồi.");
-        }
+        Order order = xacThucVaTimDonThuHoi(orderId, dynamicToken, currentUsername);
 
         order.setStatus("COMPLETED");
         orderRepository.save(order);
@@ -1168,9 +1135,106 @@ public class ShipperService {
                 .build();
         deviceEventRepository.save(event);
 
-        // Bắn lệnh MQTT thông báo trạng thái thu hồi hàng thành công tới Kiosk và MQTTX
-        if (mqttService != null && order.getLocker() != null && order.getCompartment() != null) {
-            mqttService.publishCommand(order.getLocker().getLockerId(), order.getCompartment().getCompIndex(), "OPEN_DOOR", "SHIPPER_RECALL", order.getOrderId());
+        // GĐ46 — BỎ lệnh mở cửa ở đây. Trước GĐ46 khối này phát
+        // `OPEN_DOOR/SHIPPER_RECALL` ở **cuối** hàm, tức sau khi đơn đã `COMPLETED` và ngăn đã
+        // `EMPTY`: thứ tự ngược (DB báo ngăn trống trong khi hàng còn trong tủ) và cửa bị mở
+        // **lần hai** ngay sau khi shipper vừa đóng. Nay cửa được mở ở bước riêng
+        // `openForRecall` (nút "Mở Cửa Ngăn"), trước khi lấy hàng; hàm này chỉ chốt nghiệp vụ.
+    }
+
+    /**
+     * GĐ46 — MỞ CỬA NGĂN cho shipper thu hồi hàng quá hạn (nút "Mở Cửa Ngăn #N").
+     *
+     * <p><b>Vì sao phải là endpoint riêng:</b> trước GĐ46 nút này ở frontend chỉ
+     * {@code playSolenoidSound()} + đổi state UI sang {@code DOOR_OPEN} — <b>không gọi API nào</b>,
+     * nên màn hình báo "cửa đang mở" mà tủ thật vẫn khoá. Lệnh mở duy nhất của luồng thu hồi nằm ở
+     * cuối {@code recallOverduePackage}, tức phải bấm "Đã Lấy Hàng & Đóng Cửa" mới mở được cửa.
+     *
+     * <p><b>Điều cấm #2 — KHÔNG đổi trạng thái đơn/ngăn:</b> đơn vẫn {@code OVERDUE}, ngăn vẫn
+     * {@code OCCUPIED} cho tới bước "Đã Lấy Hàng & Đóng Cửa". Đây là khác biệt cốt lõi so với
+     * {@code LockerService.forceUnlockCompartment} (đặt ngăn {@code EMPTY} ngay lúc mở) — dùng
+     * endpoint đó cho thu hồi là báo sai "ngăn trống" khi hàng còn trong tủ.
+     *
+     * <p><b>Không chép lại phần kiểm danh tính:</b> dùng chung {@link #xacThucVaTimDonThuHoi}
+     * với {@code recallOverduePackage} để hai đường không bao giờ lệch luật.
+     *
+     * @return {@code true} nếu lệnh đã được phát xuống tủ, {@code false} nếu broker chưa kết nối
+     *         (vẫn ghi {@code command_logs}) — frontend phải báo lỗi thay vì giả vờ đã mở.
+     */
+    @Transactional
+    public boolean openForRecall(String orderId, String dynamicToken, String currentUsername) {
+        Order order = xacThucVaTimDonThuHoi(orderId, dynamicToken, currentUsername);
+
+        if (mqttService == null || order.getLocker() == null || order.getCompartment() == null) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Không xác định được tủ/ngăn của đơn " + orderId + " để mở khoá.");
         }
+
+        boolean daPhat = mqttService.publishCommand(
+                order.getLocker().getLockerId(),
+                order.getCompartment().getCompIndex(),
+                "OPEN_DOOR",
+                "SHIPPER_RECALL",
+                order.getOrderId());
+
+        deviceEventRepository.save(DeviceEvent.builder()
+                .locker(order.getLocker())
+                .compartmentId(order.getCompartment().getCompartmentId())
+                .eventType(daPhat ? "RECALL_DOOR_OPEN_REQUESTED" : "RECALL_DOOR_OPEN_FAILED")
+                .eventPayload("Shipper mở cửa ngăn #" + order.getCompartment().getCompIndex()
+                        + " để thu hồi đơn " + orderId + (daPhat ? "" : " (broker chưa kết nối)"))
+                .build());
+
+        return daPhat;
+    }
+
+    /**
+     * GĐ46 — PHẦN KIỂM DÙNG CHUNG của hai đường thu hồi: xác thực QR shipper rồi trả về đơn
+     * {@code OVERDUE} cần thao tác.
+     *
+     * <p>Tách ra để {@code recallOverduePackage} (chốt nghiệp vụ) và {@code openForRecall} (mở cửa)
+     * <b>không thể lệch luật</b>. Điều cấm #3 của thẻ GĐ46: không được nới bất kỳ kiểm tra QR nào
+     * của GĐ41 — bốn điều kiện dưới đây giữ nguyên câu chữ và thứ tự.
+     *
+     * <p>Câu chữ lỗi giữ NGUYÊN như trước GĐ41 refactor để {@code ShipperRecallAuthTests} (GĐ41) và
+     * hai tab shipper nói cùng một ngôn ngữ.
+     */
+    private Order xacThucVaTimDonThuHoi(String orderId, String dynamicToken, String currentUsername) {
+        // (1)(2)(3) — cùng thứ tự và cùng câu chữ với `depositPackage`.
+        if (dynamicToken == null || dynamicToken.isBlank()) {
+            throw new RuntimeException("Vui lòng quét mã QR xác thực danh tính Shipper trước khi gửi hàng!");
+        }
+
+        ShipperIdentityToken token = tokenRepository.findByDynamicToken(dynamicToken.trim())
+                .orElseThrow(() -> new RuntimeException("Mã QR định danh Shipper không hợp lệ!"));
+
+        if (!Boolean.TRUE.equals(token.getIsVerified())) {
+            throw new RuntimeException("Mã QR Shipper chưa được quét xác thực tại trạm tủ!");
+        }
+
+        // (4) Token phải thuộc CHÍNH người đang đăng nhập. 403 vì đây là lỗi quyền, không phải
+        // dữ liệu sai — token hợp lệ nhưng không phải của bạn.
+        if (currentUsername == null || token.getShipperId() == null
+                || !token.getShipperId().equalsIgnoreCase(currentUsername)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Mã QR này không thuộc tài khoản đang đăng nhập!");
+        }
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
+                        "Không tìm thấy đơn hàng: " + orderId));
+
+        // GĐ13 — lỗi trạng thái là vi phạm nghiệp vụ → BusinessException → 409, KHÔNG phải 400.
+        //
+        // Lý do quan trọng: nút "Thu hồi" trên web giờ gọi API thật. Nếu bấm lần thứ hai (đơn đã
+        // COMPLETED) mà server trả 400 thì client khó phân biệt "request sai" với "đơn này rồi".
+        // 409 = tài nguyên đang ở trạng thái không cho phép thao tác, đúng bản chất.
+        if (!"OVERDUE".equalsIgnoreCase(order.getStatus())) {
+            throw new com.ptit.smartlocker.exception.BusinessException(
+                    "Đơn " + orderId + " không ở trạng thái quá hạn lưu kho (hiện tại: "
+                            + order.getStatus() + "), không thể thu hồi.");
+        }
+
+        return order;
     }
 }
