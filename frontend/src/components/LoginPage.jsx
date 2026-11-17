@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { authApi } from '../services/api';
+// GĐ52 — logo "ngăn tủ" dùng chung. `Lock` VẪN GIỮ import: dòng ~219 dùng nó làm icon ô mật khẩu
+// (không phải logo — điều cấm #3).
+import BrandLogo from './BrandLogo';
 import {
   LogIn, UserPlus, Shield, Truck, User,
   AlertCircle, Eye, EyeOff, Lock, Phone,
@@ -136,9 +139,8 @@ export default function LoginPage({ onLoginSuccess }) {
           </div>
 
           <div className="flex items-center justify-center gap-2.5 mb-2">
-            <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center">
-              <Lock className="w-5 h-5" />
-            </div>
+            {/* GĐ52 — logo "ngăn tủ" (44px). Nền bo góc nằm trong SVG nên bỏ lớp `div` nền xanh. */}
+            <BrandLogo className="w-11 h-11" />
             <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
               Smart<span className="text-blue-600">Locker</span>
             </h1>

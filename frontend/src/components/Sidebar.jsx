@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { store } from '../services/store';
 import { adminApi, shipperApi } from '../services/api';
+// GĐ52 — logo "ngăn tủ" dùng chung cho Sidebar + LoginPage + favicon.
+import BrandLogo from './BrandLogo';
 
 export default function Sidebar({
   activeTab,
@@ -116,9 +118,10 @@ export default function Sidebar({
       <div>
         <div className="h-16 px-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shrink-0">
-              <Package className="w-5 h-5 text-white" />
-            </div>
+            {/* GĐ52 — logo "ngăn tủ" dùng chung (`BrandLogo`). Trước đây là icon lucide `Package`
+                trong một `div` nền xanh; nay nền bo góc nằm trong chính SVG nên bỏ lớp `div` đó để
+                không có viền vuông lòi ra sau góc bo. Cỡ 36px (`w-9 h-9`) như cũ. */}
+            <BrandLogo className="w-9 h-9" />
             {!collapsed && (
               <div className="min-w-0">
                 <span className="font-bold text-white text-sm tracking-tight block truncate">
