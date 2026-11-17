@@ -45,6 +45,26 @@ public class OrderService {
     }
 
     /**
+     * GĐ53 — tên tủ để ghép vào câu báo lỗi, KHÔNG lặp chữ "Tủ".
+     *
+     * <p>Tên trong CSDL đã là {@code "Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)"}, nên câu cũ
+     * {@code "Tủ " + locker.getName()} in ra {@code "Tủ Tủ Giao Nhận…"}. Hàm này bỏ tiền tố khi tên
+     * đã bắt đầu bằng "Tủ", và luôn trả về một chuỗi bắt đầu bằng "Tủ".
+     */
+    private static String tenTu(com.ptit.smartlocker.entity.Locker locker) {
+        String ten = locker == null ? null : locker.getName();
+        if (ten == null || ten.isBlank()) {
+            return "Tủ";
+        }
+        String t = ten.trim();
+        // "Tủ Giao Nhận…" / "tủ giao nhận…" / "TỦ …" đều đã có tiền tố ⇒ giữ nguyên.
+        if (t.regionMatches(true, 0, "Tủ", 0, 2)) {
+            return t;
+        }
+        return "Tủ " + t;
+    }
+
+    /**
      * Tạo đơn gửi bưu kiện vào Tủ với Cơ chế Pessimistic Locking chống Race Condition
      */
     @Transactional
@@ -108,7 +128,7 @@ public class OrderService {
             // `EMPTY`, nên ngăn bảo trì tự động không được cấp.
             if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
                 throw new com.ptit.smartlocker.exception.BusinessException(
-                        "Tủ " + locker.getName() + " đang bảo trì, vui lòng chọn tủ khác hoặc giao tận nhà.");
+                        tenTu(locker) + " đang bảo trì, vui lòng chọn tủ khác hoặc giao tận nhà.");
             }
 
             // 1. Áp dụng PESSIMISTIC LOCKING để khóa và lấy lịch biểu an toàn (Atomic Lock)
@@ -125,7 +145,7 @@ public class OrderService {
             }
 
             if (schedule.getAvailableSlots() <= 0) {
-                throw new RuntimeException("Tủ " + locker.getName() + " đã hết chỗ vào ngày " 
+                throw new RuntimeException(tenTu(locker) + " đã hết chỗ vào ngày " 
                         + deliveryDate + ". Vui lòng chọn ngày khác hoặc Giao tận nhà!");
             }
 
@@ -144,7 +164,7 @@ public class OrderService {
                     // GĐ18 — KHÔNG còn nhắc "kích thước": mọi ngăn đều dùng được, nên lý do duy
                     // nhất có thể là tủ hết ngăn trống. Nói sai lý do sẽ khiến người dùng đi chọn
                     // tủ khác để "vừa cỡ" trong khi vấn đề là tủ đã kín.
-                    throw new RuntimeException("Tủ " + locker.getName() + " đã hết ngăn trống. "
+                    throw new RuntimeException(tenTu(locker) + " đã hết ngăn trống. "
                             + "Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
                 }
 

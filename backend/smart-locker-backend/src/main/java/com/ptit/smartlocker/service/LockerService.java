@@ -100,23 +100,82 @@ public class LockerService {
     }
 
     /**
-     * Mở khóa khẩn cấp / Giải phóng cưỡng bức ngăn tủ từ Admin từ xa
+     * GĐ53 — mã các đơn đang GIỮ một ngăn ({@code DEPOSITED}/{@code OVERDUE}/{@code PENDING}).
+     *
+     * <p>Tách ra để {@link #forceUnlockCompartment} và controller {@code POST …/unlock} dùng
+     * <b>cùng một định nghĩa</b> "ngăn còn đơn". Nếu controller tự viết lại truy vấn thì hai nơi có
+     * thể lệch nhau: service giữ {@code OCCUPIED} mà message lại báo "đã giải phóng" — đúng kiểu
+     * mâu thuẫn đã gây ra sự cố GĐ53.
+     */
+    @Transactional(readOnly = true)
+    public List<String> findOrdersHoldingCompartment(String lockerId, Integer compIndex) {
+        Compartment comp = compartmentRepository.findByLocker_LockerIdAndCompIndex(lockerId, compIndex)
+                .orElse(null);
+        if (comp == null) {
+            return List.of();
+        }
+        List<String> ids = new ArrayList<>();
+        for (String status : new String[]{"DEPOSITED", "OVERDUE", "PENDING"}) {
+            orderRepository.findByLockerAndStatusFetchAll(lockerId, status).stream()
+                    .filter(o -> o.getCompartment() != null
+                            && comp.getCompartmentId().equals(o.getCompartment().getCompartmentId()))
+                    .forEach(o -> ids.add(o.getOrderId()));
+        }
+        return ids;
+    }
+
+    /**
+     * Mở khóa khẩn cấp / Giải phóng cưỡng bức ngăn tủ từ Admin từ xa.
+     *
+     * <h2>GĐ53 — KHÔNG ĐƯỢC GIẢI PHÓNG NGĂN ĐANG CÓ ĐƠN</h2>
+     *
+     * <p><b>Lỗi thật:</b> dòng {@code comp.setStatus("EMPTY")} trước GĐ53 chạy <b>vô điều kiện</b>.
+     * Đo thật trên DB: {@code ORD-DCCA6036} {@code DEPOSITED} trỏ ngăn 1 {@code LOCKER_HN_01} mà ngăn 1
+     * lại {@code EMPTY/0}; {@code command_logs} ngăn 1 ghi 21:21 {@code SHIPPER_DEPOSIT} → 21:26
+     * {@code CUSTOMER_PICKUP}+{@code OTP} → <b>21:31 {@code ADMIN_FORCE_UNLOCK}</b> → 21:37 pickup lại,
+     * đơn vẫn {@code DEPOSITED}. Hệ quả: GĐ51 cấp ngăn 1 (đang {@code EMPTY}) cho {@code ORD-99A2C56E}
+     * trong khi {@code ORD-DCCA6036} còn trỏ vào ⇒ <b>hai đơn một ngăn</b>.
+     *
+     * <p><b>Vì sao hai nơi "cãi nhau":</b> guard ở {@code MqttService.handleCompartmentStatus} thấy
+     * đơn {@code DEPOSITED}/{@code OVERDUE} trỏ ngăn nên <b>giữ</b> {@code OCCUPIED}; nhưng hàm này
+     * đặt thẳng {@code EMPTY} — bản tin cảm biến sau đó lại kéo về {@code OCCUPIED}, còn logic cấp ngăn
+     * thì đã kịp thấy {@code EMPTY} và cấp cho đơn khác.
+     *
+     * <p><b>Luật nay:</b> mở khẩn cấp là mở <b>CỬA</b>, không phải huỷ đơn. Lệnh MQTT vẫn phát đúng
+     * <b>1 lệnh</b> {@code EMERGENCY_OVERRIDE} (giữ GĐ46/GĐ50 — điều cấm #1), nhưng trạng thái ngăn
+     * chỉ về {@code EMPTY} khi <b>không còn đơn nào giữ ngăn</b>. Còn đơn ⇒ giữ nguyên trạng thái và
+     * nói rõ trong log/response để admin biết vì sao ngăn không trống.
+     *
+     * <p>KHÔNG ghi {@code currentWeight}/{@code isDoorClosed} (điều cấm #2): đó là trạng thái cảm biến
+     * (HX711, MC-38) và sẽ được {@code MqttService.handleCompartmentStatus} cập nhật khi cửa thật mở.
      */
     @Transactional
     public Compartment forceUnlockCompartment(String lockerId, Integer compIndex) {
         Compartment comp = compartmentRepository.findByLocker_LockerIdAndCompIndex(lockerId, compIndex)
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy ngăn " + compIndex + " của tủ " + lockerId));
 
-        // Admin mở khoá khẩn cấp: chỉ giải phóng trạng thái CHIẾM DỤNG của ngăn.
-        // KHÔNG ghi currentWeight/isDoorClosed ở đây — đó là trạng thái cảm biến (HX711, MC-38)
-        // và sẽ được MqttService.handleCompartmentStatus cập nhật khi cửa thực sự mở.
-        // Đoán "cửa đang mở, cân nặng 0" làm dashboard hiển thị sai so với tủ thật.
-        comp.setStatus("EMPTY");
-        Compartment saved = compartmentRepository.save(comp);
-        log.info("Admin đã mở khóa khẩn cấp và giải phóng ngăn #{} của tủ {} (giữ nguyên trạng thái cảm biến: cửa {}, nặng {})",
-                compIndex, lockerId, comp.getIsDoorClosed(), comp.getCurrentWeight());
+        // GĐ53 — đơn nào đang GIỮ ngăn này? `PENDING` cũng tính: đơn đã đặt trước, ngăn đang `RESERVED`
+        // cho nó; đặt `EMPTY` là mở đường cho ngăn bị cấp cho đơn khác trong lúc shipper sắp nạp.
+        List<String> donDangGiu = findOrdersHoldingCompartment(lockerId, compIndex);
 
-        // Phát lệnh điều khiển mở khóa Solenoid qua MQTT tới Kiosk / MQTTX
+        Compartment saved;
+        if (!donDangGiu.isEmpty()) {
+            // CÒN ĐƠN ⇒ giữ nguyên trạng thái ngăn. Không `save` lại cũng không đổi gì — nhưng vẫn
+            // trả entity đã đọc để controller trả đúng trạng thái THẬT cho UI.
+            saved = comp;
+            log.info("Admin mở khoá khẩn cấp ngăn #{} tủ {} — CỬA ĐƯỢC MỞ nhưng ngăn GIỮ NGUYÊN trạng thái '{}' "
+                            + "vì còn {} đơn đang giữ ngăn: {}",
+                    compIndex, lockerId, comp.getStatus(), donDangGiu.size(), donDangGiu);
+        } else {
+            comp.setStatus("EMPTY");
+            saved = compartmentRepository.save(comp);
+            log.info("Admin đã mở khóa khẩn cấp và giải phóng ngăn #{} của tủ {} (không còn đơn nào giữ ngăn; "
+                            + "giữ nguyên trạng thái cảm biến: cửa {}, nặng {})",
+                    compIndex, lockerId, comp.getIsDoorClosed(), comp.getCurrentWeight());
+        }
+
+        // Phát lệnh điều khiển mở khóa Solenoid qua MQTT tới Kiosk / MQTTX.
+        // GĐ53 — LUÔN chạy, kể cả khi ngăn còn đơn: yêu cầu là MỞ ĐƯỢC CỬA để lấy hàng ra.
         if (mqttService != null) {
             mqttService.publishCommand(lockerId, compIndex, "OPEN_DOOR", "EMERGENCY_OVERRIDE", null);
         }

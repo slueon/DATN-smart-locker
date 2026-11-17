@@ -1495,7 +1495,11 @@ export default function CustomerPickupTab({ currentUser }) {
                       {selectedOrder.status === 'PENDING' && 'Chưa thể nhận hàng: shipper chưa nạp kiện vào tủ.'}
                       {selectedOrder.status === 'CANCELLED' && 'Đơn đã bị huỷ nên không nhận được tại tủ.'}
                       {selectedOrder.status === 'COMPLETED' && 'Đơn đã được nhận xong trước đó.'}
-                      {selectedOrder.status === 'OVERDUE' && 'Đơn quá hạn lưu kho, đã được thu hồi khỏi tủ.'}
+                      {/* GĐ53 — câu cũ ghi "đã được thu hồi khỏi tủ" là SAI: đơn OVERDUE nghĩa là
+                          bưu kiện VẪN NẰM TRONG NGĂN, chờ shipper tới thu hồi về bưu cục. Khách đọc
+                          câu cũ sẽ tưởng hàng đã rời tủ và không biết phải làm gì tiếp. */}
+                      {selectedOrder.status === 'OVERDUE'
+                        && 'Đơn quá hạn lưu kho — bưu kiện đang chờ shipper thu hồi về bưu cục.'}
                       {!['PENDING', 'CANCELLED', 'COMPLETED', 'OVERDUE'].includes(selectedOrder.status)
                         && `Trạng thái hiện tại: ${selectedOrder.status || 'không rõ'}.`}
                     </p>

@@ -58,14 +58,37 @@ public class LockerController {
     }
 
     /**
-     * Mở khóa khẩn cấp và giải phóng ngăn tủ về EMPTY từ Admin từ xa
+     * Mở khóa khẩn cấp ngăn tủ từ Admin từ xa.
+     *
+     * <h2>GĐ53 — MỞ CỬA KHÔNG ĐỒNG NGHĨA VỚI GIẢI PHÓNG NGĂN</h2>
+     *
+     * <p>Trước GĐ53 endpoint này luôn trả "…và giải phóng ngăn thành công!" trong khi service đặt
+     * {@code EMPTY} vô điều kiện — kể cả khi ngăn còn đơn {@code DEPOSITED}. Đo thật: {@code ORD-DCCA6036}
+     * vẫn {@code DEPOSITED} trỏ ngăn 1 mà ngăn 1 thành {@code EMPTY}, rồi GĐ51 cấp ngăn đó cho
+     * {@code ORD-99A2C56E} ⇒ hai đơn một ngăn. Message giờ phản ánh <b>đúng việc đã xảy ra</b>.
      */
     @PostMapping("/{lockerId}/compartments/{compIndex}/unlock")
     public ResponseEntity<ApiResponse<Compartment>> forceUnlockCompartment(
             @PathVariable String lockerId,
             @PathVariable Integer compIndex) {
+        // Đọc TRƯỚC khi mở: sau khi service chạy, trạng thái có thể đã đổi nên không còn biết
+        // "trước đó ngăn có đơn hay không".
+        java.util.List<String> donDangGiu = lockerService.findOrdersHoldingCompartment(lockerId, compIndex);
+
         Compartment comp = lockerService.forceUnlockCompartment(lockerId, compIndex);
-        return ResponseEntity.ok(ApiResponse.ok("Mở khóa khẩn cấp và giải phóng ngăn thành công!", comp));
+
+        String message;
+        if (!donDangGiu.isEmpty()) {
+            // Nói rõ: cửa ĐÃ mở, nhưng ngăn vẫn thuộc đơn — để admin không tưởng ngăn đã trống mà
+            // cấp cho đơn khác (đúng sự cố GĐ53).
+            message = "Đã mở khoá khẩn cấp ngăn #" + compIndex + " của " + lockerId
+                    + ". Ngăn VẪN GIỮ trạng thái " + comp.getStatus()
+                    + " cho đơn " + String.join(", ", donDangGiu)
+                    + " — chưa giải phóng ngăn vì đơn còn trong tủ.";
+        } else {
+            message = "Mở khóa khẩn cấp và giải phóng ngăn thành công!";
+        }
+        return ResponseEntity.ok(ApiResponse.ok(message, comp));
     }
 
     /**

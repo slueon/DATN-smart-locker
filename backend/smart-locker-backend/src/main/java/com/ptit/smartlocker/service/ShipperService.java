@@ -93,6 +93,25 @@ public class ShipperService {
     /** GĐ11 — ngưỡng "tủ còn sống": nhịp tim cũ hơn 5 phút thì không cho shipper chọn. */
     private static final long HEARTBEAT_FRESH_MINUTES = 5L;
 
+    /**
+     * GĐ53 — tên tủ để ghép vào câu báo lỗi, KHÔNG lặp chữ "Tủ".
+     *
+     * <p>Tên trong CSDL đã là {@code "Tủ Giao Nhận KTX A1 (Trụ Sở PTIT)"} ⇒ câu cũ
+     * {@code "Tủ " + locker.getName()} in ra {@code "Tủ Tủ Giao Nhận…"}. Bỏ tiền tố khi tên đã có,
+     * và luôn trả chuỗi bắt đầu bằng "Tủ".
+     */
+    private static String tenTu(Locker locker) {
+        String ten = locker == null ? null : locker.getName();
+        if (ten == null || ten.isBlank()) {
+            return "Tủ";
+        }
+        String t = ten.trim();
+        if (t.regionMatches(true, 0, "Tủ", 0, 2)) {
+            return t;
+        }
+        return "Tủ " + t;
+    }
+
     /** GĐ11 — ngưỡng tủ "đã kín": lấp đầy từ 80% trở lên thì không gợi ý nữa. */
     private static final double MAX_OCCUPANCY_RATIO = 0.8;
 
@@ -1181,7 +1200,7 @@ public class ShipperService {
         // Cùng luật với luồng đặt ngăn: tủ đang bảo trì thì không nhận đơn.
         if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
             throw new com.ptit.smartlocker.exception.BusinessException(
-                    "Tủ " + locker.getName() + " đang bảo trì, không thể tạo đơn quá hạn tại đây. "
+                    tenTu(locker) + " đang bảo trì, không thể tạo đơn quá hạn tại đây. "
                             + "Vui lòng chọn tủ khác hoặc mở khoá bảo trì trước.");
         }
 
@@ -1190,7 +1209,7 @@ public class ShipperService {
                 .findWithLockByLockerIdAndStatus(locker.getLockerId(), "EMPTY");
         if (nganTrong.isEmpty()) {
             throw new com.ptit.smartlocker.exception.BusinessException(
-                    "Tủ " + locker.getName() + " không còn ngăn trống nào — không tạo được đơn quá hạn. "
+                    tenTu(locker) + " không còn ngăn trống nào — không tạo được đơn quá hạn. "
                             + "Hãy thu hồi hoặc giải phóng một ngăn trước.");
         }
         Compartment ngan = nganTrong.get(0);
