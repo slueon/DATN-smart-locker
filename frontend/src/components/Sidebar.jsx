@@ -108,24 +108,24 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`liquid-glass border-r border-white/60 transition-all duration-300 flex flex-col justify-between shrink-0 z-40 select-none shadow-[4px_0_30px_rgba(31,38,135,0.06)] relative ${
+      className={`bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col justify-between shrink-0 z-40 select-none relative ${
         collapsed ? 'w-20' : 'w-64'
       }`}
     >
-      {/* Top Branding Section */}
+      {/* Top Branding Section — GĐ49a: chữ sáng trên nền tối, logo giữ màu chủ đạo blue-600. */}
       <div>
-        <div className="h-16 px-4 flex items-center justify-between border-b border-slate-200/50">
+        <div className="h-16 px-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-blue-600 via-blue-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-blue-500/25 shrink-0 border border-white/40">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shrink-0">
               <Package className="w-5 h-5 text-white" />
             </div>
             {!collapsed && (
               <div className="min-w-0">
-                <span className="font-extrabold text-slate-900 text-sm tracking-tight block truncate">
-                  Smart<span className="text-blue-600">Locker</span>
+                <span className="font-bold text-white text-sm tracking-tight block truncate">
+                  Smart<span className="text-blue-400">Locker</span>
                 </span>
                 <span className="text-[10px] text-slate-400 block truncate font-medium flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   PTIT Campus Hub
                 </span>
               </div>
@@ -134,7 +134,7 @@ export default function Sidebar({
 
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100/70 transition cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
             title={collapsed ? 'Mở rộng sidebar' : 'Thu gọn sidebar'}
           >
             {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -164,18 +164,18 @@ export default function Sidebar({
                         key={item.id}
                         onClick={() => setActiveTab(item.id)}
                         title={collapsed ? item.label : undefined}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-xs transition-all duration-200 cursor-pointer text-left relative ${
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs transition-colors duration-200 cursor-pointer text-left relative ${
                           isActive
-                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold shadow-md shadow-blue-500/25 border border-white/20'
-                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/90 hover:shadow-xs font-medium'
+                            ? 'bg-blue-600 text-white font-semibold'
+                            : 'text-slate-300 hover:text-white hover:bg-slate-800 font-medium'
                         }`}
                       >
-                        <Icon className={`w-4 h-4 shrink-0 transition-transform ${isActive ? 'text-white scale-105' : 'text-slate-400'}`} />
+                        <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-500'}`} />
                         {!collapsed && (
                           <div className="flex-1 min-w-0 flex items-center justify-between">
                             <span className="block truncate text-xs font-semibold">{item.label}</span>
                             {item.badge && (
-                              <span className={`ml-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-2xs ${
+                              <span className={`ml-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                 isActive
                                   ? 'bg-white text-blue-700'
                                   : item.badgeColor === 'rose'
@@ -197,16 +197,16 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Bottom User Profile */}
-      <div className="p-3 border-t border-slate-200/50">
-        <div className="flex items-center justify-between gap-2 p-2 rounded-2xl liquid-glass-subtle border border-white/80 shadow-sm">
+      {/* Bottom User Profile — GĐ49a: khối tối, chữ sáng, đọc rõ trên nền slate-900. */}
+      <div className="p-3 border-t border-slate-800">
+        <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-800 border border-slate-700">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-50 to-indigo-100 text-blue-700 font-bold text-xs flex items-center justify-center shrink-0 border border-blue-200/60 shadow-xs">
+            <div className="w-8 h-8 rounded-lg bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
               {currentUser?.fullName ? currentUser.fullName.charAt(0) : 'U'}
             </div>
             {!collapsed && (
               <div className="min-w-0">
-                <span className="font-bold text-xs text-slate-900 block truncate">
+                <span className="font-semibold text-xs text-white block truncate">
                   {currentUser?.fullName}
                 </span>
                 <span className="text-[10px] text-slate-400 font-mono block truncate">
@@ -218,7 +218,7 @@ export default function Sidebar({
 
           <button
             onClick={onLogout}
-            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer shrink-0"
+            className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-700 rounded-lg transition cursor-pointer shrink-0"
             title="Đăng xuất"
           >
             <LogOut className="w-4 h-4" />

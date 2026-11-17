@@ -80,13 +80,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen text-slate-900 flex notranslate font-sans antialiased overflow-x-hidden selection:bg-blue-600 selection:text-white relative">
-      {/* Apple Liquid Glass Dynamic Wallpaper Mesh Canvas */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute -top-24 -left-24 w-[650px] h-[650px] rounded-full bg-gradient-to-br from-blue-500/35 to-indigo-600/30 blur-[110px]" />
-        <div className="absolute top-1/4 -right-24 w-[600px] h-[600px] rounded-full bg-gradient-to-br from-purple-500/30 to-pink-500/25 blur-[120px]" />
-        <div className="absolute -bottom-32 left-1/4 w-[750px] h-[750px] rounded-full bg-gradient-to-br from-cyan-400/30 to-blue-600/30 blur-[130px]" />
-        <div className="absolute top-2/3 right-1/4 w-[500px] h-[500px] rounded-full bg-gradient-to-br from-emerald-400/25 to-teal-500/25 blur-[100px]" />
-      </div>
+      {/* GĐ49a — BỎ 4 blob màu mờ (trước đây `blur-[100..130px]` với 4 sắc xanh/tím/hồng/ngọc).
+          Chúng là nguồn của "chữ xám trên nền pastel": mỗi vùng màn hình một sắc màu nên tương
+          phản không đo được ổn định, và hội đồng thấy nền loang lổ. Nay nền phẳng `#f1f5f9`
+          (khai ở `index.css` body) — thẻ trắng tự nổi bằng viền + bóng nhẹ. */}
 
       {/* Enterprise App Sidebar */}
       <Sidebar

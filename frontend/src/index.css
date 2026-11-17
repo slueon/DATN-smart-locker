@@ -1,13 +1,49 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 @import "leaflet/dist/leaflet.css";
 
 /* =========================================================================
-   APPLE iOS LIQUID GLASS DESIGN SYSTEM (SMART LOCKER PTIT 2026)
+   GĐ49a — "BẢNG ĐIỀU KHIỂN VẬN HÀNH" (thay hệ "Apple Liquid Glass" cũ)
+
+   VẤN ĐỀ ĐÃ ĐO (ảnh `scripts/evidence/ui/*.png` trước khi sửa):
+   nền là 5 radial-gradient pastel chồng nhau + 4 blob màu mờ (App.jsx) + thẻ kính
+   `backdrop-filter: blur(28px)` ⇒ chữ xám trên nền màu, tương phản thấp, và mỗi
+   vùng là một sắc màu khác nhau nên mắt không biết đâu là việc cần làm.
+
+   HƯỚNG MỚI (user chốt): nền trung tính phẳng, thẻ trắng viền rõ, sidebar tối,
+   MỘT màu chủ đạo (blue-600), MỘT font (Be Vietnam Pro — mono chỉ cho mã đơn/OTP/số đo),
+   tủ là trung tâm.
+
+   RÀNG BUỘC: GIỮ NGUYÊN TÊN LỚP (`.liquid-glass`, `.liquid-glass-card`,
+   `.liquid-glass-subtle`, `.liquid-glass-dark`) vì hàng chục component đang dùng —
+   đổi tên là phải sửa 3 tab nghiệp vụ, nằm ngoài phạm vi thẻ 49a.
    ========================================================================= */
 
+/* =========================================================================
+   GĐ49a VÒNG 2 — SỬA GỐC FONT: `@theme` của Tailwind v4
+
+   LỖI ĐO ĐƯỢC (minh, 17/11 11:20): sau đăng nhập cả 3 vai trò computed ra
+   `-apple-system, BlinkMacSystemFont, "Segoe UI", …` chứ KHÔNG phải Be Vietnam Pro.
+
+   NGUYÊN NHÂN: `App.jsx:82` (và nhiều component khác) dùng class **`font-sans`**.
+   Tailwind v4 sinh `.font-sans { font-family: var(--font-sans); }` nằm trong **utilities
+   layer**, mà layer này thắng `:root { font-family: … }` ở dưới. `--font-sans` mặc định của
+   Tailwind v4 là font HỆ THỐNG ⇒ chữ trong layout bị đổi sang font hệ thống.
+
+   VÌ SAO SỬA Ở ĐÂY MÀ KHÔNG GỠ `font-sans`: gỡ class ở `App.jsx` chỉ chữa đúng một chỗ;
+   17 file khác vẫn còn `font-sans`/`font-mono` (grep: xem STATE MỐC 6). Khai `@theme` thì
+   **mọi** chỗ dùng `font-sans`, `font-mono`, `font-*` đều trỏ về đúng font — một chỗ sửa,
+   tất cả cùng đúng, và không phải đổi tên lớp nào (điều cấm #2 giữ nguyên).
+   ========================================================================= */
+
+@theme {
+  --font-sans: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Mono CHỈ cho mã đơn / OTP / số đo — không dùng cho chữ thân bài. */
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 :root {
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color-scheme: light;
 }
 
@@ -15,17 +51,10 @@ body {
   min-height: 100vh;
   color: #0f172a;
   overflow-x: hidden;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: 
-    radial-gradient(circle at 5% 10%, rgba(59, 130, 246, 0.28) 0%, transparent 45%),
-    radial-gradient(circle at 95% 12%, rgba(168, 85, 247, 0.25) 0%, transparent 45%),
-    radial-gradient(circle at 50% 45%, rgba(99, 102, 241, 0.16) 0%, transparent 50%),
-    radial-gradient(circle at 12% 85%, rgba(6, 182, 212, 0.24) 0%, transparent 45%),
-    radial-gradient(circle at 88% 85%, rgba(244, 114, 182, 0.20) 0%, transparent 40%),
-    linear-gradient(135deg, #dbeafe 0%, #ede9fe 35%, #e0f2fe 70%, #f5f3ff 100%);
-  background-attachment: fixed;
+  /* Nền PHẲNG: một màu trung tính, không gradient, không blob. */
+  background: #f1f5f9;
 }
 
 code, kbd, samp, pre, .font-mono {
@@ -33,58 +62,44 @@ code, kbd, samp, pre, .font-mono {
 }
 
 /* =========================================================================
-   LIQUID GLASS CORE UTILITY CLASSES (APPLE FROSTED REFRACTION)
+   THẺ ĐẶC (giữ nguyên tên lớp "liquid-glass*" — xem ghi chú đầu file)
+
+   Mọi lớp nay là thẻ ĐẶC: nền trắng, viền slate-200, bo 12–16px, bóng nhẹ.
+   KHÔNG `backdrop-filter` — đó chính là thứ làm chữ nhoè trên nền màu và khiến
+   tương phản không đo được ổn định.
    ========================================================================= */
 
-/* Liquid Glass Standard (Mặt kính mờ cao cấp tiêu chuẩn Apple) */
+/* Thẻ chính (trước: kính mờ 55% + blur 28px) */
 .liquid-glass {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(28px) saturate(190%) contrast(102%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%) contrast(102%);
-  border: 1px solid rgba(255, 255, 255, 0.70);
-  box-shadow: 
-    0 16px 36px -10px rgba(15, 23, 42, 0.08),
-    0 4px 12px -2px rgba(15, 23, 42, 0.03),
-    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.3);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.04), 0 1px 3px 0 rgba(15, 23, 42, 0.06);
 }
 
-/* Liquid Glass Card (Thẻ Card nổi bật với viền quang sai specular highlight) */
+/* Thẻ nổi bật (trước: gradient kính + blur 30px) */
 .liquid-glass-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0.46) 100%);
-  backdrop-filter: blur(30px) saturate(200%) contrast(104%);
-  -webkit-backdrop-filter: blur(30px) saturate(200%) contrast(104%);
-  border: 1px solid rgba(255, 255, 255, 0.80);
-  box-shadow: 
-    0 20px 45px -12px rgba(30, 58, 138, 0.12),
-    0 8px 16px -4px rgba(15, 23, 42, 0.05),
-    inset 0 1.5px 2.5px 0 rgba(255, 255, 255, 1),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.4);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.04), 0 4px 12px -2px rgba(15, 23, 42, 0.08);
 }
 
-/* Liquid Glass Subtle (Kính phụ siêu mỏng trong suốt) */
+/* Thẻ phụ (trước: kính 40% + blur 20px) */
 .liquid-glass-subtle {
-  background: rgba(255, 255, 255, 0.40);
-  backdrop-filter: blur(20px) saturate(170%);
-  -webkit-backdrop-filter: blur(20px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.60);
-  box-shadow: 
-    0 8px 24px -6px rgba(15, 23, 42, 0.05),
-    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.85);
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: none;
 }
 
-/* Liquid Glass Dark / Dynamic Island (Kính đen lơ lửng kiểu Dynamic Island trên iPhone) */
+/* Khối tối (trước: kính đen 82% + blur 32px) — dùng cho thanh/dock tối */
 .liquid-glass-dark {
-  background: rgba(15, 23, 42, 0.82);
-  backdrop-filter: blur(32px) saturate(220%);
-  -webkit-backdrop-filter: blur(32px) saturate(220%);
-  border: 1px solid rgba(255, 255, 255, 0.20);
-  box-shadow: 
-    0 24px 50px -12px rgba(0, 0, 0, 0.40),
-    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.35);
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.24);
 }
 
-/* iOS Spring Button Micro-interaction */
+/* iOS Spring Button Micro-interaction — GIỮ (điều cấm #5: không bỏ animation) */
 .ios-btn {
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -97,14 +112,12 @@ code, kbd, samp, pre, .font-mono {
   transform: scale(0.97);
 }
 
-/* iOS Segmented Control Tray */
+/* iOS Segmented Control Tray — nền phẳng, không blur */
 .ios-segmented-tray {
-  background: rgba(241, 245, 249, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(226, 232, 240, 0.8);
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
   padding: 4px;
-  border-radius: 1rem;
+  border-radius: 12px;
 }
 
 .ios-segmented-pill {
@@ -114,21 +127,16 @@ code, kbd, samp, pre, .font-mono {
 .ios-segmented-pill.active {
   background: #ffffff;
   color: #0f172a;
-  box-shadow: 0 2px 8px -1px rgba(15, 23, 42, 0.08), 0 1px 2px 0 rgba(15, 23, 42, 0.04);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.06);
+  border: 1px solid #e2e8f0;
 }
 
-/* Ambient Radial Mesh Gradient Behind Glass */
-.ambient-glow-1 {
-  background: radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
-}
-
-.ambient-glow-2 {
-  background: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.12) 0%, transparent 70%);
-}
-
+/* Ambient glow — giữ TÊN lớp nhưng KHÔNG còn vẽ gradient màu (nền phải phẳng).
+   Đặt nền trong suốt để component cũ không vỡ layout. */
+.ambient-glow-1,
+.ambient-glow-2,
 .ambient-glow-3 {
-  background: radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.10) 0%, transparent 70%);
+  background: transparent;
 }
 
 /* =========================================================================
@@ -143,17 +151,17 @@ code, kbd, samp, pre, .font-mono {
   font-family: inherit;
 }
 
+/* GĐ49a — popup bản đồ: thẻ ĐẶC (bỏ `backdrop-filter` cho cùng một ngôn ngữ với thẻ khác). */
 .leaflet-popup-content-wrapper {
-  background: rgba(255, 255, 255, 0.94) !important;
-  backdrop-filter: blur(20px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.9) !important;
-  border-radius: 1rem !important;
-  box-shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.12) !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.12) !important;
   color: #0f172a !important;
 }
 
 .leaflet-popup-tip {
-  background: rgba(255, 255, 255, 0.94) !important;
+  background: #ffffff !important;
 }
 
 /* =========================================================================
