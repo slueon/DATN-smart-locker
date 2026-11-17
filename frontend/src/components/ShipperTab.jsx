@@ -11,9 +11,30 @@ import {
   Truck, QrCode, Timer, ShieldCheck, CheckCircle2, AlertTriangle,
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
   DoorOpen, Weight, Layers, ArrowRight, User, PackageX,
-  Barcode, ScanLine, Scan, Camera, Sparkles, ChevronRight,
-  Shield, Volume2, Cpu, Clock, PlusCircle, Radio
+  Barcode, Scan, Camera, Sparkles, ChevronRight,
+  Shield, Volume2, Cpu, Clock, PlusCircle
 } from 'lucide-react';
+
+/**
+ * GĐ57 vòng sửa 1 — TẬP LOẠI SỰ KIỆN THÀNH CÔNG (so khớp CHÍNH XÁC, không dùng regex).
+ *
+ * <p><b>Vì sao:</b> bản vòng 1 lọc bằng `/VERIFIED|VALID|SUCCESS|SELECTED/`. Regex đó khớp
+ * <b>chuỗi con</b> `VALID` bên trong `ORDER_INVALID` ⇒ coi "quét sai mã vận đơn" là thành công
+ * và ẩn dòng đỏ (minh đo được: `ORDER_INVALID` seq 32 ⇒ 0 dòng). Nay so khớp đúng tập hằng của
+ * backend (`KioskEventService.java:45-50`): mọi loại KHÁC tập này là sự kiện lỗi ⇒ hiện dòng đỏ.
+ */
+const KIOSK_EVENT_THANH_CONG = new Set([
+  'SHIPPER_VERIFIED',
+  'ORDER_VALID',
+  'COMPARTMENT_SELECTED',
+  'DEPOSIT_SUCCESS',
+]);
+
+/**
+ * GĐ57 vòng sửa 1 — số mili-giây giữ thanh ở bước 6 sau `DEPOSIT_SUCCESS` (thẻ: ít nhất 4 s).
+ * Đặt ở phạm vi module để không lọt vào dependency của effect và không đổi giữa các lần render.
+ */
+const GIU_BUOC_6_MS = 4000;
 
 /**
  * GĐ49c — THANH TIẾN TRÌNH 4 BƯỚC (CHỈ ĐỌC state có sẵn — điều cấm #1).
@@ -22,20 +43,21 @@ import {
  * tủ/firmware dẫn dắt, GĐ31b). Component này <b>không</b> đổi state, không gọi API, không thêm
  * timer — nó chỉ HIỂN THỊ bước hiện tại để shipper biết mình đang ở đâu. Mọi logic giữ nguyên.
  *
- * <p><b>Bốn bước</b> (đúng nhãn nghiệp vụ, không phải trang trí):
- * Chọn đơn → Quét QR shipper → Mở ngăn &amp; bỏ hàng → Đóng cửa xác nhận.
+ * <p><b>Năm bước</b> (GĐ57, đúng trình tự kiosk): Chọn đơn → Quét QR shipper → Quét mã vận đơn →
+ * Chọn ngăn &amp; bỏ hàng → Đóng cửa xác nhận. `buocHienTai` 1..6; 6 = đã nạp xong (cả 5 tick).
  *
- * @param buocHiệnTại 1..4
+ * @param buocHienTai 1..6
  */
 function DepositSteps({ buocHienTai }) {
   const buoc = [
     { n: 1, nhan: 'Chọn đơn' },
     { n: 2, nhan: 'Quét QR shipper' },
-    { n: 3, nhan: 'Mở ngăn & bỏ hàng' },
-    { n: 4, nhan: 'Đóng cửa xác nhận' },
+    { n: 3, nhan: 'Quét mã vận đơn' },
+    { n: 4, nhan: 'Chọn ngăn & bỏ hàng' },
+    { n: 5, nhan: 'Đóng cửa xác nhận' },
   ];
   return (
-    <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="deposit-steps" data-buoc={buocHienTai}>
+    <ol className="grid grid-cols-2 sm:grid-cols-5 gap-2" data-testid="deposit-steps" data-buoc={buocHienTai}>
       {buoc.map((b) => {
         const xong = b.n < buocHienTai;
         const dang = b.n === buocHienTai;
@@ -115,7 +137,30 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const lastSeqRef = useRef(null);
   // GĐ42 vòng 2 — tủ cuối cùng đã poll. Giữ lại để poll không chết khi danh sách PENDING rỗng.
   const lastPolledLockerRef = useRef(null);
-  const [kioskError, setKioskError] = useState(null);
+  const [, setKioskError] = useState(null);
+
+  /**
+   * GĐ57 vòng sửa 1 — "VỪA NẠP XONG": giữ thanh ở bước 6 (cả 5 tick) ít nhất 4 giây.
+   *
+   * <p><b>Vì sao cần:</b> `DEPOSIT_SUCCESS` kích `loadOrders()`; đơn vừa nạp rời danh sách
+   * PENDING nên với đơn CUỐI danh sách, `activeOrder` thành `null` và thanh rơi ngay về bước 1 —
+   * minh đo được bước 6 chỉ sống ~5 ms (0 khung rAF). Đây là bộ nhớ HIỂN THỊ thuần frontend
+   * (mã đơn + thời điểm), KHÔNG đổi state nghiệp vụ, không gọi API thêm.
+   *
+   * <p><b>Quy ước:</b> chỉ giữ khi shipper CHƯA chọn đơn khác — `selectedOrderId` đổi sang đơn
+   * khác thì thanh theo đơn mới ngay (điều cấm #5: không đổi thứ tự/nhãn bước).
+   */
+  const [vuaNapXong, setVuaNapXong] = useState(null); // { orderId, at }
+  const vuaNapXongTimerRef = useRef(null);
+  const selectedOrderIdRef = useRef(null);
+  const seenDepositSuccessRef = useRef(new Set());
+  useEffect(() => {
+    selectedOrderIdRef.current = selectedOrderId;
+  }, [selectedOrderId]);
+  // Cleanup: rời tab thì không giữ timer (tránh setState lên component đã unmount).
+  useEffect(() => () => {
+    if (vuaNapXongTimerRef.current) clearTimeout(vuaNapXongTimerRef.current);
+  }, []);
 
   // GM65 Scanner State
   const [scannedBarcode, setScannedBarcode] = useState(null);
@@ -842,6 +887,35 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
 
   const activeOrder = orders.find((o) => o.orderId === selectedOrderId) || filteredPending[0] || null;
 
+  // GĐ57 vòng sửa 1 — BẮT `DEPOSIT_SUCCESS` CỦA ĐƠN ĐANG CHỌN ĐỂ GIỮ THANH Ở BƯỚC 6.
+  //
+  // <p><b>Vì sao phải "nhớ":</b> sự kiện này kích `loadOrders()`; đơn vừa nạp rời danh sách
+  // PENDING nên với đơn CUỐI danh sách `activeOrder` thành `null` và thanh rơi về bước 1 ngay
+  // trong cùng khung hình — minh đo được bước 6 chỉ sống ~5 ms. Nay ghi lại mã đơn + thời điểm
+  // (thuần hiển thị, không đổi state nghiệp vụ) và giữ bước 6 ít nhất `GIU_BUOC_6_MS`.
+  //
+  // <p>Sự kiện của ĐƠN KHÁC không kích hoạt (điều cấm #5: không đổi thứ tự/nhãn bước, chỉ hiển thị).
+  useEffect(() => {
+    if (!kioskEvents.length) return;
+    const donDangChon = selectedOrderIdRef.current;
+    for (const e of kioskEvents) {
+      if (e.type !== 'DEPOSIT_SUCCESS') continue;
+      if (seenDepositSuccessRef.current.has(e.seq)) continue;
+      seenDepositSuccessRef.current.add(e.seq);
+      // `orderId` null khi tủ báo nạp xong mà không tìm thấy đơn PENDING của ngăn đó — khi ấy
+      // gán cho đơn đang chọn để vẫn có phản hồi cho shipper.
+      const maDon = e.orderId || donDangChon;
+      if (!maDon) continue;
+      if (donDangChon && maDon !== donDangChon) continue;
+      setVuaNapXong({ orderId: maDon, at: Date.now() });
+      if (vuaNapXongTimerRef.current) clearTimeout(vuaNapXongTimerRef.current);
+      vuaNapXongTimerRef.current = setTimeout(() => {
+        vuaNapXongTimerRef.current = null;
+        setVuaNapXong(null);
+      }, GIU_BUOC_6_MS);
+    }
+  }, [kioskEvents]);
+
   // GĐ40 — telemetry của ĐÚNG tủ đang hiện sơ đồ (không lẫn tủ khác).
   const telemetry = (activeOrder && telemetryByLocker)
     ? (telemetryByLocker[activeOrder.lockerId] || null)
@@ -1086,13 +1160,37 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
           Đây là suy ra từ dữ liệu thật, không phải bịa tiến trình. */}
       <DepositSteps
         buocHienTai={(() => {
+          // GĐ57 vòng sửa 1 — ĐANG GIỮ BƯỚC 6 SAU KHI NẠP XONG (≥4 s, xem effect ở trên).
+          // Shipper chọn đơn KHÁC thì `selectedOrderId` lệch mã đơn vừa nạp ⇒ nhả ngay, theo đơn mới.
+          if (vuaNapXong && (!selectedOrderId || selectedOrderId === vuaNapXong.orderId)) return 6;
           if (!activeOrder) return 1;                       // chưa chọn đơn
           const co = (loai) => kioskEvents.some((e) => e.type === loai);
-          if (co('DEPOSIT_SUCCESS')) return 4;              // tủ đã chốt nạp xong
-          if (co('SHIPPER_VERIFIED') || co('ORDER_VALID') || co('COMPARTMENT_SELECTED')) return 3;
-          return 2;                                        // đã chọn đơn, chờ quét QR tại tủ
+          if (co('DEPOSIT_SUCCESS')) return 6;              // tủ đã chốt nạp xong: cả 5 tick
+          if (co('COMPARTMENT_SELECTED')) return 5;
+          if (co('ORDER_VALID')) return 4;
+          if (co('SHIPPER_VERIFIED')) return 3;
+          return 2;                                       // đã chọn đơn, chờ quét QR tại tủ
         })()}
       />
+
+      {/* GĐ57 — phản hồi LỖI từ tủ (thay cho khối "Theo dõi tủ thật" đã bỏ): chỉ khi sự kiện MỚI
+          NHẤT (seq lớn nhất) của đơn đang chọn không phải loại thành công. Sự kiện thành công tiếp
+          theo ⇒ dòng tự mất. Sự kiện không gắn orderId vẫn tính (lỗi quét sai mã chưa biết đơn). */}
+      {activeOrder && (() => {
+        const lienQuan = kioskEvents.filter((e) => !e.orderId || e.orderId === activeOrder.orderId);
+        if (lienQuan.length === 0) return null;
+        const moiNhat = lienQuan.reduce((a, b) => ((b.seq ?? 0) > (a.seq ?? 0) ? b : a));
+        if (KIOSK_EVENT_THANH_CONG.has(moiNhat.type || '')) return null;
+        return (
+          <div
+            data-testid="kiosk-error-line"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{moiNhat.message || moiNhat.type}</span>
+          </div>
+        );
+      })()}
 
       {/* Main Workspace (Deposit Flow & Queue) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -1557,146 +1655,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                   )}
                 </div>
               </div>
-              )}
-
-              {/* GĐ17 — THEO DÕI TỦ THẬT (thay thanh 4 bước mô phỏng) */}
-              {!isDepositing && (
-                <div className="p-5 rounded-2xl bg-slate-900 text-white border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Radio className="w-5 h-5 text-emerald-400" />
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                        Theo dõi tủ thật — {activeOrder.lockerName || activeOrder.lockerId}
-                      </span>
-                    </div>
-                    <span className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      Đang lắng nghe
-                    </span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Thao tác trực tiếp trên màn hình cảm ứng của tủ. Web tự hiện kết quả khi tủ báo về
-                    — không cần bấm gì ở đây.
-                  </p>
-
-                  {kioskError && (
-                    <div className="p-3 bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs rounded-xl flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                      <span>{kioskError}</span>
-                    </div>
-                  )}
-
-                  {/* GĐ38 — THANH 3 BƯỚC, suy HOÀN TOÀN từ `kioskEvents` THẬT.
-                      Vì sao có hiệu ứng này (không phải trang trí): firmware báo từng mốc khi
-                      shipper thao tác tại tủ (quét QR → quét mã đơn → chọn ngăn). Thanh này phản
-                      ánh đúng tiến trình phần cứng đã báo, giúp shipper biết còn thiếu bước nào.
-                      ⚠ KHÔNG timer giả, KHÔNG đếm theo lần bấm (điều cấm #1): mỗi bước chỉ sáng khi
-                      có sự kiện tương ứng. Chưa có sự kiện → cả 3 xám, không có ✓ giả (phép thử 5).
-                      ✓ dùng lại `.sl-draw-check` của GĐ37 (điều cấm #5: không sửa class cũ). */}
-                  {(() => {
-                    const co = (loai) => kioskEvents.some((e) => e.type === loai);
-                    const buoc = [
-                      { key: 'SHIPPER_VERIFIED', nhan: 'Xác thực', xong: co('SHIPPER_VERIFIED') },
-                      { key: 'ORDER_VALID', nhan: 'Mã đơn', xong: co('ORDER_VALID') },
-                      { key: 'COMPARTMENT_SELECTED', nhan: 'Chọn ngăn', xong: co('COMPARTMENT_SELECTED') },
-                    ];
-                    return (
-                      <div className="flex items-center gap-1.5" data-testid="kiosk-steps">
-                        {buoc.map((b, i) => (
-                          <div key={b.key} className="flex items-center gap-1.5 flex-1">
-                            <div className="flex flex-col items-center gap-1 shrink-0">
-                              <span
-                                data-testid={`kiosk-step-${i}`}
-                                data-done={b.xong ? '1' : '0'}
-                                className={`w-6 h-6 rounded-full flex items-center justify-center border transition-colors duration-200 ${
-                                  b.xong
-                                    ? 'bg-emerald-500 border-emerald-400 text-white'
-                                    : 'bg-slate-800 border-slate-600 text-slate-500'
-                                }`}
-                              >
-                                {b.xong ? (
-                                  <svg
-                                    className="draw-check w-3.5 h-3.5"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    aria-hidden="true"
-                                  >
-                                    <path d="M20 6 9 17l-5-5" />
-                                  </svg>
-                                ) : (
-                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                                )}
-                              </span>
-                              <span className={`text-[9px] font-bold leading-none ${
-                                b.xong ? 'text-emerald-400' : 'text-slate-500'
-                              }`}>
-                                {b.nhan}
-                              </span>
-                            </div>
-                            {i < buoc.length - 1 && (
-                              <span
-                                className={`flex-1 h-0.5 rounded-full transition-colors duration-200 ${
-                                  buoc[i + 1].xong ? 'bg-emerald-500/70' : 'bg-slate-700'
-                                }`}
-                              />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
-
-                  {kioskEvents.length === 0 ? (
-                    <div className="p-6 rounded-xl border-2 border-dashed border-slate-700 bg-slate-950 text-center">
-                      <ScanLine className="w-10 h-10 text-slate-600 mx-auto mb-2" />
-                      <p className="text-xs text-slate-400 font-semibold">
-                        Chờ thao tác tại tủ…
-                      </p>
-                      <p className="text-[10px] text-slate-500 mt-1">
-                        Bước 1: quét mã QR shipper tại tủ · Bước 2: quét mã vận đơn · Bước 3: chọn ngăn
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                      {kioskEvents.map((ev) => {
-                        // `type` là tên do backend đặt (SHIPPER_VERIFIED, ORDER_VALID, ...).
-                        const ok = /VERIFIED|VALID|SUCCESS|SELECTED/.test(ev.type || '');
-                        return (
-                          <div
-                            key={`${ev.seq}-${ev.type}`}
-                            className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
-                              ok
-                                ? 'bg-emerald-950/40 border-emerald-500/40'
-                                : 'bg-rose-950/40 border-rose-500/40'
-                            }`}
-                          >
-                            {ok
-                              ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                              : <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />}
-                            <div className="min-w-0">
-                              <p className={`font-bold ${ok ? 'text-emerald-300' : 'text-rose-300'}`}>
-                                {ev.message || ev.type}
-                              </p>
-                              <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                                {ev.type}
-                                {ev.orderId ? ` · ${ev.orderId}` : ''}
-                                {ev.compartment ? ` · Ngăn #${ev.compartment}` : ''}
-                                {ev.at
-                                  ? ` · ${new Date(ev.at).toLocaleTimeString('vi-VN')}`
-                                  : ''}
-                              </p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
               )}
 
               {/* Real-Time Locker Visual Cabinet */}
