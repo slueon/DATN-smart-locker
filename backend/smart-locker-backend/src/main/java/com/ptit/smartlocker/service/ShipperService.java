@@ -965,8 +965,18 @@ public class ShipperService {
         List<Compartment> empties = compartmentRepository
                 .findWithLockByLockerIdAndStatus(targetLocker.getLockerId(), "EMPTY");
 
+        // GĐ54-L2: đơn đã giữ ngăn RESERVED ở chính tủ đích và không đòi ngăn khác ⇒ giữ nguyên
+        // ngăn đó (nó không nằm trong `empties` nên nếu không xử lý sẽ 409 oan khi tủ hết ngăn trống).
+        boolean giuNguyenNganCu = old != null
+                && "RESERVED".equalsIgnoreCase(old.getStatus())
+                && old.getLocker() != null
+                && targetLocker.getLockerId().equals(old.getLocker().getLockerId())
+                && (compartmentIndex == null || compartmentIndex.equals(old.getCompIndex()));
+
         Compartment target;
-        if (compartmentIndex != null) {
+        if (giuNguyenNganCu) {
+            target = old;
+        } else if (compartmentIndex != null) {
             if (compartmentIndex < 1) {
                 throw new IllegalArgumentException("Chỉ số ngăn không hợp lệ (phải từ 1 trở lên)!");
             }

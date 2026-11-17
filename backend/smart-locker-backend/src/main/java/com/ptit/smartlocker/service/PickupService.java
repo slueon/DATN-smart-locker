@@ -81,7 +81,10 @@ public class PickupService {
      * Khách hàng lấy đồ tại tủ (Hỗ trợ nhập OTP trên màn hình cảm ứng hoặc Quét mã QR qua GM65).
      * Tích hợp cơ chế chống Brute-force: Tạm khóa khi nhập sai quá 5 lần.
      */
-    @Transactional
+    // GĐ54-L1: noRollbackFor — nhánh sai mã tăng failed_attempts rồi ném BusinessException; nếu
+    // rollback thì bộ đếm không bao giờ được lưu. Mọi BusinessException trong hàm này đều ném TRƯỚC
+    // khi ghi trạng thái đơn/ngăn (mục 5 chỉ chạy khi thành công), nên không giữ lại ghi dở nào.
+    @Transactional(noRollbackFor = BusinessException.class)
     public PickupDTO.PickupResponse verifyAndPickup(PickupDTO.VerifyCredentialRequest request) {
         String lockerId = request.getLockerId() != null ? request.getLockerId().trim() : "";
         String code = request.getCode() != null ? request.getCode().trim() : "";
