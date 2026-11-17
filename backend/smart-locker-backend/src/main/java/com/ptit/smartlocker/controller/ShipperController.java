@@ -24,7 +24,8 @@ public class ShipperController {
     }
 
     /**
-     * Shipper bấm "Xác minh danh tính" trên Web Mobile -> Sinh mã QR động 60s.
+     * Shipper bấm "Xác minh danh tính" trên Web Mobile -> Trả mã QR định danh CỐ ĐỊNH của shipper
+     * (GĐ15/GĐ33: mỗi shipper một mã, không hết hạn; mỗi lần gọi chỉ mở phiên quét mới).
      *
      * <p><b>ĐÃ BỊT:</b> trước đây nhận `@RequestParam(defaultValue = "SHIPPER_001") shipperId`,
      * nên bất kỳ ai gọi endpoint cũng xin được mã QR định danh cho shipper bất kỳ (kể cả
@@ -42,7 +43,7 @@ public class ShipperController {
                     .body(ApiResponse.error("Chưa xác thực: vui lòng đăng nhập bằng tài khoản shipper!"));
         }
         ShipperDTO.GenerateTokenResponse response = shipperService.generateDynamicToken(shipperId);
-        return ResponseEntity.ok(ApiResponse.ok("Mã QR Shipper đã được tạo, hiệu lực trong 60 giây", response));
+        return ResponseEntity.ok(ApiResponse.ok("Mã QR định danh Shipper (mã cố định, không hết hạn) — quét tại tủ để xác thực", response));
     }
 
     /**

@@ -1,150 +1,135 @@
-# BẢN ĐỒ HỆ THỐNG TỦ GIAO NHẬN ĐỒ THÔNG MINH ỨNG DỤNG IoT (SMART LOCKER)
+# HỆ THỐNG TỦ GIAO NHẬN HÀNG THÔNG MINH ỨNG DỤNG IoT (SMART LOCKER)
 
-Dự án Đồ án Tốt nghiệp ngành Kỹ thuật Điện tử - Viễn thông, Học viện Công nghệ Bưu chính Viễn thông (PTIT).
+Đồ án tốt nghiệp ngành Kỹ thuật Điện tử – Viễn thông, Học viện Công nghệ Bưu chính Viễn thông (PTIT).
 
-## 📌 Giới Thiệu Đề Tài
-Hệ thống giải quyết bài toán giao nhận hàng hóa chặng cuối (Last-Mile Delivery) thông qua hệ thống Tủ giao nhận đồ thông minh ứng dụng IoT. Tích hợp giữa Web Thương mại điện tử (E-Commerce), Bản đồ số GIS (Leaflet) và Tủ phần cứng IoT điều khiển qua MQTT/HTTP.
+## 📌 Giới thiệu
 
-### 🌟 Các Điểm Đổi Mới Nổi Bật:
-1. **Khách hàng chủ động đặt trước tủ**: Chọn trạm tủ trên bản đồ Leaflet và chọn ngày nhận hàng mong muốn ngay tại trang thanh toán.
-2. **Cơ chế Khóa Tranh Chấp Nguyên Tử (Atomic Pessimistic Locking)**: Ngăn chặn tuyệt đối tình trạng đặt trùng ngăn (Double-Booking / Overselling) trong CSDL MySQL bằng cơ chế `SELECT FOR UPDATE` trên cả Lịch biểu (`LockerSlotSchedule`) và Ngăn tủ (`Compartment`).
-3. **Bảo mật Mật khẩu chuẩn Doanh nghiệp (BCrypt)**: Loại bỏ hoàn toàn plaintext password, mã hóa băm một chiều với BCrypt 10 rounds và cơ chế Transparent Auto-Migration tự động nâng cấp mật khẩu cũ.
-4. **Cơ chế Chống Dò Mã (Anti-Brute-Force Lockout)**: Tạm khóa mã nhận hàng sau 5 lần nhập sai liên tiếp, đồng thời tích hợp lá chắn trạm tủ chống quét từ điển tự động.
-5. **Chính sách lưu kho hết 24h00 ngày hôm sau**: Hàng sau khi shipper nạp vào tủ sẽ được lưu trữ đến hết 24h00 của ngày tiếp theo, tích hợp đồng hồ đếm ngược chuyển màu và cảnh báo tự động.
-6. **Quy trình 2 bước bảo mật tại tủ (TFT & GM65)**:
-   - Bước 1: Shipper quét **Mã QR Định Danh** qua camera GM65 để xác thực danh tính. Mã này
-     **không có hạn** (GĐ15 — bỏ cơ chế 60 giây theo yêu cầu người dùng); hệ quả bảo mật ghi ở
-     `docs/GIOI-HAN-BAOMAT.md` mục 6.
-   - Bước 2: Quét mã vận đơn đơn hàng ➔ Tủ tự động bật mở khóa Solenoid đúng ngăn.
-7. **Xác thực cảm biến kép (Dual-Sensor)**: Cảm biến từ cửa MC-38 xác nhận đóng kín + Cảm biến cân tải trọng Load cell HX711 xác nhận có kiện hàng trong ngăn.
-8. **Nhận hàng bằng mã OTP & QR động**: Khách hàng có thể quét mã QR động hoặc yêu cầu tạo mã OTP 6 số (hiệu lực 5 phút), ràng buộc chống IDOR theo số điện thoại người nhận.
-9. **Phân hệ Quản trị (Admin Portal)**: Dashboard KPI tỷ lệ lấp đầy, giám sát nhịp tim kết nối Heartbeat ESP32, sơ đồ ma trận các ngăn tủ thời gian thực, mở khóa khẩn cấp từ xa và điều phối đơn quá hạn.
+Smart Locker giải quyết bài toán giao nhận chặng cuối (last-mile delivery) bằng mạng lưới tủ giao nhận tự động.
+Hệ thống gồm ba phần nối với nhau:
 
----
+- **Web** (React) cho ba vai trò: Khách hàng, Shipper, Quản trị viên.
+- **Backend** (Spring Boot + MySQL) giữ toàn bộ nghiệp vụ và là nguồn sự thật duy nhất.
+- **Tủ IoT** (ESP32 + màn hình TFT + đầu đọc GM65) nói chuyện với backend qua **MQTT over TLS (cổng 8883)**.
 
-## 🛠️ Công Nghệ Sử Dụng (Tech Stack)
+Mạng lưới mẫu có **10 trạm tủ**: tủ thật duy nhất `Tu_1` ánh xạ vào `LOCKER_HN_01`, 9 tủ còn lại là tủ ảo dùng để demo
+(web hiển thị "Tủ demo — không có thiết bị"). Tủ được coi là trực tuyến khi có nhịp tim trong 5 phút gần nhất.
 
-### 1. Frontend
-- **Framework**: React 19, Vite 8, Tailwind CSS v4
-- **Bản đồ**: Leaflet.js, OpenStreetMap
-- **Thư viện UI/Icon**: Lucide React, QRCode.react, Axios
-- **Cấu hình môi trường**: File `.env` (`VITE_API_URL=http://localhost:8080/api`)
-- **Quản lý phiên & vai trò**: Phân quyền 3 vai trò (Khách hàng, Shipper, Quản trị viên)
+## 🔄 Luồng nghiệp vụ chính
+
+**1. Tạo đơn và chọn tủ (Shipper).** Shipper tạo đơn và gắn cho một tài khoản khách hàng, chọn trạm tủ trên bản đồ
+(gợi ý tủ gần, lộ trình giao theo đường đi thật qua OSRM) rồi có thể **giữ trước một ngăn trong 1 giờ hoặc 2 giờ**.
+Hết hạn mà chưa nạp, ngăn tự được nhả.
+
+**2. Nạp hàng tại tủ.** Shipper quét **mã QR định danh** của mình trên camera GM65 (mỗi shipper một mã cố định,
+không hết hạn — rủi ro được ghi ở [docs/GIOI-HAN-BAOMAT.md](docs/GIOI-HAN-BAOMAT.md) mục 6), quét mã đơn, tủ mở đúng ngăn.
+Khi cửa đóng và cảm biến xác nhận có hàng, đơn chuyển `DEPOSITED`, ngăn `OCCUPIED`. Mở cửa mà không bỏ hàng
+thì ngăn được trả về trống và đơn quay lại chờ giao.
+
+**3. Khách nhận hàng.** Khách mở tủ bằng **QR** hoặc **OTP 6 số (hiệu lực 5 phút)**, trên web hoặc trực tiếp tại màn hình tủ.
+Mỗi lần nhập hợp lệ phát **đúng một lệnh mở**. Đơn chỉ chốt `COMPLETED` khi cửa đóng **và** ngăn rỗng
+(cân ≤ 5 g, cảm biến hồng ngoại không thấy vật); còn hàng thì đơn trở lại `DEPOSITED` để khách mở lại.
+
+**4. Quá hạn và thu hồi.** Hàng được lưu đến **hết 24h00 ngày hôm sau**. Quá hạn, đơn chuyển `OVERDUE` (tác vụ nền
+mỗi 10 phút hoặc Admin bấm quét). Chỉ **shipper** được thu hồi: phải quét QR tại tủ thì nút **"Mở Cửa Ngăn"** mới hiện,
+bấm nút thì tủ nhận lệnh mở thật, xác nhận "Đã lấy hàng & đóng cửa" thì đơn chốt và ngăn được giải phóng.
+
+**5. Đồng bộ thời gian thực.** Web tự cập nhật sau khi nạp/nhận hàng (≤ 3 giây, không cần F5) nhờ sự kiện Kiosk
+và nhịp hỏi 1,5 giây. Sơ đồ ngăn và cảm biến (cửa, cân, hồng ngoại) hiển thị giống nhau ở cả ba vai trò.
+
+## 👥 Chức năng theo vai trò
+
+| Vai trò | Chức năng |
+|---|---|
+| **Khách hàng** | Xem bưu kiện của tôi, mở tủ bằng QR/OTP, đổi mã mới, xem bản đồ mạng lưới tủ |
+| **Shipper** | Tạo đơn cho khách, chọn tủ và giữ ngăn 1h/2h, lấy QR định danh, nạp hàng, thu hồi đơn quá hạn, lộ trình giao hàng |
+| **Quản trị viên** | Dashboard KPI, ma trận ngăn và cảm biến theo thời gian thực, mở ngăn khẩn cấp, **bảo trì toàn tủ hoặc từng ngăn** (tủ bảo trì không nhận hàng), quét đơn quá hạn, lịch sử mở tủ (ai mở, lúc nào), cấp tài khoản |
+
+## 🔐 Bảo mật
+
+- Mật khẩu băm **BCrypt**; đăng nhập cấp phiên có hạn 8 giờ; mọi API phân quyền theo vai trò ở `SecurityConfig`.
+- **Chống dò mã**: khoá mã nhận hàng sau 5 lần nhập sai.
+- **Chống đặt trùng ngăn** bằng khoá bi quan (`SELECT … FOR UPDATE`) trên lịch biểu và ngăn tủ.
+- MQTT qua **TLS 8883**, có Last Will; uplink (tủ → backend) dùng topic chung và mang `locker_id` trong payload,
+  downlink (backend → tủ) dùng topic riêng `ptit/{id}/…` để lệnh chỉ tới đúng tủ.
+- Các giới hạn còn lại (broker công cộng, QR shipper cố định…) được liệt kê thẳng thắn ở [docs/GIOI-HAN-BAOMAT.md](docs/GIOI-HAN-BAOMAT.md).
+
+## 🛠️ Công nghệ
+
+- **Frontend**: React 19, Vite 8, Tailwind CSS 4, Leaflet / React-Leaflet (OpenStreetMap, OSRM), Axios, Lucide, qrcode.react, oxlint.
+- **Backend**: Java 21, Spring Boot 4.0.8 (Web MVC, Data JPA, Security, WebSocket), Hibernate, MySQL 8.0,
+  Eclipse Paho MQTT 3.1.1, springdoc-openapi (Swagger UI), tác vụ nền `@Scheduled`, JUnit 5.
+- **Phần cứng**: ESP32, màn hình TFT cảm ứng SPI (ILI9341/XPT2046), đầu đọc QR GM65 (UART), khoá Solenoid 12 V + relay,
+  công tắc cửa MC-38, loadcell + HX711, cảm biến hồng ngoại, còi.
+
+## 🚀 Cài đặt và chạy
+
+**Yêu cầu:** JDK 21, Node.js 20+, MySQL 8.0 (cổng 3306).
+
+### 1. Cơ sở dữ liệu
+```bash
+mysql -uroot -p < schema.sql   # tạo DB và bảng, an toàn, chạy lại được
+mysql -uroot -p < seed.sql     # (tuỳ chọn) 10 trạm tủ + 3 tài khoản mẫu, chạy MỘT lần
+```
 
 ### 2. Backend
-- **Ngôn ngữ & Runtime**: Java 17 (Maven compiler target release 17, tương thích JDK 17 - 21)
-- **Framework**: Spring Boot 3.4.x / 4.x, Spring Data JPA, Spring Security Crypto
-- **Bảo mật**: BCrypt PasswordEncoder, Whitelist CORS Security, Anti-Brute-Force Tracker
-- **ORM / Database**: Hibernate, MySQL 8.0 (InnoDB Atomic Insert & Pessimistic Locking)
-- **Giao thức**: RESTful API, MQTT Broker, WebSocket SockJS / STOMP
-- **Tác vụ nền**: `@EnableScheduling` Cron Job quét đơn quá hạn tự động
-- **Kiểm thử tự động**: JUnit 5, Spring Boot Test Integration Test Suite (100% Pass)
+Mật khẩu MySQL **không nằm trong repo**. Tạo `backend/smart-locker-backend/application-local.properties` (đã gitignore):
+```properties
+spring.datasource.password=<mật-khẩu-MySQL>
+```
+rồi chạy:
+```bash
+cd backend/smart-locker-backend
+.\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
+```
+Hoặc đặt biến môi trường `DB_PASSWORD` trước khi chạy. Quên bước này thì app báo `Access denied for user 'root'` — không phải lỗi code.
 
-### 3. Phần Cứng Nhúng IoT
-- **Vi điều khiển**: ESP32 NodeMCU
-- **Màn hình**: TFT SPI Touch LCD (IL9341/XPT2046)
-- **Đầu đọc mã**: Barcode/QR Reader Module GM65 (UART)
-- **Cơ cấu chấp hành**: Khóa chốt điện Solenoid 12V, Relay Module
-- **Cảm biến**: Cảm biến cửa từ MC-38, Cảm biến tải trọng Load cell + Module HX711, Còi Buzzer cảnh báo
+Các biến hay dùng (đều có mặc định): `DB_URL`, `DB_USERNAME`, `CORS_ALLOWED_ORIGINS`, `MQTT_BROKER_URL`
+(mặc định `ssl://broker.emqx.io:8883`), `MQTT_TOPIC_BASE` (`ptit`), `MQTT_LOCKER_ID_MAP` (`Tu_1:LOCKER_HN_01`),
+`MQTT_ENABLED`, `RESERVATION_TIMEOUT_MINUTES`.
 
----
+- API: `http://localhost:8080` · Swagger UI: `http://localhost:8080/swagger-ui/index.html`
+- Kiểm thử: `.\mvnw.cmd test` (dùng DB riêng `smart_locker_tester`, mật khẩu qua `TEST_DB_PASSWORD`).
 
-## 🚀 Hướng Dẫn Cài Đặt & Khởi Chạy
+### 3. Frontend
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173
+```
+File `frontend/.env`: `VITE_API_URL=http://localhost:8080/api`.
 
-### 1. Cơ Sở Dữ Liệu (MySQL)
-1. Cài đặt MySQL 8.0 (Port 3306).
-2. Tạo database và bảng — file này **an toàn**, không xoá dữ liệu, chạy lại được nhiều lần:
-   ```bash
-   mysql -uroot -p < schema.sql
-   ```
-3. (Tuỳ chọn) Nạp dữ liệu mẫu: 10 trạm tủ, 3 tài khoản, lịch biểu.
-   Chạy **một lần** sau bước 2; chạy lại sẽ báo lỗi trùng khoá chính (dữ liệu vẫn nguyên):
-   ```bash
-   mysql -uroot -p < seed.sql
-   ```
+### 4. Bật/tắt nhanh cả dự án
+```bash
+node scripts/devctl.mjs status   # kiểm tra backend 8080 / vite 5173 bằng HTTP thật
+node scripts/devctl.mjs up       # bật cả hai
+node scripts/devctl.mjs down     # tắt cả hai
+```
 
-> **Trước đây** dự án dùng một file duy nhất `smart_locker_db.sql` có `DROP DATABASE` ở đầu —
-> chạy nhầm là mất sạch đơn hàng và tài khoản (đã từng xảy ra). File đó đã được tách thành
-> `schema.sql` (chỉ DDL, có `IF NOT EXISTS`) và `seed.sql` (chỉ INSERT), và đã xoá khỏi repo.
+### 5. Thử MQTT không cần tủ thật
+Nhập [mqttx-Tu_1-import.json](mqttx-Tu_1-import.json) vào MQTTX để theo dõi và phát bản tin như tủ `Tu_1`,
+hoặc dùng `node scripts/mqtt-probe.mjs sub|pub|shipper|status …`. Bảng topic đầy đủ ở [MQTT_GUIDE.md](MQTT_GUIDE.md).
 
-### 2. Khởi Chạy Backend (Spring Boot)
-1. Mở thư mục `backend/smart-locker-backend` bằng **IntelliJ IDEA** hoặc Terminal.
-2. Cấu hình kết nối CSDL. **Mật khẩu KHÔNG nằm trong repo** — `application.properties` chỉ khai
-   `spring.datasource.password=${DB_PASSWORD:}` (không có giá trị mặc định), nên chọn 1 trong 2 cách:
+## 🔑 Tài khoản mẫu
 
-   **Cách A — file cấu hình cục bộ (khuyến nghị):**
-   Tạo file `backend/smart-locker-backend/application-local.properties` (đã nằm trong `.gitignore`,
-   không bao giờ bị commit) với nội dung:
-   ```properties
-   spring.datasource.password=<mật-khẩu-MySQL-của-bạn>
-   ```
-   rồi chạy với profile `local`:
-   ```bash
-   .\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
-   ```
-   (hoặc trên IntelliJ: VM options / Program arguments thêm `--spring.profiles.active=local`)
+| Vai trò | Tên đăng nhập | Mật khẩu |
+|---|---|---|
+| Khách hàng | `khachhang` | `123456` |
+| Shipper | `shipper` | `shipper123` |
+| Quản trị viên | `admin` | `admin123` |
 
-   **Cách B — biến môi trường:**
-   ```powershell
-   $env:DB_PASSWORD = "<mật-khẩu-MySQL-của-bạn>"
-   .\mvnw.cmd spring-boot:run
-   ```
+## 📚 Tài liệu
 
-   Các biến khác (đều có mặc định dùng được):
-   ```properties
-   spring.datasource.url=${DB_URL:jdbc:mysql://localhost:3306/smart_locker_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Ho_Chi_Minh&characterEncoding=UTF-8}
-   spring.datasource.username=${DB_USERNAME:root}
-   spring.datasource.password=${DB_PASSWORD:}
-   app.cors.allowed-origins=${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000}
-   ```
+| Tài liệu | Nội dung |
+|---|---|
+| [MQTT_GUIDE.md](MQTT_GUIDE.md) | Topic, payload, luồng nghiệp vụ qua MQTT, cách thử bằng MQTTX |
+| [docs/KIEN-TRUC.md](docs/KIEN-TRUC.md) | Kiến trúc hệ thống |
+| [docs/SO-DO.md](docs/SO-DO.md) | Sơ đồ luồng và trạng thái |
+| [docs/KICH-BAN-DEMO.md](docs/KICH-BAN-DEMO.md) | Kịch bản demo bảo vệ |
+| [docs/GIOI-HAN-BAOMAT.md](docs/GIOI-HAN-BAOMAT.md) | Giới hạn và rủi ro bảo mật đã biết |
+| [MAP.md](MAP.md) | Bản đồ mã nguồn (file nào làm gì) |
 
-   > ⚠️ **Nếu quên bước này, app KHÔNG khởi động được** — không phải lỗi code. Triệu chứng:
-   > `HikariPool-1 - Exception during pool initialization` / `Access denied for user 'root'@'localhost' (using password: NO)`
-   > rồi `Failed to determine a suitable driver class`. Nguyên nhân: mật khẩu để trống nên MySQL từ chối.
-   > Chạy lại với `-Dspring-boot.run.profiles=local` (Cách A) hoặc set `$env:DB_PASSWORD` (Cách B).
-3. Chạy kiểm thử tự động (Integration Tests):
-   ```bash
-   .\mvnw.cmd test
-   ```
-   *(Test dùng `src/test/resources/application.properties` với DB riêng `smart_locker_tester`
-   và `TEST_DB_PASSWORD`, nên không phụ thuộc file cấu hình cục bộ ở trên.)*
-4. Khởi chạy ứng dụng:
-   ```bash
-   .\mvnw.cmd spring-boot:run
-   ```
-   *(Server lắng nghe tại `http://localhost:8080`)*.
+## 📄 Thực hiện
 
-### 3. Khởi Chạy Frontend (React + Vite)
-1. Mở thư mục `frontend` bằng Terminal.
-2. Kiểm tra file cấu hình `.env`:
-   ```properties
-   VITE_API_URL=http://localhost:8080/api
-   ```
-3. Cài đặt các gói phụ thuộc (nếu chạy lần đầu):
-   ```bash
-   npm install
-   ```
-4. Khởi chạy máy chủ phát triển:
-   ```bash
-   npm run dev
-   ```
-5. Truy cập giao diện web tại: **`http://localhost:5173`**.
-
----
-
-## 👥 Tài Khoản Mẫu Đăng Nhập Nhanh
-
-*(Tất cả mật khẩu đã được mã hóa băm BCrypt an toàn trong CSDL)*
-
-| Vai trò | Tên đăng nhập | Mật khẩu mẫu | Chức năng chính |
-|---|---|---|---|
-| **Khách Hàng** | `khachhang` | `123456` | Sàn mua sắm, chọn trạm tủ trên bản đồ Leaflet, giỏ hàng & thanh toán, nhận hàng bằng QR / OTP (hiệu lực 5 phút) |
-| **Shipper** | `shipper` | `shipper123` | Thống kê ca giao, xác minh danh tính QR (mã không hạn), quét đơn nạp tủ với cảm biến kép, thu hồi đơn quá hạn |
-| **Quản Trị Viên** | `admin` | `admin123` | Dashboard KPI lấp đầy, ma trận ngăn tủ, mở ngăn khẩn cấp từ xa, quét đơn quá hạn, cấp tài khoản |
-
----
-
-## 📄 Bản Quyền & Thực Hiện
-- **Đơn vị**: Khoa Viễn thông 1 - Học viện Công nghệ Bưu chính Viễn thông (PTIT).
-- **Nhóm sinh viên thực hiện**: Nhóm 64 (D22VTHI01).
-- **Năm thực hiện**: 2026.
+- **Đơn vị**: Khoa Viễn thông 1 – Học viện Công nghệ Bưu chính Viễn thông (PTIT).
+- **Nhóm sinh viên**: Nhóm 64 (D22VTHI01).
+- **Năm**: 2026.

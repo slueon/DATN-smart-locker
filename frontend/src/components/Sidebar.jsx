@@ -82,7 +82,7 @@ export default function Sidebar({
       group: 'VẬN HÀNH GIAO NHẬN',
       roles: ['SHIPPER'],
       items: [
-        { id: 'shipper', label: 'Cổng Shipper & Nạp tủ', icon: Truck, desc: 'Mã QR 60s & Cảm biến' },
+        { id: 'shipper', label: 'Cổng Shipper & Nạp tủ', icon: Truck, desc: 'Mã QR định danh & Cảm biến' },
         {
           id: 'shipper-recall',
           label: 'Thu hồi hàng quá hạn',

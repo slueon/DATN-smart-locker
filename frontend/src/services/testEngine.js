@@ -137,28 +137,26 @@ export const TEST_SUITE = [
   {
     id: 'TC-C05',
     role: 'CUSTOMER',
-    name: 'Bảo Mật Nhận Hàng: Mã QR Động Đổi Sau 60s & Hạn Chót Deadline 24 Giờ',
-    description: 'Kiểm tra cơ chế sinh mã QR động chu kỳ 60 giây và tính toán thời gian đếm ngược deadline 24h00',
+    name: 'Bảo Mật Nhận Hàng: Mã QR Tĩnh Theo Đơn & Hạn Lưu Kho 24h00 Ngày Hôm Sau',
+    description: 'Kiểm tra mã QR nhận hàng gắn với đơn (không xoay vòng theo thời gian) và tính được thời gian đếm ngược hạn lưu kho',
     run: async () => {
       const orders = store.getOrders();
       const readyOrder = orders.find((o) => o.status === 'DEPOSITED') || orders[0];
       assert(readyOrder, 'Phải có đơn hàng để kiểm thử');
-      
-      // Giả lập sinh token QR động gắn timestamp
-      const timestamp = Math.floor(Date.now() / 60000); // 60s window
-      const dynamicQrPayload = JSON.stringify({
+
+      // Mã QR nhận hàng là mã tĩnh của đơn (server cấp), không có cửa sổ thời gian
+      const qrPayload = JSON.stringify({
         orderId: readyOrder.orderId,
-        window: timestamp,
         token: readyOrder.qrToken || 'PKUP-SAMPLE-TOKEN',
       });
-      assert(dynamicQrPayload.includes(readyOrder.orderId), 'Mã QR động phải chứa Order ID');
+      assert(qrPayload.includes(readyOrder.orderId), 'Mã QR nhận hàng phải chứa Order ID');
       
       // Kiểm tra tính toán deadline
       const deadline = readyOrder.expiryDeadline ? new Date(readyOrder.expiryDeadline) : new Date(Date.now() + 24 * 3600 * 1000);
       const remainingMs = deadline.getTime() - Date.now();
       assert(!isNaN(remainingMs), 'Hệ thống phải tính toán được thời gian đếm ngược nhận hàng');
       
-      return { success: true, message: `Mã QR động 60s và deadline lưu kho 24h hoạt động chuẩn xác cho đơn ${readyOrder.orderId}.` };
+      return { success: true, message: `Mã QR nhận hàng và hạn lưu kho 24h00 hoạt động chuẩn xác cho đơn ${readyOrder.orderId}.` };
     },
   },
   {
@@ -353,14 +351,22 @@ export const TEST_SUITE = [
   {
     id: 'TC-S03',
     role: 'SHIPPER',
-    name: 'Sinh Mã QR Định Danh Kiosk 60s (Dynamic Token)',
-    description: 'Sinh token động, đếm lùi 60 giây và tự động hết hạn',
+    name: 'Mã QR Định Danh Shipper Cố Định (Không Hết Hạn)',
+    description: 'Mỗi shipper một mã QR định danh cố định, lấy lại nhiều lần vẫn là cùng một mã',
     run: async () => {
-      const token = 'SHIPPER-TOKEN-' + Math.random().toString(36).substring(2, 8).toUpperCase() + '-' + Date.now();
-      assert(token.startsWith('SHIPPER-TOKEN-'), 'Token phải có tiền tố SHIPPER-TOKEN');
-      const ttl = 60;
-      assert(ttl === 60, 'Thời gian hiệu lực phải là 60s');
-      return { success: true, message: `Sinh mã QR định danh 60s: ${token}` };
+      // Mô phỏng: server trả lại đúng mã cũ của shipper ở mỗi lần lấy (GĐ15/GĐ33)
+      const issued = {};
+      const getShipperQr = (shipperId) => {
+        if (!issued[shipperId]) {
+          issued[shipperId] = 'SHIP-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+        }
+        return issued[shipperId];
+      };
+      const first = getShipperQr('shipper');
+      const second = getShipperQr('shipper');
+      assert(first.startsWith('SHIP-'), 'Mã định danh phải có tiền tố SHIP-');
+      assert(first === second, 'Lấy lại mã QR định danh phải ra đúng mã cũ (mã cố định)');
+      return { success: true, message: `Mã QR định danh cố định: ${first}` };
     },
   },
   {

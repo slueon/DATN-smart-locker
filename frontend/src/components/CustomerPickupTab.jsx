@@ -83,7 +83,7 @@ export default function CustomerPickupTab({ currentUser }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrderId, setSelectedOrderId] = useState(null);
 
-  // Modal QR Rolling 60s
+  // Modal QR nhận hàng (mã tĩnh theo đơn, không xoay vòng)
   const [qrModalOrder, setQrModalOrder] = useState(null);
   const [qrToken, setQrToken] = useState('');
 
@@ -1131,7 +1131,7 @@ export default function CustomerPickupTab({ currentUser }) {
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    {/* Method 1: QR 60s */}
+                    {/* Method 1: QR nhận hàng */}
                     <button
                       onClick={() => handleOpenQrModal(selectedOrder)}
                       className="p-4.5 rounded-2xl liquid-glass border border-white/80 hover:bg-white/70 text-left transition cursor-pointer shadow-sm group hover:-translate-y-0.5"
@@ -1363,7 +1363,7 @@ export default function CustomerPickupTab({ currentUser }) {
         </div>
       </div>
 
-      {/* QR Modal (Rolling 60s) với CircularTimer */}
+      {/* QR Modal — mã tĩnh theo đơn, không đếm ngược */}
       {qrModalOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-xl p-4 animate-in fade-in duration-200">
           <div className="liquid-glass-card rounded-[28px] max-w-sm w-full p-6 text-center shadow-2xl relative border border-white/90 animate-in zoom-in-95 duration-200">

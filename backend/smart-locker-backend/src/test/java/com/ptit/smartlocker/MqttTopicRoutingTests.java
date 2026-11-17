@@ -171,7 +171,7 @@ class MqttTopicRoutingTests {
         return tokenRepository.save(token);
     }
 
-    /** Tạo phiên shipper đã xác thực (60 giây) tại một tủ cụ thể. */
+    /** Tạo phiên shipper đã xác thực tại một tủ cụ thể. */
     private ShipperIdentityToken taoPhienShipper(String dynamicToken, String lockerId) {
         LocalDateTime now = LocalDateTime.now();
         ShipperIdentityToken token = ShipperIdentityToken.builder()

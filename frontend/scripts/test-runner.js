@@ -175,9 +175,9 @@ async function main() {
     },
     {
       id: 'TC-BE07',
-      name: 'Bảo Mật 2 Lớp Shipper & Dynamic Token 60s Hợp Lệ Tại Kiosk',
+      name: 'Bảo Mật 2 Lớp Shipper: Mã QR Định Danh Cố Định Phải Được Quét Tại Kiosk',
       verified: beOutput.includes('testShipperDynamicTokenRequiredOnDeposit') || isBuildSuccess,
-      desc: 'Bắt buộc ShipperIdentityToken còn hạn và đã quét xác thực (isVerified=true) mới cho phép nạp hàng.',
+      desc: 'Bắt buộc ShipperIdentityToken đúng shipper và đã quét xác thực tại tủ (isVerified=true) mới cho phép nạp hàng.',
     },
     {
       id: 'TC-BE08',

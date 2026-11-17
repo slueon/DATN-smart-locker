@@ -108,13 +108,13 @@ CREATE TABLE IF NOT EXISTS pickup_credentials (
     FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 8. BẢNG MÃ QR ĐỊNH DANH ĐỘNG CỦA SHIPPER (SHIPPER_IDENTITY_TOKENS)
+-- 8. BẢNG MÃ QR ĐỊNH DANH CỐ ĐỊNH CỦA SHIPPER (SHIPPER_IDENTITY_TOKENS)
 CREATE TABLE IF NOT EXISTS shipper_identity_tokens (
     token_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     shipper_id VARCHAR(50) NOT NULL,
     dynamic_token VARCHAR(255) NOT NULL UNIQUE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expired_at DATETIME NOT NULL, -- 60 giây hiệu lực
+    expired_at DATETIME NOT NULL, -- mã cố định: luôn đặt mốc rất xa (PERPETUAL_EXPIRY), không dùng để chặn
     is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     -- W4/W6: tủ mà shipper đã quét mã để xác thực (gán lúc verifyDynamicToken).
     -- NULL = mã chưa quét ở tủ nào. Bắt buộc có để chặn lỗi cross-locker:

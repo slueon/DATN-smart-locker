@@ -393,7 +393,7 @@ export default function LoginPage({ onLoginSuccess }) {
         <div className="mt-6 flex items-center justify-center gap-4 text-xs text-slate-400">
           <div className="flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Mã hóa BCrypt & OTP Kép 60s</span>
+            <span>Mã hóa BCrypt & OTP 5 phút</span>
           </div>
           <span>•</span>
           <div className="flex items-center gap-1.5">
