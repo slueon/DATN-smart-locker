@@ -305,3 +305,186 @@ export async function screenshot(p, filename) {
   fs.writeFileSync(out, Buffer.from(r.data, 'base64'));
   return out;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * GĐ59 — BA HÀM BỔ SUNG. KHÔNG đổi chữ ký/ hành vi của các hàm phía trên.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Ghi MỌI lần đổi thuộc tính của phần tử khớp `selector` — bắt cả khung sống vài mili-giây.
+ *
+ * <p><b>Vì sao cần:</b> `data-buoc="6"` của thanh 5 bước chỉ sống ~5 ms trước khi state khác ghi
+ * đè. Đo bằng `sleep` + đọc một lần thì trượt (đã trượt ở GĐ57 vòng 1: 0/119 mẫu). MutationObserver
+ * chạy đồng bộ theo mutation nên bắt được đúng khoảnh khắc, kể cả khi không có khung hình nào.
+ *
+ * <p><b>Cách dùng:</b> gọi hàm NÀY TRƯỚC hành động cần đo, chờ, rồi đọc `ketQua.muts` /
+ * `ketQua.thoiLuong()`. Dữ liệu nằm trong `window.__watch` (một bài đo mỗi trang).
+ *
+ * @param {object} p  page của {@link withPage}
+ * @param {string} selector  CSS selector, khớp phần tử ĐẦU TIÊN
+ * @param {string|string[]} attr  tên thuộc tính, hoặc mảng thuộc tính cần theo dõi
+ * @returns {Promise<object>} `{ stop(), muts, ketQua, thoiLuong() }` — xem README
+ */
+export async function watchAttr(p, selector, attr) {
+  const attrs = Array.isArray(attr) ? attr.slice() : [attr];
+  await p.session.eval(`(() => {
+    if (window.__watch) { try { window.__watch.stop(); } catch (e) {} }
+    const SEL = ${JSON.stringify(selector)};
+    const ATTRS = ${JSON.stringify(attrs)};
+    const el = () => document.querySelector(SEL);
+    const doc = () => {
+      const e = el(); if (!e) return null;
+      const o = {}; ATTRS.forEach((a) => { o[a] = e.getAttribute(a); });
+      return o;
+    };
+    const t0 = performance.now();
+    const w = { sel: SEL, attrs: ATTRS, muts: [], t0, running: true };
+    w.stop = () => { w.running = false; if (w.__mo) { try { w.__mo.disconnect(); } catch (e) {} } };
+    w.snapshot = doc();
+    // Mẫu rAF: bắt cả trường hợp MutationObserver không chạy (phần tử bị GỠ rồi gắn lại).
+    const loop = () => {
+      if (!w.running) return;
+      const s = doc();
+      if (s) {
+        const k = JSON.stringify(s);
+        const last = w.muts.length ? w.muts[w.muts.length - 1].k : null;
+        if (k !== last) w.muts.push({ t: Math.round(performance.now() - t0), k, ...s });
+      } else if (w.muts.length === 0 || w.muts[w.muts.length - 1].k !== '<gone>') {
+        w.muts.push({ t: Math.round(performance.now() - t0), k: '<gone>' });
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    const e0 = el();
+    if (e0) {
+      const mo = new MutationObserver(() => {
+        if (!w.running) return;
+        const s = doc(); if (!s) return;
+        const k = JSON.stringify(s);
+        const last = w.muts.length ? w.muts[w.muts.length - 1].k : null;
+        if (k !== last) w.muts.push({ t: Math.round(performance.now() - t0), k, ...s, mo: 1 });
+      });
+      // observe cả subtree: attribute của mỗi phần tử con mới là thứ đổi (data-done/data-active).
+      mo.observe(e0, { attributes: true, subtree: true, attributeFilter: ATTRS });
+      w.__mo = mo;
+    }
+    window.__watch = w;
+    return 'ok';})()`);
+
+  const helpers = {
+    /** Dừng thu; trả toàn bộ mốc đã ghi (đọc được cả sau khi trang đổi). */
+    async stop() {
+      const r = await p.session.eval(`(() => { if (!window.__watch) return null;
+        window.__watch.stop(); return window.__watch.muts; })()`);
+      return r || [];
+    },
+    /** Đọc mốc hiện có mà KHÔNG dừng (dùng khi cần xem giữa chừng). */
+    async muts() {
+      return (await p.session.eval(`(window.__watch ? window.__watch.muts : [])`)) || [];
+    },
+    /**
+     * Khoảng thời gian giữa mốc ĐẦU TIÊN khớp `pred` và mốc kế tiếp KHÔNG khớp — đúng định
+     * nghĩa "giá trị X tồn tại bao lâu". Trả `null` nếu không thấy cặp.
+     * @param {(m:object)=>boolean|string} pred  hàm chạy TRONG TRANG nếu là string
+     */
+    async thoiLuong(pred) {
+      const src = typeof pred === 'function' ? pred.toString() : `(${pred})`;
+      return await p.session.eval(`(() => {
+        const ds = (window.__watch ? window.__watch.muts : []) || [];
+        const f = ${src};
+        const i = ds.findIndex(f);
+        if (i < 0) return null;
+        for (let j = i + 1; j < ds.length; j++) {
+          if (!f(ds[j])) return ds[j].t - ds[i].t;
+        }
+        return null; })()`);
+    },
+  };
+  return helpers;
+}
+
+/**
+ * Gắn bắt lỗi (Runtime + Log + Network) — **PHẢI gọi TRƯỚC `Page.navigate`**.
+ *
+ * <p><b>Vì sao trước:</b> observer gắn sau `navigate` sẽ bỏ mất request/exception của chính lần
+ * tải đầu — đúng cái mà phép "0 lỗi console" muốn kiểm. Hàm này tự gắn listener lên websocket
+ * (không xin lại domain), nên gọi lúc nào cũng được nhưng chỉ CÓ TÁC DỤNG từ thời điểm gọi.
+ *
+ * @param {object} p  page của {@link withPage}
+ * @param {{ignoreUrls?:string[]}} [opts]  URL chứa các chuỗi này thì bỏ qua (vd. favicon)
+ * @returns {Promise<{loi:Array, net:Array, hienTai:Function, tat:Function}>}
+ */
+export async function collectErrors(p, opts = {}) {
+  const ignore = opts.ignoreUrls || [];
+  const loi = [];
+  const net = [];
+  const onMsg = (e) => {
+    let m;
+    try { m = JSON.parse(e.data); } catch { return; }
+    const P = m.params || {};
+    if (m.method === 'Runtime.consoleAPICalled' && P.type === 'error') {
+      loi.push('console ' + (P.args || []).map((a) => a.value || a.description || '').join(' ').slice(0, 180));
+    }
+    if (m.method === 'Runtime.exceptionThrown') {
+      loi.push('EXC ' + (P.exceptionDetails?.exception?.description || P.exceptionDetails?.text || '').slice(0, 180));
+    }
+    if (m.method === 'Log.entryAdded' && P.entry?.level === 'error') {
+      loi.push('LOG ' + String(P.entry.text || '').slice(0, 180));
+    }
+    if (m.method === 'Network.responseReceived' && P.response?.status >= 400) {
+      const url = String(P.response.url || '');
+      if (ignore.some((s) => url.includes(s))) return;
+      net.push(P.response.status + ' ' + url.replace('http://localhost:8080', '').slice(0, 140));
+    }
+  };
+  p.session.ws.addEventListener('message', onMsg);
+  // Domain enable: nếu đã bật rồi thì lệnh này idempotent.
+  await p.session.send('Runtime.enable').catch(() => {});
+  await p.session.send('Log.enable').catch(() => {});
+  await p.session.send('Network.enable').catch(() => {});
+  return {
+    loi,
+    net,
+    /** Ảnh chụp hiện tại + dừng gắn (gọi cuối bài đo để in ra log). */
+    hienTai: () => ({ loiConsole: loi.length, chiTietLoi: loi.slice(), http4xx5xx: net.slice() }),
+    tat: () => p.session.ws.removeEventListener('message', onMsg),
+  };
+}
+
+/**
+ * Bấm đúng tab/subtab của một vai trò — tìm theo NHÃN CHÍNH XÁC, bỏ qua sidebar.
+ *
+ * <p><b>Vì sao cần:</b> đã 3 lần đo bấm nhầm: nhãn trùng ở sidebar và ở thanh tab, và nút tab
+ * admin nằm trong vùng main chứ không phải `aside`. Hàm lọc `<button>` có text khớp CHÍNH XÁC
+ * trước, rồi mới tới "chứa"; trả lại nhãn đã bấm để script tự kiểm chứng.
+ *
+ * <p>Vai trò không đổi cách tìm nút — nó chỉ chọn bộ nhãn hay dùng để BÁO lỗi sớm khi bấm hụt:
+ * gọi `openTab(p, 'ADMIN', 'Sơ đồ ngăn')` để kiểm cả hai.
+ *
+ * @param {object} p
+ * @param {'ADMIN'|'SHIPPER'|'CUSTOMER'|'ANY'} role
+ * @param {string} label  nhãn nút (vd. `'Sơ đồ ngăn'`, `'Thu hồi hàng quá hạn'`)
+ */
+export async function openTab(p, role, label) {
+  const VAI_TRO = ['ADMIN', 'SHIPPER', 'CUSTOMER', 'ANY'];
+  const vai = String(role || '').toUpperCase();
+  if (!VAI_TRO.includes(vai)) throw new Error(`vai trò không hợp lệ: "${role}" (dùng ${VAI_TRO.join('|')})`);
+  const nhan = String(label);
+  const daBam = await p.session.eval(`(() => {
+    const TRONG_SIDEBAR = false; // nhãn tab/subtab luôn nằm ở vùng main
+    const tat = [...document.querySelectorAll('button, [role="tab"], a')]
+      .filter((x) => !x.disabled && (!TRONG_SIDEBAR || !x.closest('aside')));
+    const chuan = (x) => (x.textContent || '').replace(/\\s+/g, ' ').trim();
+    const exact = tat.find((x) => chuan(x) === ${JSON.stringify(nhan)});
+    const chua = tat.filter((x) => chuan(x).includes(${JSON.stringify(nhan)}))
+      .sort((a, b) => chuan(a).length - chuan(b).length)[0];
+    const el = exact || chua;
+    if (!el) return { ok: false, daBam: null, ungVien: tat.map(chuan).filter(Boolean).slice(0, 25) };
+    el.click();
+    return { ok: true, daBam: chuan(el).slice(0, 60), chinhXac: !!exact };
+  })()`);
+  if (!daBam?.ok) {
+    throw new Error(`[${vai}] không thấy tab "${nhan}". Nút đang có: ${(daBam?.ungVien || []).join(' | ')}`);
+  }
+  return { ...daBam, vaiTro: vai };
+}
