@@ -786,7 +786,7 @@ export default function CustomerPickupTab({ currentUser }) {
             orderId: leftBehind.orderId || selectedOrder?.orderId || null,
             compartmentIndex: leftBehind.compartment ?? null,
           });
-          // Mở lại modal QR/OTP để khách mở lại bằng CHÍNH mã cũ — dữ liệu đã về DEPOSITED.
+          // GĐ67 — mã cũ đã hết hiệu lực; nút "Lấy mã mới" trong popup tải mã MỚI từ máy chủ.
           setCompartmentSensor(null);
 
           // GĐ64b — thông báo `PICKUP_LEFT_BEHIND` do backend ghi.
@@ -1651,15 +1651,25 @@ export default function CustomerPickupTab({ currentUser }) {
             </div>
             <h3 className="text-base font-extrabold text-amber-800">Bạn quên lấy hàng</h3>
             <p className="text-xs text-slate-600 mt-2">
-              Hàng vẫn còn trong tủ. Đơn đã quay về trạng thái chờ lấy; dùng mã hiện tại để lấy lại.
+              Hàng vẫn còn trong tủ. Mã cũ đã hết hiệu lực — hãy dùng mã mới (QR mới hoặc xin OTP mới) để lấy lại.
             </p>
             <button
-              onClick={() => {
-                const fresh = pickupLeftInfo.orderId
-                  ? orders.find((o) => o.orderId === pickupLeftInfo.orderId)
-                  : null;
+              onClick={async () => {
+                const id = pickupLeftInfo.orderId;
                 setPickupLeftInfo(null);
-                if (fresh) setQrModalOrder(fresh);
+                if (!id) return;
+                // GĐ67 — mã đã đổi ở máy chủ: tải lại đơn rồi mới mở QR, không dùng đơn cũ trong state.
+                setQrToken('');
+                await loadOrders();
+                const phone = currentUser?.phone || orders.find((o) => o.orderId === id)?.customerPhone;
+                let fresh = null;
+                try {
+                  fresh = phone ? (await orderApi.getById(id, phone))?.data?.data : null;
+                } catch {
+                  fresh = null;
+                }
+                const target = fresh || orders.find((o) => o.orderId === id);
+                if (target) handleOpenQrModal(target);
               }}
               className="mt-5 w-full py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold"
             >

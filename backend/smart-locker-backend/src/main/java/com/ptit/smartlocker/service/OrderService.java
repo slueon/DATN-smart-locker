@@ -335,6 +335,14 @@ public class OrderService {
      * - Có kiểm tra trùng trong CSDL để tôn trọng ràng buộc UNIQUE của cột qr_token.
      */
     private String generateRandomQrToken() {
+        return generateRandomQrToken(pickupCredentialRepository);
+    }
+
+    /**
+     * GĐ67 — bản dùng chung của hàm sinh qrToken (PickupService gọi khi cấp mã mới sau lần
+     * "quên lấy hàng"). Một chỗ duy nhất quyết định cách sinh mã — không sao chép.
+     */
+    public static String generateRandomQrToken(PickupCredentialRepository pickupCredentialRepository) {
         for (int attempt = 0; attempt < 5; attempt++) {
             byte[] randomBytes = new byte[QR_TOKEN_BYTES];
             QR_TOKEN_RANDOM.nextBytes(randomBytes);

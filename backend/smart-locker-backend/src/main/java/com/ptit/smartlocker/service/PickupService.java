@@ -289,8 +289,8 @@ public class PickupService {
      * <p><b>Luật chốt:</b>
      * <ul>
      *   <li>Còn hàng ({@code conHang == true}) → đơn quay về {@code DEPOSITED}, ngăn vẫn
-     *       {@code OCCUPIED}, {@code isUsed = false}, {@code usedAt = null} ⇒ khách mở lại được bằng
-     *       CHÍNH mã cũ.</li>
+     *       {@code OCCUPIED}; GĐ67: cấp qrToken MỚI, xoá OTP ⇒ mã cũ hết hiệu lực, khách lấy lần 2
+     *       bằng mã mới như lần 1.</li>
      *   <li>Hết hàng → {@code COMPLETED}, ngăn {@code EMPTY}, {@code isUsed = true}.</li>
      * </ul>
      *
@@ -308,8 +308,13 @@ public class PickupService {
                 cred.setIsUsed(true);
                 cred.setUsedAt(LocalDateTime.now());
             } else {
-                // Còn hàng ⇒ mở lại được bằng đúng mã cũ: KHÔNG đánh dấu đã dùng.
+                // GĐ67 — còn hàng ⇒ mã cũ (QR + OTP) HẾT hiệu lực; lấy lần 2 đi lại quy trình như
+                // lần 1 bằng MÃ MỚI: QR mới ngẫu nhiên (cùng hàm sinh với OrderService), OTP xoá
+                // (khách xin OTP mới qua request-otp). Giữ nguyên hạn lưu kho (`expiredAt`).
+                cred.setQrToken(OrderService.generateRandomQrToken(credentialRepository));
+                cred.setOtpCode("");
                 cred.setIsUsed(false);
+                cred.setFailedAttempts(0);
                 cred.setUsedAt(null);
             }
             credentialRepository.save(cred);
@@ -322,19 +327,19 @@ public class PickupService {
                 compartment.setStatus("OCCUPIED");
                 compartmentRepository.save(compartment);
             }
-            log.info("Khách CHƯA lấy hết hàng ở đơn {} — đơn về DEPOSITED, mã cũ dùng lại được",
+            log.info("Khách CHƯA lấy hết hàng ở đơn {} — đơn về DEPOSITED, đã cấp mã mới (mã cũ hết hiệu lực)",
                     order.getOrderId());
             if (kioskEventService != null && order.getLocker() != null) {
                 kioskEventService.record(order.getLocker().getLockerId(), "PICKUP_LEFT_BEHIND",
                         order.getOrderId(), order.getTrackingCode(),
                         compartment != null ? compartment.getCompIndex() : null, null,
-                        "Bạn chưa lấy kiện hàng — cửa đã đóng nhưng hàng vẫn trong tủ. Bấm để mở lại.");
+                        "Bạn chưa lấy kiện hàng — cửa đã đóng nhưng hàng vẫn trong tủ. Mã cũ đã hết hiệu lực, dùng mã mới để lấy lại.");
             }
             if (notificationService != null) {
                 notificationService.pickupLeftBehind(order,
                         "Cửa đã đóng nhưng kiện hàng vẫn trong tủ"
                                 + (compartment != null ? " ngăn #" + compartment.getCompIndex() : "")
-                                + ". Bấm để mở lại.");
+                                + ". Mã cũ đã hết hiệu lực — dùng mã QR mới hoặc xin OTP mới để lấy lại.");
             }
             return false;
         }

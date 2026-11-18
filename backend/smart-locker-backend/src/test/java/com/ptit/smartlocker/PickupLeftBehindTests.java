@@ -92,8 +92,43 @@ class PickupLeftBehindTests {
 
         PickupCredential cred = credentialRepository.findByOrder_OrderId("ORD-GD31A-LEFT").orElseThrow();
         assertFalse(Boolean.TRUE.equals(cred.getIsUsed()),
-                "Mã cũ phải còn hiệu lực để khách mở lại bằng CHÍNH mã đó");
+                "Mã MỚI phải chưa dùng để khách lấy lần 2");
         assertNull(cred.getUsedAt(), "usedAt phải NULL khi hàng còn trong tủ");
+    }
+
+    @Test
+    @DisplayName("GĐ67: quên lấy ⇒ QR cũ + OTP cũ bị từ chối, QR mới mở được; giữ hạn lưu kho")
+    void quenLayThiMaCuHetHieuLucMaMoiMoDuoc() {
+        PickupCredential truoc = credentialRepository.findByOrder_OrderId("ORD-GD31A-LEFT").orElseThrow();
+        LocalDateTime hanTruoc = truoc.getExpiredAt();
+        truoc.setFailedAttempts(2);
+        credentialRepository.save(truoc);
+
+        pickupService.chotPhienLayHang(order, compartment, true);
+
+        PickupCredential cred = credentialRepository.findByOrder_OrderId("ORD-GD31A-LEFT").orElseThrow();
+        String qrMoi = cred.getQrToken();
+        assertNotNull(qrMoi);
+        assertNotEquals("QR-GD31A-TEST", qrMoi, "Phải cấp qrToken MỚI");
+        assertEquals(43, qrMoi.length(), "QR mới sinh cùng hàm với OrderService (Base64URL 32 byte)");
+        assertEquals("", cred.getOtpCode(), "OTP cũ phải bị xoá");
+        assertEquals(0, cred.getFailedAttempts());
+        assertEquals(hanTruoc, cred.getExpiredAt(), "Không đổi hạn lưu kho");
+
+        assertThrows(RuntimeException.class, () -> pickupService.verifyAndPickup(
+                com.ptit.smartlocker.dto.PickupDTO.VerifyCredentialRequest.builder()
+                        .lockerId(LOCKER).authMethod("QR").code("QR-GD31A-TEST").orderId("ORD-GD31A-LEFT").build()),
+                "QR cũ phải bị từ chối");
+        assertThrows(RuntimeException.class, () -> pickupService.verifyAndPickup(
+                com.ptit.smartlocker.dto.PickupDTO.VerifyCredentialRequest.builder()
+                        .lockerId(LOCKER).authMethod("OTP").code("123456").orderId("ORD-GD31A-LEFT").build()),
+                "OTP cũ phải bị từ chối");
+
+        var ok = pickupService.verifyAndPickup(
+                com.ptit.smartlocker.dto.PickupDTO.VerifyCredentialRequest.builder()
+                        .lockerId(LOCKER).authMethod("QR").code(qrMoi).orderId("ORD-GD31A-LEFT").build());
+        assertTrue(ok.isSuccess(), "QR mới phải mở được ngăn");
+        assertEquals("PICKUP_OPENED", orderRepository.findById("ORD-GD31A-LEFT").orElseThrow().getStatus());
     }
 
     @Test

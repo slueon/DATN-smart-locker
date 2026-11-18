@@ -196,7 +196,7 @@ public class NotificationService {
         try {
             if (order == null) return;
             notify(PICKUP_LEFT_BEHIND, order.getCustomerPhone(), null, order.getOrderId(), "qr",
-                    "Bạn chưa lấy kiện hàng", message);
+                    "Bạn quên lấy hàng — dùng mã mới", message);
         } catch (RuntimeException ex) {
             log.warn("pickupLeftBehind: {}", ex.toString());
         }
