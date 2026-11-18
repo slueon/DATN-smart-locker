@@ -44,6 +44,11 @@ public class ShipperService {
     @Lazy
     private KioskEventService kioskEventService;
 
+    /** GĐ64a — thông báo máy chủ (tự nuốt lỗi). Cùng mẫu tiêm với {@code kioskEventService}. */
+    @Autowired(required = false)
+    @Lazy
+    private NotificationService notificationService;
+
     public ShipperService(
             ShipperIdentityTokenRepository tokenRepository,
             OrderRepository orderRepository,
@@ -420,6 +425,9 @@ public class ShipperService {
                     order.getOrderId(), order.getTrackingCode(),
                     compartment.getCompIndex(), null,
                     "Nạp hàng thành công ngăn #" + compartment.getCompIndex());
+        }
+        if (notificationService != null) {
+            notificationService.depositSuccess(order, compartment.getCompIndex());
         }
 
         return ShipperDTO.DepositResponse.builder()
@@ -1165,6 +1173,12 @@ public class ShipperService {
                 .eventPayload("Shipper recalled overdue order " + orderId + " back to warehouse")
                 .build();
         deviceEventRepository.save(event);
+
+        // GĐ64a — báo khách (máy khác vẫn nhận) + vai SHIPPER. Trước đây web shipper tự lưu
+        // thông báo "đã thu hồi" của khách vào localStorage của CHÍNH trình duyệt shipper.
+        if (notificationService != null) {
+            notificationService.recalled(order);
+        }
 
         // GĐ46 — BỎ lệnh mở cửa ở đây. Trước GĐ46 khối này phát
         // `OPEN_DOOR/SHIPPER_RECALL` ở **cuối** hàm, tức sau khi đơn đã `COMPLETED` và ngăn đã

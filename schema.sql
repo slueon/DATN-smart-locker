@@ -206,3 +206,23 @@ CREATE TABLE IF NOT EXISTS locker_maintenance_logs (
     KEY idx_maintenance_logs_created (created_at),
     CONSTRAINT fk_maintenance_logs_locker FOREIGN KEY (locker_id) REFERENCES lockers(locker_id)
 ) ENGINE=InnoDB;
+
+-- 14. BẢNG THÔNG BÁO MÁY CHỦ (NOTIFICATIONS)
+-- GĐ64a: thay chuông đọc localStorage. Người nhận là recipient_phone (khách) HOẶC
+-- recipient_role (vd 'SHIPPER' — dùng chung trạng thái đã đọc cho cả vai).
+-- order_id là chuỗi trần, KHÔNG khoá ngoại (giống command_logs.order_id).
+-- Cột khớp đúng com.ptit.smartlocker.entity.Notification.
+CREATE TABLE IF NOT EXISTS notifications (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    recipient_phone VARCHAR(20) DEFAULT NULL,
+    recipient_role VARCHAR(20) DEFAULT NULL,
+    type VARCHAR(40) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    message VARCHAR(1000) NOT NULL,
+    order_id VARCHAR(50) DEFAULT NULL,
+    method VARCHAR(10) DEFAULT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL,
+    KEY idx_notifications_phone_created (recipient_phone, created_at),
+    KEY idx_notifications_role_created (recipient_role, created_at)
+) ENGINE=InnoDB;

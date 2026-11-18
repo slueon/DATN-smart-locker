@@ -48,6 +48,10 @@ public class PickupService {
     @Autowired(required = false)
     private KioskEventService kioskEventService;
 
+    /** GĐ64a — thông báo máy chủ (tự nuốt lỗi). {@code required=false}: không đổi constructor. */
+    @Autowired(required = false)
+    private NotificationService notificationService;
+
     /** GĐ32 — chống trùng: mỗi đơn chỉ bắn 1 sự kiện, dù cả 2 đường cùng chốt. */
     private final java.util.Set<String> daBaoPickupSuccess =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -326,6 +330,12 @@ public class PickupService {
                         compartment != null ? compartment.getCompIndex() : null, null,
                         "Bạn chưa lấy kiện hàng — cửa đã đóng nhưng hàng vẫn trong tủ. Bấm để mở lại.");
             }
+            if (notificationService != null) {
+                notificationService.pickupLeftBehind(order,
+                        "Cửa đã đóng nhưng kiện hàng vẫn trong tủ"
+                                + (compartment != null ? " ngăn #" + compartment.getCompIndex() : "")
+                                + ". Bấm để mở lại.");
+            }
             return false;
         }
 
@@ -344,6 +354,11 @@ public class PickupService {
                     order.getOrderId(), order.getTrackingCode(),
                     compartment != null ? compartment.getCompIndex() : null, null,
                     "Lấy hàng thành công" + (compartment != null ? " ngăn #" + compartment.getCompIndex() : ""));
+        }
+        // GĐ64a — ngoài khối chống trùng `daBaoPickupSuccess` (bộ nhớ, mất khi restart); chống
+        // trùng 60 s của NotificationService lo trường hợp MQTT + API cùng chốt.
+        if (notificationService != null) {
+            notificationService.pickupSuccess(order);
         }
         return true;
     }

@@ -234,6 +234,13 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/pickup/kiosk-events")
                         .hasAnyRole("CUSTOMER", "SHIPPER", "ADMIN")
 
+                // GĐ64a — thông báo máy chủ: mọi vai đã đăng nhập. Phạm vi "của mình" kiểm ở
+                // NotificationService theo username trong SecurityContext (không nhận phone/role
+                // từ client). Thiếu 2 dòng này là 403 vì denyAll() ở dưới.
+                .requestMatchers(HttpMethod.GET, "/api/notifications").authenticated()
+                .requestMatchers(HttpMethod.POST,
+                        "/api/notifications/*/read", "/api/notifications/read-all").authenticated()
+
                 // --- Mặc định đóng ---
                 .anyRequest().denyAll());
 

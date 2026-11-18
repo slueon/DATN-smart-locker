@@ -59,6 +59,13 @@ public class MqttService implements MqttCallbackExtended {
     private final com.ptit.smartlocker.repository.PickupCredentialRepository credentialRepository;
     private final ObjectMapper objectMapper;
 
+    /**
+     * GĐ64a — thông báo máy chủ. Tiêm field {@code required=false} để không đổi constructor (test
+     * cũ dựng service trực tiếp). {@code notify} tự nuốt lỗi; vẫn guard {@code != null}.
+     */
+    @Autowired(required = false)
+    private NotificationService notificationService;
+
     @Value("${mqtt.retain.enabled:true}")
     private boolean retainEnabled;
 
@@ -1417,6 +1424,11 @@ public class MqttService implements MqttCallbackExtended {
                 KioskEventService.CUSTOMER_METHOD_CHOSEN,
                 null, null, null, null,
                 method);
+        // GĐ64a — thông báo máy chủ cho khách có hàng ở tủ này (chỉ khi đúng 1 khách).
+        if (notificationService != null) {
+            notificationService.kioskMethodChosen(locker.getLockerId(), method,
+                    orderRepository.findByLockerAndStatusWithCompartment(locker.getLockerId(), "DEPOSITED"));
+        }
         log.info("Khách chọn cách nhận '{}' tại tủ {} — đã phát sự kiện Kiosk cho web",
                 method, locker.getLockerId());
     }
@@ -1796,6 +1808,9 @@ public class MqttService implements MqttCallbackExtended {
                         kioskEventService.record(locker.getLockerId(), KioskEventService.DEPOSIT_SUCCESS,
                                 ord.getOrderId(), ord.getTrackingCode(), compIndex, null,
                                 "Nạp hàng thành công ngăn #" + compIndex);
+                        if (notificationService != null) {
+                            notificationService.depositSuccess(ord, compIndex);
+                        }
                         return;
                     }
                 }
@@ -1847,6 +1862,9 @@ public class MqttService implements MqttCallbackExtended {
                         kioskEventService.record(locker.getLockerId(), KioskEventService.PICKUP_SUCCESS,
                                 ord.getOrderId(), ord.getTrackingCode(), compIndex, null,
                                 "Lấy hàng thành công ngăn #" + compIndex);
+                        if (notificationService != null) {
+                            notificationService.pickupSuccess(ord);
+                        }
                         log.info("Đã chuyển đơn hàng {} sang trạng thái COMPLETED", ord.getOrderId());
                         break;
                     }

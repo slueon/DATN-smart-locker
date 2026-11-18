@@ -3,6 +3,7 @@ package com.ptit.smartlocker.service;
 import com.ptit.smartlocker.entity.Order;
 import com.ptit.smartlocker.repository.OrderRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +16,10 @@ import java.util.List;
 public class OverdueSchedulerService {
 
     private final OrderRepository orderRepository;
+
+    /** GĐ64a — thông báo máy chủ khi đơn chuyển OVERDUE (tự nuốt lỗi; không đổi constructor). */
+    @Autowired(required = false)
+    private NotificationService notificationService;
 
     public OverdueSchedulerService(OrderRepository orderRepository) {
         this.orderRepository = orderRepository;
@@ -51,6 +56,9 @@ public class OverdueSchedulerService {
                         order.getOrderId(),
                         order.getLocker() != null ? order.getLocker().getLockerId() : "N/A",
                         order.getExpiryDeadline());
+                if (notificationService != null) {
+                    notificationService.overdue(order);
+                }
             }
         }
         return overdueOrders.size();
