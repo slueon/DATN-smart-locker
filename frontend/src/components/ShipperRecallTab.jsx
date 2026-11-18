@@ -538,25 +538,11 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
         return;
       }
 
-      // Thông báo trong phiên trình duyệt — KHÔNG phải thông báo hệ thống (backend không có bảng
-      // notifications). Giữ lại để shipper thấy phản hồi ngay; mất khi xoá cache.
-      store.addNotification({
-        phone: activeRecallOrder.customerPhone,
-        orderId: activeRecallOrder.orderId,
-        title: 'Bưu kiện đã được thu hồi về kho bãi',
-        message: `Đơn hàng ${activeRecallOrder.orderId} tại ${activeRecallOrder.lockerName} đã được Shipper thu hồi về kho do vượt quá hạn lưu kho 24h00. Vui lòng liên hệ hotline/quản trị viên để nhận lại bưu phẩm.`,
-        type: 'RECALL_CUSTOMER',
-      });
-
-      store.addNotification({
-        targetRole: 'SHIPPER',
-        role: 'SHIPPER',
-        phone: '0900000002',
-        orderId: activeRecallOrder.orderId,
-        title: 'Đã giải phóng ngăn tủ thành công',
-        message: `Đã thu hồi thành công bưu kiện ${activeRecallOrder.orderId} tại ${activeRecallOrder.lockerName} - Ngăn #${activeRecallOrder.compartmentIndex}. Ngăn tủ đã được giải phóng thành EMPTY sẵn sàng nhận đơn mới!`,
-        type: 'RECALL_SUCCESS',
-      });
+      // GĐ64b — thông báo "đã thu hồi" cho KHÁCH (`RECALLED`) và cho vai SHIPPER (`RECALL_SUCCESS`)
+      // do BACKEND ghi trong `recallOverduePackage` ⇒ khách ở máy khác cũng nhận. Trước đây hai
+      // thông báo này lưu vào localStorage của CHÍNH trình duyệt shipper nên khách không bao giờ thấy.
+      // Ở đây chỉ nhắc chuông tải lại ngay; popup thành công bên dưới GIỮ nguyên.
+      store.refreshNotifications();
 
       playSuccessChime();
       setSuccessRecallInfo({

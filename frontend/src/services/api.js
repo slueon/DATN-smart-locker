@@ -241,6 +241,19 @@ export const pickupApi = {
   },
 };
 
+/**
+ * GĐ64a/b — thông báo MÁY CHỦ của người đang đăng nhập.
+ *
+ * <p>Cố ý KHÔNG có tham số phone/role: backend lấy danh tính từ token Bearer. Dữ liệu nằm ở
+ * `res.data.data` như mọi API khác: `list` ⇒ `{ items, unreadCount }`, `readAll` ⇒ `{ updated }`.
+ * Đọc thông báo không phải của mình ⇒ 404.
+ */
+export const notificationApi = {
+  list: () => api.get('/notifications'),
+  markRead: (id) => api.post(`/notifications/${encodeURIComponent(id)}/read`),
+  markAllRead: () => api.post('/notifications/read-all'),
+};
+
 export const mqttApi = {
   sendCommand: (data) => api.post('/mqtt/command', data),
   /**

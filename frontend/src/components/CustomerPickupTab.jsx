@@ -683,16 +683,9 @@ export default function CustomerPickupTab({ currentUser }) {
           // không chặn thì 10 giây sau có ~6 thông báo giống nhau.
           if ((method === 'qr' || method === 'otp') && !processedKioskSeqRef.current.has(chosen.seq)) {
             processedKioskSeqRef.current.add(chosen.seq);
-            const label = method === 'qr' ? 'mã QR' : 'mã OTP';
-            store.addNotification({
-              type: 'KIOSK_METHOD_CHOSEN',
-              method,
-              orderId: selectedOrder.orderId,
-              title: `Tủ yêu cầu nhận hàng bằng ${label}`,
-              message: `Bấm để xem ${label} và mở ngăn #${selectedOrder.compartmentIndex ?? '—'}.`,
-              phone: selectedOrder.customerPhone || currentUser?.phone,
-              isRead: false,
-            });
+            // GĐ64b — thông báo do BACKEND ghi (`KIOSK_METHOD_CHOSEN`, bảng notifications). Ở đây
+            // chỉ nhắc chuông tải lại ngay, không tự tạo bản sao trong localStorage.
+            store.refreshNotifications();
           }
         }
 
@@ -728,14 +721,8 @@ export default function CustomerPickupTab({ currentUser }) {
           setCompartmentSensor(null);
           setSelectedOrderId(null);
 
-          store.addNotification({
-            type: 'PICKUP_SUCCESS',
-            orderId: doneOrderId,
-            title: 'Lấy hàng thành công',
-            message: `Kiện hàng${doneOrder?.productName ? ` "${doneOrder.productName}"` : ''} đã được lấy khỏi tủ.`,
-            phone: doneOrder?.customerPhone || currentUser?.phone,
-            isRead: false,
-          });
+          // GĐ64b — thông báo `PICKUP_SUCCESS` do backend ghi; popup ở trên GIỮ nguyên.
+          store.refreshNotifications();
         }
 
         // GĐ42 — KHÁCH QUÊN LẤY HÀNG.
@@ -755,25 +742,13 @@ export default function CustomerPickupTab({ currentUser }) {
 
         if (leftBehind) {
           processedKioskSeqRef.current.add(leftBehind.seq);
-          const lbOrderId = leftBehind.orderId || selectedOrder?.orderId || null;
-          const lbOrder = orders.find((o) => o.orderId === lbOrderId) || selectedOrder;
 
           await loadOrders();
           // Mở lại modal QR/OTP để khách mở lại bằng CHÍNH mã cũ — dữ liệu đã về DEPOSITED.
           setCompartmentSensor(null);
 
-          store.addNotification({
-            type: 'PICKUP_LEFT_BEHIND',
-            orderId: lbOrderId,
-            method: 'qr',
-            title: 'Bạn chưa lấy kiện hàng',
-            // Dùng nguyên văn câu backend viết (đã đúng ngữ cảnh), fallback nếu thiếu.
-            message: leftBehind.message
-              || `Cửa đã đóng nhưng kiện hàng vẫn trong tủ${lbOrder?.compartmentIndex != null
-                ? ` ngăn #${lbOrder.compartmentIndex}` : ''}. Bấm để mở lại.`,
-            phone: lbOrder?.customerPhone || currentUser?.phone,
-            isRead: false,
-          });
+          // GĐ64b — thông báo `PICKUP_LEFT_BEHIND` do backend ghi.
+          store.refreshNotifications();
         }
 
         // GĐ49b — KIỆN VỪA ĐƯỢC NẠP VÀO TỦ (`DEPOSIT_SUCCESS`).
@@ -790,19 +765,9 @@ export default function CustomerPickupTab({ currentUser }) {
 
         if (vuaNap) {
           processedKioskSeqRef.current.add(vuaNap.seq);
-          const napOrderId = vuaNap.orderId || null;
           await loadOrders();
-          store.addNotification({
-            type: 'DEPOSIT_SUCCESS',
-            orderId: napOrderId,
-            method: 'qr',
-            title: 'Bưu kiện đã về tủ',
-            message: vuaNap.message
-              || `Kiện hàng đã được nạp vào tủ${vuaNap.compartment != null
-                ? ` ngăn #${vuaNap.compartment}` : ''}. Bấm để xem mã QR/OTP mở tủ.`,
-            phone: currentUser?.phone,
-            isRead: false,
-          });
+          // GĐ64b — thông báo `DEPOSIT_SUCCESS` do backend ghi (kể cả khi tab này đóng lúc nạp).
+          store.refreshNotifications();
         }
 
         // Luôn cập nhật mốc, kể cả khi không có sự kiện — nếu chỉ cập nhật khi có sự kiện thì

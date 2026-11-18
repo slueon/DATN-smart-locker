@@ -4,7 +4,11 @@ import {
   ChevronRight, Package, Radio, Sparkles,
   AlertTriangle, CheckCircle2, Key, Info
 } from 'lucide-react';
-import { store } from '../services/store';
+import { store, NOTIFS_UPDATED_EVENT } from '../services/store';
+import { getAuthToken } from '../services/api';
+
+/** GĐ64b — nhịp poll thông báo máy chủ (DoD: thông báo có ở máy khác trong ≤ 6 s). */
+const NOTIF_POLL_MS = 5000;
 
 export default function Header({
   activeTab,
@@ -13,25 +17,57 @@ export default function Header({
 }) {
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [filterNotifType, setFilterNotifType] = useState('ALL');
 
+  /**
+   * GĐ64b — chuông đọc MÁY CHỦ (`GET /api/notifications`), không còn localStorage.
+   *
+   * <p>Tải lại khi: mount, mỗi {@link NOTIF_POLL_MS}, tab được focus/hiện lại, và khi có
+   * {@link NOTIFS_UPDATED_EVENT} (sự kiện kiosk vừa tới, hoặc vừa đánh dấu đã đọc). Không có token
+   * (nhánh đăng nhập dự phòng) ⇒ không gọi API, tránh 401 lặp lại mỗi 5 s.
+   *
+   * <p>Lỗi một nhịp (`null`) ⇒ GIỮ danh sách cũ, không xoá chuông về rỗng.
+   */
   useEffect(() => {
-    if (currentUser) {
-      setNotifications(store.getNotifications(currentUser.phone, currentUser.role));
-    }
-    const handleNotifUpdate = () => {
-      if (currentUser) {
-        setNotifications(store.getNotifications(currentUser.phone, currentUser.role));
+    // Chưa đăng nhập ⇒ chuông không hiển thị (xem JSX), không cần poll.
+    if (!currentUser) return undefined;
+    let cancelled = false;
+    let inFlight = false;
+
+    const load = async () => {
+      if (inFlight || !getAuthToken()) return;
+      inFlight = true;
+      try {
+        const data = await store.getNotifications();
+        if (!cancelled && data) {
+          setNotifications(data.items);
+          setUnreadCount(data.unreadCount);
+        }
+      } finally {
+        inFlight = false;
       }
     };
-    window.addEventListener('smart_locker_notifs_updated', handleNotifUpdate);
-    return () => window.removeEventListener('smart_locker_notifs_updated', handleNotifUpdate);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+
+    load();
+    const timer = setInterval(load, NOTIF_POLL_MS);
+    window.addEventListener(NOTIFS_UPDATED_EVENT, load);
+    window.addEventListener('focus', load);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener(NOTIFS_UPDATED_EVENT, load);
+      window.removeEventListener('focus', load);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [currentUser]);
 
-  const unreadCount = notifications.filter((n) => !n.isRead).length;
-
   const handleMarkAllRead = () => {
-    store.markAllNotificationsRead(currentUser?.phone);
+    store.markAllNotificationsRead();
   };
 
   const getBreadcrumb = () => {
@@ -62,7 +98,8 @@ export default function Header({
    * khi thông báo vẫn nằm ở tab "Tất cả". Đây là lỗi im lặng: dữ liệu đúng, chỗ hiển thị sai.
    */
   const filteredNotifs = notifications.filter((n) => {
-    if (filterNotifType === 'OVERDUE') return n.type === 'OVERDUE_ALERT';
+    // GĐ64b — khách nhận `OVERDUE_CUSTOMER` (backend), shipper nhận `OVERDUE_ALERT`.
+    if (filterNotifType === 'OVERDUE') return n.type === 'OVERDUE_ALERT' || n.type === 'OVERDUE_CUSTOMER';
     if (filterNotifType === 'OTP') {
       return n.type === 'OTP_REQUEST' || n.type === 'KIOSK_METHOD_CHOSEN';
     }
@@ -155,12 +192,8 @@ export default function Header({
                   </div>
                 </div>
 
-                {/* GĐ13 — CẢNH BÁO NGUỒN DỮ LIỆU (giống Navbar). Nhãn cũ ghi "Thông Báo Hệ Thống"
-                    là SAI: dữ liệu đọc từ localStorage, backend không có bảng Notification nào. */}
-                <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[10px] leading-snug text-amber-800 flex items-start gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px text-amber-600" />
-                  <span>Thông báo tạm trên trình duyệt này. Hệ thống chưa có dịch vụ thông báo máy chủ.</span>
-                </div>
+                {/* GĐ64b — đã bỏ dòng vàng "Thông báo tạm trên trình duyệt này…" (GĐ13): thông báo
+                    nay lưu ở máy chủ (bảng notifications), không còn đọc localStorage. */}
 
                 {/* Filter Pills */}
                 <div className="flex items-center gap-1 mb-3">

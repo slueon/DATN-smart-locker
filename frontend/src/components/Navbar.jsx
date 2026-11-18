@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Package, Truck, Shield,
-  LogOut, Bell, CheckCheck, X, Cpu, AlertTriangle
+  LogOut, Bell, CheckCheck, X, Cpu
 } from 'lucide-react';
 import { store } from '../services/store';
 
@@ -216,16 +216,9 @@ export default function Navbar({ activeTab, setActiveTab, currentUser, onLogout 
                       </div>
                     </div>
 
-                    {/* GĐ13 — CẢNH BÁO NGUỒN DỮ LIỆU.
-                        Danh sách dưới đây đọc từ localStorage (store.getNotifications), KHÔNG từ
-                        máy chủ: mất khi xoá cache, không đồng bộ sang máy khác. Backend chưa có
-                        entity Notification nào nên chưa có "thông báo hệ thống" để hiển thị. Nếu
-                        không nói rõ, người dùng sẽ tưởng đây là thông báo thật của hệ thống và
-                        không hiểu vì sao mở máy khác lại không thấy. */}
-                    <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[10px] leading-snug text-amber-800 flex items-start gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px text-amber-600" />
-                      <span>Thông báo tạm trên trình duyệt này. Hệ thống chưa có dịch vụ thông báo máy chủ.</span>
-                    </div>
+                    {/* GĐ64b — đã bỏ dòng vàng "Thông báo tạm trên trình duyệt này…" (GĐ13).
+                        ⚠ Navbar KHÔNG còn được import ở đâu (Header.jsx thay thế). Nếu dùng lại thì
+                        phải sửa: `store.getNotifications()` nay là async (API), trả {items, unreadCount}. */}
 
                     <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
                       {notifications.length === 0 ? (

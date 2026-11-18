@@ -1,9 +1,27 @@
 // Centralized Interactive Store for Smart Locker Demo
 // Đồng bộ dữ liệu giữa các vai trò (Khách hàng, Shipper, Quản trị viên)
 
+import { notificationApi } from './api';
+
 const ORDERS_KEY = 'smart_locker_orders_data';
 const NOTIFS_KEY = 'smart_locker_notifications_data';
 const LOCKERS_KEY = 'smart_locker_lockers_data';
+
+/** GĐ64b — sự kiện cửa sổ: "chuông hãy tải lại thông báo từ máy chủ ngay". */
+export const NOTIFS_UPDATED_EVENT = 'smart_locker_notifs_updated';
+
+// GĐ64b — DỌN RÁC thông báo cũ trong localStorage MỘT LẦN khi tải module (vd "Kien GD38").
+// Chuông nay đọc máy chủ (`GET /api/notifications`), key này không còn ai hiển thị. Đặt cờ để
+// chỉ xoá đúng một lần cho mỗi trình duyệt, không xoá lặp mỗi lần F5.
+const NOTIFS_CLEANED_FLAG = 'smart_locker_notifications_cleaned_gd64';
+try {
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem(NOTIFS_CLEANED_FLAG)) {
+    localStorage.removeItem(NOTIFS_KEY);
+    localStorage.setItem(NOTIFS_CLEANED_FLAG, '1');
+  }
+} catch {
+  /* localStorage bị chặn — bỏ qua */
+}
 
 // Dữ liệu đơn hàng khởi tạo ban đầu
 const DEFAULT_ORDERS = [];
@@ -472,49 +490,33 @@ export const store = {
   },
 
   /**
-   * Đọc danh sách "thông báo" lưu trong **localStorage của trình duyệt này**.
+   * GĐ64b — đọc thông báo MÁY CHỦ của người đang đăng nhập (`GET /api/notifications`).
    *
-   * <h2>⚠ ĐÂY KHÔNG PHẢI THÔNG BÁO HỆ THỐNG</h2>
+   * <p>Trước GĐ64 hàm này đọc localStorage: thông báo cho người khác không bao giờ tới, đổi máy là
+   * mất. Nay danh tính do backend lấy từ token — KHÔNG truyền phone/role (backend cũng không nhận).
    *
-   * <p>Dữ liệu nằm ở {@code localStorage[NOTIFS_KEY]} — tức là <b>chỉ tồn tại trên đúng máy và
-   * đúng trình duyệt</b> đã tạo ra nó. Hệ quả người dùng PHẢI biết:
-   * <ul>
-   *   <li>Xoá cache / dùng ẩn danh / đổi máy / đổi trình duyệt → <b>mất toàn bộ</b>.</li>
-   *   <li>Máy khác đăng nhập cùng tài khoản <b>không thấy</b> thông báo này.</li>
-   *   <li>Không ai ở phía máy chủ biết thông báo này tồn tại.</li>
-   * </ul>
+   * <p><b>Bất đồng bộ.</b> Lỗi mạng/401 ⇒ trả `null` để nơi gọi GIỮ danh sách đang hiển thị, thay
+   * vì làm chuông chớp về rỗng ở một nhịp poll hỏng.
    *
-   * <h2>Vì sao không nối vào backend (GĐ13 — quyết định phạm vi)</h2>
-   *
-   * <p>Backend <b>không có</b> entity/bảng {@code Notification} nào (đã kiểm: 11 entity, không có
-   * cái nào tên Notification). Nghĩa là <b>không có thông báo máy chủ nào bị bỏ rơi</b>: máy chủ
-   * chưa từng sinh ra thông báo, nên đọc localStorage không làm mất dữ liệu của ai.
-   *
-   * <p>Cụ thể {@code OverdueSchedulerService} (tác vụ quét quá hạn mỗi 10 phút) chỉ gọi
-   * {@code order.setStatus("OVERDUE")} — <b>không</b> tạo thông báo. Nên vòng quét không "âm thầm"
-   * sinh ra dữ liệu mà giao diện bỏ sót.
-   *
-   * <p>Muốn có thông báo thật (bảng + push + đánh dấu đã đọc ở server) là một <b>tính năng riêng</b>,
-   * không phải việc sửa lỗi — xem ghi chú trong {@code STATE.md}, mục GĐ13 việc 2.
-   *
-   * @param phone SĐT khách để lọc; bỏ trống = không lọc theo SĐT
-   * @param role  {@code 'SHIPPER'|'ADMIN'} để lọc theo vai trò
+   * @returns {Promise<{items: Array, unreadCount: number} | null>}
    */
-  getNotifications: (phone, role = null) => {
+  getNotifications: async () => {
     try {
-      const data = localStorage.getItem(NOTIFS_KEY);
-      const list = data ? JSON.parse(data) : DEFAULT_NOTIFICATIONS;
-      if (!phone && !role) return list;
-      return list.filter((n) => {
-        if (role === 'SHIPPER' && (n.targetRole === 'SHIPPER' || n.role === 'SHIPPER')) return true;
-        if (role === 'ADMIN' && (n.targetRole === 'ADMIN' || n.role === 'ADMIN')) return true;
-        if (phone && n.phone === phone) return true;
-        if (!n.phone && !n.targetRole) return true;
-        return false;
-      });
-    } catch (e) {
-      return DEFAULT_NOTIFICATIONS;
+      const res = await notificationApi.list();
+      const data = res?.data?.data;
+      if (!data) return null;
+      return {
+        items: Array.isArray(data.items) ? data.items : [],
+        unreadCount: Number(data.unreadCount) || 0,
+      };
+    } catch {
+      return null;
     }
+  },
+
+  /** GĐ64b — nhắc chuông tải lại ngay (sau một sự kiện kiosk), không chờ nhịp poll 5 s. */
+  refreshNotifications: () => {
+    window.dispatchEvent(new Event(NOTIFS_UPDATED_EVENT));
   },
 
   /**
@@ -548,20 +550,20 @@ export const store = {
     } catch (e) {}
   },
 
-  // Đánh dấu tất cả thông báo đã đọc
-  markAllNotificationsRead: (phone) => {
+  /**
+   * GĐ64b — đánh dấu TẤT CẢ thông báo của mình đã đọc (`POST /api/notifications/read-all`).
+   * Trạng thái đọc lưu ở máy chủ ⇒ máy khác cùng tài khoản hết "chưa đọc" ở nhịp poll kế tiếp.
+   *
+   * @returns {Promise<number|null>} số dòng đã đổi; `null` nếu lỗi
+   */
+  markAllNotificationsRead: async () => {
     try {
-      const data = localStorage.getItem(NOTIFS_KEY);
-      const list = data ? JSON.parse(data) : DEFAULT_NOTIFICATIONS;
-      const updated = list.map((n) => {
-        if (!phone || n.phone === phone) {
-          return { ...n, isRead: true };
-        }
-        return n;
-      });
-      localStorage.setItem(NOTIFS_KEY, JSON.stringify(updated));
-      window.dispatchEvent(new Event('smart_locker_notifs_updated'));
-    } catch (e) {}
+      const res = await notificationApi.markAllRead();
+      window.dispatchEvent(new Event(NOTIFS_UPDATED_EVENT));
+      return res?.data?.data?.updated ?? 0;
+    } catch {
+      return null;
+    }
   },
 
   /**
@@ -571,29 +573,17 @@ export const store = {
    * thông báo "Tủ yêu cầu nhận hàng bằng mã QR" thì badge phải giảm 1, chứ không phải xoá sạch mọi
    * thông báo chưa đọc (làm vậy khách mất dấu những thông báo khác chưa xem).
    *
-   * <p><b>Vẫn là localStorage của trình duyệt</b> — mất khi xoá cache, không đồng bộ máy khác. Banner
-   * cảnh báo trong `Navbar` phải giữ nguyên.
+   * <p>GĐ64b — gọi `POST /api/notifications/{id}/read`; trạng thái lưu ở máy chủ. Thông báo không
+   * phải của mình ⇒ backend 404 ⇒ trả `false` (không ném lỗi làm sập dropdown).
+   *
+   * @returns {Promise<boolean>}
    */
-  markNotificationRead: (id) => {
+  markNotificationRead: async (id) => {
     try {
-      const data = localStorage.getItem(NOTIFS_KEY);
-      const list = data ? JSON.parse(data) : DEFAULT_NOTIFICATIONS;
-      let changed = false;
-      const updated = list.map((n) => {
-        if (n.id === id && !n.isRead) {
-          changed = true;
-          return { ...n, isRead: true };
-        }
-        return n;
-      });
-      if (changed) {
-        localStorage.setItem(NOTIFS_KEY, JSON.stringify(updated));
-        window.dispatchEvent(new Event('smart_locker_notifs_updated'));
-      }
-      return changed;
+      await notificationApi.markRead(id);
+      window.dispatchEvent(new Event(NOTIFS_UPDATED_EVENT));
+      return true;
     } catch {
-      // localStorage có thể bị chặn (chế độ riêng tư / hết quota). Trả false để nơi gọi biết
-      // "không đánh dấu được" thay vì ném lỗi làm sập dropdown thông báo.
       return false;
     }
   },
