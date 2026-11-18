@@ -93,10 +93,36 @@ export default function LockerMap({
   //   tải sẵn cho cả 10 tủ lúc mở tab.
   getMarkerBadge = undefined,
   onPopupOpen = undefined,
+  // GĐ62 — hai prop TUỲ CHỌN cho nhánh KHÁCH (điều cấm #5: không đổi chữ ký các prop cũ).
+  //
+  // `userPos = { lat, lng } | null`: vị trí khách đã lấy được (chỉ khi họ bấm "Gần tôi").
+  //   `null` ⇒ KHÔNG vẽ gì, KHÔNG fitBounds về điểm mặc định (điều cấm #4).
+  // `routeInfo = { lockerId, geometry, source, ... } | null`: tuyến tới tủ đang xem, do
+  //   `fetchDrivingRoute` trả về ở `LockerNetworkMapTab` — component này KHÔNG tự gọi OSRM
+  //   (điều cấm #3).
+  //
+  // Vì sao phải nhận qua prop thay vì tự tính: trước GĐ62 tab đã có sẵn `userPos`/`routeInfo`
+  // nhưng không truyền xuống, nên chữ trên UI đổi (khoảng cách, nhãn "đường đi thực tế") còn
+  // bản đồ thì đứng yên — đúng lỗi user báo.
+  userPos = null,
+  routeInfo = null,
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef(new Map());
+  // GĐ62 — marker khách và tuyến đường nằm ở hai layer riêng, KHÔNG dùng `markersRef`: layer
+  // marker tủ bị xoá/vẽ lại mỗi lần `lockers` đổi, còn vị trí khách thì không được biến mất theo.
+  const userLayerRef = useRef(null);
+  const routeLayerRef = useRef(null);
+  // Chỉ `fitBounds` MỘT lần cho mỗi lần có được toạ độ (null → có). Không có cờ này thì mỗi lần
+  // danh sách tủ làm mới (bấm "Làm mới") bản đồ lại giật về khung cũ, cướp khung nhìn người dùng.
+  const userFitDoneRef = useRef(false);
+
+  // GĐ62 — chữ ký toạ độ của danh sách tủ đang hiện. Dùng làm dependency thay cho mảng `lockers`
+  // (mảng mới mỗi lần cha render, kể cả khi toạ độ y hệt) để marker khách không bị vẽ lại liên tục.
+  const lockerKey = lockers
+    .map((l) => `${l.latitude ?? ''},${l.longitude ?? ''}`)
+    .join('|');
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -136,6 +162,27 @@ export default function LockerMap({
 
       primaryTileLayer.addTo(map);
       mapInstanceRef.current = map;
+
+      // GĐ62 — hai layer RIÊNG cho vị trí khách và tuyến đường. Tạo một lần ở đây (không tạo
+      // trong effect vẽ marker tủ) để chúng không bị xoá khi danh sách tủ làm mới.
+      userLayerRef.current = L.layerGroup().addTo(map);
+      routeLayerRef.current = L.layerGroup().addTo(map);
+
+      // GĐ62 — thuộc tính ĐO ĐƯỢC: `data-center` + `data-zoom` trên chính container.
+      //
+      // Vì sao phải có: trước đây không có cách nào biết "bản đồ có đổi khung nhìn hay không"
+      // từ bên ngoài — người nghiệm thu chỉ thấy chữ trên UI đổi còn map có thể đứng yên (đúng
+      // lỗi GĐ62). Gắn ở `moveend`/`zoomend` (không phải mỗi `move`) để không ghi hàng trăm lần
+      // trong lúc `flyTo`/`fitBounds` đang chạy animation.
+      const syncViewAttrs = () => {
+        const el = mapContainerRef.current;
+        if (!el) return;
+        const c = map.getCenter();
+        el.setAttribute('data-center', `${c.lat.toFixed(3)},${c.lng.toFixed(3)}`);
+        el.setAttribute('data-zoom', String(map.getZoom()));
+      };
+      map.on('moveend zoomend', syncViewAttrs);
+      syncViewAttrs();
 
       // Tự động fitBounds cho mạng lưới phân tán
       if (lockers.length > 0) {
@@ -348,6 +395,124 @@ export default function LockerMap({
     // không làm thay đổi nội dung marker.
   }, [lockers, selectedLockerId, onSelectLocker, onActionClick, actionButtonLabel, getMarkerBadge]);
 
+  /**
+   * GĐ62 — VỊ TRÍ KHÁCH trên bản đồ.
+   *
+   * <p>Chỉ vẽ khi `userPos` có thật (điều cấm #4): `null` ⇒ xoá layer, không `fitBounds` về điểm
+   * mặc định. Nhãn "Vị trí của bạn" là `divIcon` (không phải `bindPopup`) để nó luôn hiện, người
+   * dùng không phải bấm vào mới thấy — đây chính là thứ trước GĐ62 thiếu.
+   *
+   * <p>`fitBounds` CHỈ chạy một lần cho mỗi lần có được toạ độ (`userFitDoneRef`), vì effect này
+   * còn chạy lại khi danh sách tủ đổi (sắp xếp theo khoảng cách) — nếu `fitBounds` mỗi lần thì
+   * bản đồ giật về khung cũ ngay sau khi người dùng vừa kéo bản đồ đi chỗ khác.
+   */
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !userLayerRef.current) return;
+
+    const layer = userLayerRef.current;
+    layer.clearLayers();
+
+    const lat = Number(userPos?.lat ?? userPos?.latitude);
+    const lng = Number(userPos?.lng ?? userPos?.longitude);
+    const coViTri = Number.isFinite(lat) && Number.isFinite(lng);
+
+    if (!coViTri) {
+      // Mất vị trí (đăng xuất / đổi vai trò) ⇒ dọn marker + cho phép fitBounds lần sau.
+      userFitDoneRef.current = false;
+      const el = mapContainerRef.current;
+      if (el) el.removeAttribute('data-user');
+      return;
+    }
+
+    L.circleMarker([lat, lng], {
+      radius: 8,
+      color: '#ffffff',
+      weight: 3,
+      fillColor: '#2563eb', // xanh dương: cùng tông với nút "Gần tôi"
+      fillOpacity: 1,
+      interactive: false,
+    }).addTo(layer);
+
+    L.marker([lat, lng], {
+      interactive: false,
+      keyboard: false,
+      icon: L.divIcon({
+        className: 'locker-user-marker',
+        html: `
+          <div style="
+            display: flex; align-items: center; gap: 4px;
+            transform: translate(12px, -34px);
+            background: #2563eb; color: #ffffff;
+            padding: 3px 10px; border-radius: 9999px;
+            font-size: 11px; font-weight: 700; white-space: nowrap;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            box-shadow: 0 2px 10px rgba(37, 99, 235, 0.45);
+            border: 2px solid #ffffff;
+          ">📍 Vị trí của bạn</div>
+        `,
+        iconSize: [1, 1],
+        iconAnchor: [0, 0],
+      }),
+    }).addTo(layer);
+
+    // Ghi lại toạ độ đã vẽ để phép nghiệm thu đọc được bằng máy (không phải đoán qua pixel).
+    const el = mapContainerRef.current;
+    if (el) el.setAttribute('data-user', `${lat.toFixed(3)},${lng.toFixed(3)}`);
+
+    if (!userFitDoneRef.current) {
+      const diem = [[lat, lng]];
+      lockers.forEach((l) => {
+        if (l.latitude && l.longitude) diem.push([l.latitude, l.longitude]);
+      });
+      if (diem.length > 1) {
+        map.fitBounds(L.latLngBounds(diem), { padding: [45, 45], maxZoom: 15 });
+      } else {
+        map.setView([lat, lng], 15);
+      }
+      userFitDoneRef.current = true;
+    }
+    // Phụ thuộc `lockerKey` (chuỗi toạ độ) chứ không phải `lockers`: mảng `filteredLockers` là
+    // tham chiếu MỚI mỗi lần cha render, để nguyên thì marker khách bị xoá/vẽ lại liên tục.
+  }, [userPos, lockerKey]);
+
+  /**
+   * GĐ62 — TUYẾN ĐƯỜNG tới tủ đang xem.
+   *
+   * <p>`geometry` do `fetchDrivingRoute` trả (đã đổi sang `[lat, lng]` cho Leaflet) — component này
+   * KHÔNG tự dựng URL/không gọi OSRM lần 2 (điều cấm #3); `source` chỉ dùng để chọn nét vẽ.
+   *
+   * <p>Mỗi lần `routeInfo` đổi, layer bị `clearLayers()` TRƯỚC khi vẽ ⇒ tuyến của tủ cũ biến mất,
+   * không bao giờ chồng 2 tuyến (phép thử (3)).
+   */
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !routeLayerRef.current) return;
+
+    const layer = routeLayerRef.current;
+    layer.clearLayers();
+
+    const geometry = Array.isArray(routeInfo?.geometry) ? routeInfo.geometry : [];
+    const diem = geometry
+      .map((pt) => [Number(pt?.[0]), Number(pt?.[1])])
+      .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+    if (diem.length < 2) return;
+
+    const laOsrm = routeInfo?.source === 'osrm';
+    L.polyline(diem, {
+      // Nét liền xanh khi là tuyến lái xe THẬT; nét đứt amber khi chỉ là "chim bay" — màu/nét nói
+      // đúng độ tin cậy, khớp nhãn chữ trong thẻ tủ.
+      color: laOsrm ? '#2563eb' : '#f59e0b',
+      weight: 5,
+      opacity: 0.9,
+      dashArray: laOsrm ? undefined : '8 8',
+      lineJoin: 'round',
+    }).addTo(layer);
+
+    // Khung nhìn theo tuyến để người dùng thấy cả đường đi lẫn hai đầu.
+    map.fitBounds(L.latLngBounds(diem), { padding: [0.2, 0.2] });
+  }, [routeInfo]);
+
   useEffect(() => {
     return () => {
       if (mapInstanceRef.current) {
@@ -376,6 +541,7 @@ export default function LockerMap({
     >
       <div
         ref={mapContainerRef}
+        data-testid="locker-map"
         className="w-full h-full"
         style={{ minHeight, zIndex: 1 }}
       />

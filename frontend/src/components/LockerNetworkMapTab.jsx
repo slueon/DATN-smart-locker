@@ -836,6 +836,12 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                 }
               : undefined}
             onPopupOpen={isAdmin ? openLockerDetail : undefined}
+            // GĐ62 — hai prop này trước đây BỊ THIẾU (nguyên nhân gốc của lỗi user báo): tab đã
+            // tính `userPos`/`routeInfo` nhưng không truyền xuống, nên chữ trên UI đổi còn bản đồ
+            // đứng yên. Chỉ truyền ở nhánh KHÁCH — ADMIN luôn nhận `null` (điều cấm #1: admin
+            // không được thấy vị trí khách / tuyến đường / nút "Gần tôi").
+            userPos={isAdmin ? null : userPos}
+            routeInfo={isAdmin ? null : routeInfo}
           />
         </div>
 
