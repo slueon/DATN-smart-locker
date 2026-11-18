@@ -41,6 +41,7 @@ import java.util.Objects;
 public class NotificationService {
 
     public static final String DEPOSIT_SUCCESS = "DEPOSIT_SUCCESS";
+    public static final String DEPOSIT_LEFT_EMPTY = "DEPOSIT_LEFT_EMPTY";
     public static final String KIOSK_METHOD_CHOSEN = "KIOSK_METHOD_CHOSEN";
     public static final String PICKUP_SUCCESS = "PICKUP_SUCCESS";
     public static final String PICKUP_LEFT_BEHIND = "PICKUP_LEFT_BEHIND";
@@ -131,6 +132,19 @@ public class NotificationService {
                             + ". Bấm để xem mã QR/OTP mở tủ.");
         } catch (RuntimeException ex) {
             log.warn("depositSuccess: {}", ex.toString());
+        }
+    }
+
+    /** Shipper quên nạp: ngăn đã trả lại nhưng kiện hàng chưa được bỏ vào tủ. */
+    public void depositLeftEmpty(Order order, Integer compIndex) {
+        try {
+            if (order == null) return;
+            notify(DEPOSIT_LEFT_EMPTY, null, ROLE_SHIPPER, order.getOrderId(), null,
+                    "Bạn quên nạp hàng",
+                    "Ngăn" + (compIndex != null ? " #" + compIndex : "")
+                            + " đã trả lại. Vui lòng nạp lại kiện hàng.");
+        } catch (RuntimeException ex) {
+            log.warn("depositLeftEmpty: {}", ex.toString());
         }
     }
 

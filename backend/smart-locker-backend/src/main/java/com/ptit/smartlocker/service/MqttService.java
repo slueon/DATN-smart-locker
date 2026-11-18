@@ -105,6 +105,10 @@ public class MqttService implements MqttCallbackExtended {
     @Value("${mqtt.locker.prefix.chung2004:LOCKER_HN_01}")
     private String chung2004LockerId;
 
+    /** GĐ65b — thời gian tối đa một phiên nạp trực tiếp được giữ PENDING_OPENED khi tủ không báo đóng cửa. */
+    @Value("${app.reservation.timeout-minutes:120}")
+    private long directDepositSessionMinutes;
+
     /** topic|payload → thời điểm phát, dùng để nhận ra bản tin của chính mình. */
     private final Map<String, Long> recentlyPublished = new ConcurrentHashMap<>();
 
@@ -1660,12 +1664,15 @@ public class MqttService implements MqttCallbackExtended {
                             || !comp.getCompartmentId().equals(ord.getCompartment().getCompartmentId())) {
                         continue;
                     }
-                    // Chỉ đơn ĐÃ ĐƯỢC SHIPPER ĐẶT TRƯỚC mới mở phiên: đơn chưa đặt trước thì việc
-                    // mở cửa không phải do shipper này thao tác.
-                    if (ord.getShipperReservedAt() == null) {
-                        continue;
-                    }
+                    // GĐ65b: shipper có thể chọn ngăn trực tiếp khi nạp, không nhất thiết đặt trước.
+                    // Khi cửa mở, tất cả đơn PENDING đang gán đúng ngăn đều mở PENDING_OPENED để
+                    // trạng thái cửa đóng có thể chốt thành DEPOSITED hoặc DEPOSIT_LEFT_EMPTY.
                     ord.setStatus("PENDING_OPENED");
+                    // Phiên nạp trực tiếp (không đặt trước): hạn phiên tính từ LÚC MỞ CỬA, không
+                    // phải lúc tạo đơn. Đơn đặt trước giữ nguyên hạn riêng của nó.
+                    if (ord.getShipperReservedAt() == null) {
+                        ord.setReserveExpiresAt(LocalDateTime.now().plusMinutes(directDepositSessionMinutes));
+                    }
                     orderRepository.save(ord);
                     log.info("Cửa ngăn {} tủ {} vừa mở — đơn {} sang PENDING_OPENED",
                             compIndex, locker.getLockerId(), ord.getOrderId());

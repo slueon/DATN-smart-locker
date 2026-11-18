@@ -135,4 +135,34 @@ class ShipperOpenedNoDepositTests {
         assertNotNull(sau.getShipperReservedAt(),
                 "Dấu đặt trước phải còn vì shipper đang thao tác");
     }
+
+    @Test
+    @DisplayName("GĐ65b: phiên nạp trực tiếp PENDING_OPENED quá thời gian thì phục hồi PENDING/EMPTY")
+    void phienNạpTrucTiepBiKetThiPhucHoi() {
+        Locker locker = lockerRepository.findById(LOCKER).orElseThrow();
+        Order stuck = orderRepository.save(Order.builder()
+                .orderId("ORD-GD65B-STUCK")
+                .customerName("Khách test GĐ65b")
+                .customerPhone("0912345679")
+                .deliveryType("LOCKER")
+                .locker(locker)
+                .compartment(compartment)
+                .expectedDate(LocalDate.now())
+                .status("PENDING_OPENED")
+                // createdAt có @CreationTimestamp nên không lùi được; hạn phiên nạp trực tiếp
+                // được ghi vào reserveExpiresAt lúc cửa mở — ở đây giả lập đã quá hạn 5 phút.
+                .shipperReservedAt(null)
+                .reserveExpiresAt(LocalDateTime.now().minusMinutes(5))
+                .totalAmount(BigDecimal.valueOf(50000))
+                .productName("Kiện kẹt GĐ65b")
+                .build());
+
+        reservationTimeoutService.releaseExpiredReservations();
+
+        Order sau = orderRepository.findById(stuck.getOrderId()).orElseThrow();
+        assertEquals("PENDING", sau.getStatus());
+        assertNull(sau.getCompartment());
+        assertEquals("EMPTY",
+                compartmentRepository.findByLocker_LockerIdAndCompIndex(LOCKER, 1).orElseThrow().getStatus());
+    }
 }

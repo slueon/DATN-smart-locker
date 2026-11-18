@@ -129,6 +129,7 @@ export default function CustomerPickupTab({ currentUser }) {
    * phải F5 mới thấy dữ liệu mới.
    */
   const [pickupDoneInfo, setPickupDoneInfo] = useState(null);
+  const [pickupLeftInfo, setPickupLeftInfo] = useState(null);
 
   /**
    * GĐ32 — các đơn CHÍNH PHIÊN NÀY đã từng ở trong tủ (`DEPOSITED`/`PICKUP_OPENED`).
@@ -346,7 +347,7 @@ export default function CustomerPickupTab({ currentUser }) {
   const handleGenerateOtp = async (order) => {
     if (!order) return;
 
-    if (order.status === 'PENDING') {
+    if (order.status === 'PENDING' || order.status === 'PENDING_OPENED') {
       setOtpToast('Kiện hàng chưa được nhân viên nạp vào tủ! Vui lòng chờ sau khi nạp hàng để nhận mã OTP.');
       setTimeout(() => setOtpToast(null), 4000);
       return;
@@ -503,6 +504,39 @@ export default function CustomerPickupTab({ currentUser }) {
    */
   const donTrungTam = donDangCho[0] || selectedOrder || null;
 
+  /**
+   * GĐ65c — SƠ ĐỒ NGĂN CỦA KHÁCH: chỉ hiện khi khách ĐANG ĐI LẤY HÀNG, và chỉ ĐÚNG ngăn của mình.
+   *
+   * <p><b>Lỗi user báo 18/11:</b> trước đây đơn CHƯA nạp vẫn vẽ đủ 2 ngăn của tủ (kể cả ngăn đang
+   * chứa hàng của người khác), đơn `COMPLETED` vẫn vẽ ngăn, và khi lọc theo ngăn không ra thì rơi
+   * về "vẽ đủ" (`loc.length ? loc : compartmentsDayDu`). Khách nhìn thấy ngăn không liên quan gì
+   * tới kiện hàng của mình.
+   *
+   * <p><b>Quy tắc nay (thay quy tắc cũ GĐ39):</b> chỉ vẽ khi đơn trung tâm đang ở
+   * `DEPOSITED`/`PICKUP_OPENED` <b>và</b> có `compartmentIndex` <b>và</b> có `lockerId` — khi đó
+   * vẽ ĐÚNG 1 ô là ngăn đó. Mọi trường hợp khác (chưa nạp, đã xong, đã huỷ, quá hạn, thiếu số
+   * ngăn, không tải được danh sách ngăn) ⇒ ô trống "Chưa có kiện hàng chờ lấy".
+   *
+   * <p>Giá trị cứng cũ (`compartmentIndex || 2`, `'LOCKER_HN_01'`, `'Trạm Tủ KTX A1'`) đã bỏ: hiện
+   * tủ/ngăn nào là phải lấy từ chính đơn, không đoán.
+   */
+  const soDoNgan = (() => {
+    if (!donTrungTam) return null;
+    if (!['DEPOSITED', 'PICKUP_OPENED'].includes(donTrungTam.status)) return null;
+    const cuaDon = donTrungTam.compartmentIndex;
+    if (cuaDon == null || !donTrungTam.lockerId) return null;
+    if (!compartmentsDayDu) return null;
+    const ngan = compartmentsDayDu.find((c) => Number(c.id) === Number(cuaDon));
+    // Không tìm thấy ngăn của mình trong danh sách ⇒ KHÔNG vẽ ngăn nào khác thay vào.
+    if (!ngan) return null;
+    return {
+      lockerId: donTrungTam.lockerId,
+      lockerName: donTrungTam.lockerName,
+      compartmentIndex: cuaDon,
+      compartments: [ngan],
+    };
+  })();
+
   // GĐ5 — đọc cảm biến của ngăn chứa đơn đang xem, để hiển thị đúng cân nặng thật.
   // Chỉ đọc khi đơn đã có ngăn; đơn chưa nạp tủ thì không có gì để đọc.
   //
@@ -541,9 +575,13 @@ export default function CustomerPickupTab({ currentUser }) {
   }, []);
 
   useEffect(() => {
-    docCamBien(selectedOrder?.lockerId, selectedOrder?.compartmentIndex);
+    // GĐ65c — nạp danh sách ngăn cho ĐÚNG đơn mà sơ đồ sẽ vẽ (donTrungTam có thể khác
+    // selectedOrder: đơn đang chờ được ưu tiên). Không có đơn để vẽ ⇒ xoá danh sách.
+    const id = donTrungTam?.lockerId;
+    const idx = donTrungTam?.compartmentIndex;
+    docCamBien(id, idx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedOrder?.lockerId, selectedOrder?.compartmentIndex]);
+  }, [donTrungTam?.lockerId, donTrungTam?.compartmentIndex, donTrungTam?.orderId]);
 
   /**
    * GĐ40 — tải telemetry THẬT của tủ đang xem.
@@ -744,6 +782,10 @@ export default function CustomerPickupTab({ currentUser }) {
           processedKioskSeqRef.current.add(leftBehind.seq);
 
           await loadOrders();
+          setPickupLeftInfo({
+            orderId: leftBehind.orderId || selectedOrder?.orderId || null,
+            compartmentIndex: leftBehind.compartment ?? null,
+          });
           // Mở lại modal QR/OTP để khách mở lại bằng CHÍNH mã cũ — dữ liệu đã về DEPOSITED.
           setCompartmentSensor(null);
 
@@ -847,6 +889,13 @@ export default function CustomerPickupTab({ currentUser }) {
             <Clock className="w-3.5 h-3.5 text-amber-600" /> Chờ shipper nạp
           </span>
         );
+      case 'PENDING_OPENED':
+        return (
+          <span className="bg-violet-50 text-violet-800 border border-violet-200 text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 shadow-2xs">
+            <span className="w-2 h-2 rounded-full bg-violet-500 inline-block animate-pulse" />
+            Đang nạp hàng vào tủ
+          </span>
+        );
       case 'COMPLETED':
         return (
           <span className="bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
@@ -914,7 +963,7 @@ export default function CustomerPickupTab({ currentUser }) {
         {[
           { label: 'Tổng bưu kiện', value: orders.length, icon: Package, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
           { label: 'Sẵn sàng mở tủ', value: orders.filter((o) => o.status === 'DEPOSITED').length, icon: CheckCircle2, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-          { label: 'Chờ shipper nạp', value: orders.filter((o) => o.status === 'PENDING').length, icon: Clock, tone: 'text-amber-800 bg-amber-50 border-amber-200' },
+          { label: 'Chờ shipper nạp', value: orders.filter((o) => o.status === 'PENDING' || o.status === 'PENDING_OPENED').length, icon: Clock, tone: 'text-amber-800 bg-amber-50 border-amber-200' },
           { label: 'Đã hoàn thành', value: orders.filter((o) => o.status === 'COMPLETED').length, icon: ShieldCheck, tone: 'text-slate-700 bg-slate-100 border-slate-200' },
         ].map((k) => {
           const Icon = k.icon;
@@ -1061,34 +1110,24 @@ export default function CustomerPickupTab({ currentUser }) {
         </div>
 
         {/* (B) SƠ ĐỒ TỦ — NGAY CẠNH khối trên (desktop) / ngay dưới (mobile).
-            GĐ39 giữ nguyên cách chọn số ngăn; ở đây chỉ DI CHUYỂN khối + dùng chung
-            `donTrungTam` để sơ đồ luôn có đơn hiển thị ngay màn đầu. */}
+            GĐ65c — CHỈ vẽ khi khách đang đi lấy hàng, và chỉ ĐÚNG ngăn của đơn mình. */}
         <div className="lg:col-span-6 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-900">Sơ đồ ngăn tủ</h2>
-            {donTrungTam && (
+            {soDoNgan && (
               <span className="text-[11px] font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
-                Ngăn #{donTrungTam.compartmentIndex || 2}
+                Ngăn #{soDoNgan.compartmentIndex}
               </span>
             )}
           </div>
 
-          {donTrungTam ? (
+          {soDoNgan ? (
             <LockerCabinetVisualizer
-              lockerName={donTrungTam.lockerName || 'Trạm Tủ KTX A1'}
-              lockerId={donTrungTam.lockerId || 'LOCKER_HN_01'}
-              activeSlotId={donTrungTam.compartmentIndex || 2}
-              // GĐ39 (ĐIỀU CẤM #2) — SỐ NGĂN THEO TRẠNG THÁI ĐƠN, giữ NGUYÊN logic:
-              //   • Đơn CHƯA nạp (mọi trạng thái ngoài 3 cái dưới) → hiện ĐỦ 2 ngăn.
-              //   • Đơn ĐÃ nạp (`DEPOSITED`/`PICKUP_OPENED`/`COMPLETED`) → chỉ ngăn chứa đơn.
-              compartments={(() => {
-                if (!compartmentsDayDu) return null;
-                const DA_NAP = ['DEPOSITED', 'PICKUP_OPENED', 'COMPLETED'];
-                if (!DA_NAP.includes(donTrungTam.status)) return compartmentsDayDu;
-                const cuaDon = donTrungTam.compartmentIndex;
-                const loc = compartmentsDayDu.filter((c) => c.id === cuaDon);
-                return loc.length ? loc : compartmentsDayDu;
-              })()}
+              lockerName={soDoNgan.lockerName}
+              lockerId={soDoNgan.lockerId}
+              activeSlotId={soDoNgan.compartmentIndex}
+              // GĐ65c — MỘT ô duy nhất: ngăn chứa kiện hàng của chính khách.
+              compartments={soDoNgan.compartments}
               telemetry={lockerTelemetry}
               doorState={compartmentSensor?.isDoorClosed != null
                 ? (compartmentSensor.isDoorClosed ? 'CLOSED' : 'OPEN')
@@ -1101,7 +1140,10 @@ export default function CustomerPickupTab({ currentUser }) {
           ) : (
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-8 text-center">
               <Layers className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="text-xs text-slate-600 font-medium">Chưa có đơn để hiện sơ đồ tủ</p>
+              <p className="text-xs font-semibold text-slate-600">Chưa có kiện hàng chờ lấy</p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Sơ đồ ngăn chỉ hiện khi kiện hàng của bạn đã được nạp vào tủ.
+              </p>
             </div>
           )}
         </div>
@@ -1454,6 +1496,7 @@ export default function CustomerPickupTab({ currentUser }) {
                   <div className="text-[11px] text-slate-600 space-y-1">
                     <p className="font-bold text-slate-800">
                       {selectedOrder.status === 'PENDING' && 'Chưa thể nhận hàng: shipper chưa nạp kiện vào tủ.'}
+                      {selectedOrder.status === 'PENDING_OPENED' && 'Phiên nạp đang mở: shipper đang bỏ kiện vào ngăn.'}
                       {selectedOrder.status === 'CANCELLED' && 'Đơn đã bị huỷ nên không nhận được tại tủ.'}
                       {selectedOrder.status === 'COMPLETED' && 'Đơn đã được nhận xong trước đó.'}
                       {/* GĐ53 — câu cũ ghi "đã được thu hồi khỏi tủ" là SAI: đơn OVERDUE nghĩa là
@@ -1461,12 +1504,14 @@ export default function CustomerPickupTab({ currentUser }) {
                           câu cũ sẽ tưởng hàng đã rời tủ và không biết phải làm gì tiếp. */}
                       {selectedOrder.status === 'OVERDUE'
                         && 'Đơn quá hạn lưu kho — bưu kiện đang chờ shipper thu hồi về bưu cục.'}
-                      {!['PENDING', 'CANCELLED', 'COMPLETED', 'OVERDUE'].includes(selectedOrder.status)
+                      {!['PENDING', 'PENDING_OPENED', 'CANCELLED', 'COMPLETED', 'OVERDUE'].includes(selectedOrder.status)
                         && `Trạng thái hiện tại: ${selectedOrder.status || 'không rõ'}.`}
                     </p>
                     <p>
                       {selectedOrder.status === 'PENDING'
                         && 'Mã QR và OTP chỉ mở được sau khi kiện đã nằm trong ngăn tủ.'}
+                      {selectedOrder.status === 'PENDING_OPENED'
+                        && 'Phiên nạp sẽ kết thúc khi shipper đóng cửa và cảm biến xác nhận kiện hàng.'}
                       {selectedOrder.status === 'CANCELLED'
                         && 'Nếu bạn vẫn cần kiện hàng này, liên hệ bưu cục để tạo đơn mới.'}
                       {selectedOrder.status === 'COMPLETED'
@@ -1588,6 +1633,42 @@ export default function CustomerPickupTab({ currentUser }) {
       {/* OTP Modal (Hiệu lực 5 phút) với CircularTimer */}
       {/* GĐ32 — POPUP "LẤY HÀNG THÀNH CÔNG" (có nút đóng, KHÔNG tự tắt — điều cấm #3).
           Hiện khi backend bắn `PICKUP_SUCCESS` ở chỗ chốt (cảm biến xác nhận hàng đã ra). */}
+      {pickupLeftInfo && (
+        <div
+          data-testid="pickup-left-behind-popup"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-xl p-4 animate-in fade-in duration-200"
+        >
+          <div className="liquid-glass-card rounded-[28px] max-w-sm w-full p-6 text-center shadow-2xl relative border border-amber-200 bg-white">
+            <button
+              onClick={() => setPickupLeftInfo(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer p-1.5 rounded-xl hover:bg-slate-100"
+              aria-label="Đóng"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-amber-200">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+            <h3 className="text-base font-extrabold text-amber-800">Bạn quên lấy hàng</h3>
+            <p className="text-xs text-slate-600 mt-2">
+              Hàng vẫn còn trong tủ. Đơn đã quay về trạng thái chờ lấy; dùng mã hiện tại để lấy lại.
+            </p>
+            <button
+              onClick={() => {
+                const fresh = pickupLeftInfo.orderId
+                  ? orders.find((o) => o.orderId === pickupLeftInfo.orderId)
+                  : null;
+                setPickupLeftInfo(null);
+                if (fresh) setQrModalOrder(fresh);
+              }}
+              className="mt-5 w-full py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold"
+            >
+              Lấy mã mới
+            </button>
+          </div>
+        </div>
+      )}
+
       {pickupDoneInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-xl p-4 animate-in fade-in duration-200">
           <div className="liquid-glass-card rounded-[28px] max-w-sm w-full p-6 text-center shadow-2xl relative border border-white/90 animate-in zoom-in-95 duration-200">

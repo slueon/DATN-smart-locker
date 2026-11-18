@@ -151,9 +151,11 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
    * khác thì thanh theo đơn mới ngay (điều cấm #5: không đổi thứ tự/nhãn bước).
    */
   const [vuaNapXong, setVuaNapXong] = useState(null); // { orderId, at }
+  const [depositLeftInfo, setDepositLeftInfo] = useState(null);
   const vuaNapXongTimerRef = useRef(null);
   const selectedOrderIdRef = useRef(null);
   const seenDepositSuccessRef = useRef(new Set());
+  const seenDepositLeftRef = useRef(new Set());
   useEffect(() => {
     selectedOrderIdRef.current = selectedOrderId;
   }, [selectedOrderId]);
@@ -899,6 +901,15 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     if (!kioskEvents.length) return;
     const donDangChon = selectedOrderIdRef.current;
     for (const e of kioskEvents) {
+      if (e.type === 'DEPOSIT_LEFT_EMPTY' && !seenDepositLeftRef.current.has(e.seq)) {
+        seenDepositLeftRef.current.add(e.seq);
+        setDepositLeftInfo({
+          orderId: e.orderId || donDangChon || null,
+          compartmentIndex: e.compartment ?? null,
+          at: new Date(),
+        });
+        store.refreshNotifications();
+      }
       if (e.type !== 'DEPOSIT_SUCCESS') continue;
       if (seenDepositSuccessRef.current.has(e.seq)) continue;
       seenDepositSuccessRef.current.add(e.seq);
@@ -1191,6 +1202,40 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
           </div>
         );
       })()}
+
+      {depositLeftInfo && (
+        <div
+          data-testid="deposit-left-empty-popup"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-xl p-4"
+        >
+          <div className="liquid-glass-card rounded-[28px] max-w-sm w-full p-6 text-center shadow-2xl relative border border-rose-200 bg-white">
+            <button
+              onClick={() => setDepositLeftInfo(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 cursor-pointer p-1.5 rounded-xl hover:bg-slate-100"
+              aria-label="Đóng"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="w-14 h-14 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-rose-200">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+            <h3 className="text-base font-extrabold text-rose-700">Bạn quên nạp hàng</h3>
+            <p className="text-xs text-slate-600 mt-2">
+              Ngăn đã trả lại. Vui lòng nạp lại kiện hàng trước khi kết thúc phiên.
+            </p>
+            <div className="mt-4 p-3 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between text-xs">
+              <span className="text-slate-500">Mã đơn</span>
+              <span className="font-mono font-bold text-slate-900">{depositLeftInfo.orderId || '—'}</span>
+            </div>
+            <button
+              onClick={() => setDepositLeftInfo(null)}
+              className="mt-5 w-full py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold"
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Workspace (Deposit Flow & Queue) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">

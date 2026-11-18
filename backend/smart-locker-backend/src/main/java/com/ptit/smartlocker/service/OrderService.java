@@ -72,8 +72,8 @@ public class OrderService {
         String orderId = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         BigDecimal totalAmount = request.getTotalAmount() != null ? request.getTotalAmount() : BigDecimal.ZERO;
-        String requiredSize = request.getRequiredSize() != null && !request.getRequiredSize().isBlank()
-                ? request.getRequiredSize().trim().toUpperCase() : "S";
+        // GĐ65a — `requiredSize` KHÔNG còn đọc: tạo đơn không chọn ngăn nữa (xem khối trong nhánh
+        // LOCKER). Field vẫn nằm trong DTO để không vỡ contract với frontend cũ.
         String productName = request.getProductName() != null && !request.getProductName().isBlank()
                 ? request.getProductName().trim() : "Bưu kiện Smart Locker";
 
@@ -153,25 +153,27 @@ public class OrderService {
             schedule.setAvailableSlots(schedule.getAvailableSlots() - 1);
             slotScheduleRepository.save(schedule);
 
-            // 2. Chỉ khóa trước ngăn tủ vật lý nếu ngày giao hàng là HÔM NAY
-            // Nếu đặt trước cho ngày tương lai, ngăn tủ sẽ được gán tự động khi Shipper nạp hàng vào ngày đó
-            if (deliveryDate.isEqual(LocalDate.now())) {
-                List<Compartment> lockedEmptyComps = compartmentRepository
-                        .findWithLockByLockerIdAndStatus(requestedLockerId, "EMPTY");
-
-                Compartment assignedComp = selectSuitableCompartment(lockedEmptyComps, requiredSize);
-                if (assignedComp == null) {
-                    // GĐ18 — KHÔNG còn nhắc "kích thước": mọi ngăn đều dùng được, nên lý do duy
-                    // nhất có thể là tủ hết ngăn trống. Nói sai lý do sẽ khiến người dùng đi chọn
-                    // tủ khác để "vừa cỡ" trong khi vấn đề là tủ đã kín.
-                    throw new RuntimeException(tenTu(locker) + " đã hết ngăn trống. "
-                            + "Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
-                }
-
-                assignedComp.setStatus("RESERVED");
-                compartmentRepository.save(assignedComp);
-                order.setCompartment(assignedComp);
-            }
+            // 2. GĐ65a — TẠO ĐƠN **KHÔNG** GIỮ NGĂN VẬT LÝ NÀO.
+            //
+            // <p><b>Vì sao bỏ (lỗi user báo 18/11):</b> khối cũ ở đây lấy ngay 1 ngăn `EMPTY`,
+            // đặt `RESERVED` và gán `order.compartment` mỗi khi `deliveryDate` là HÔM NAY.
+            // `ShipperTab` ("Thêm đơn") luôn gửi `deliveryDate = today` ⇒ mọi đơn mới đều khoá
+            // một ngăn của tủ, dù shipper CHƯA bấm "Đặt trước"/"Chọn tủ". User thấy tủ bị giữ
+            // chỗ mà mình không thao tác gì.
+            //
+            // <p><b>Hành vi nay:</b> đơn ra đời `PENDING`, `compartment_id = NULL`,
+            // `shipper_reserved_at = NULL`, không ngăn nào đổi trạng thái. `locker_id` vẫn được
+            // ghi khi client gửi `lockerId` — đó chỉ là ĐỀ XUẤT, không phải giữ chỗ. Ngăn chỉ bị
+            // giữ khi shipper chủ động: `reserveCompartment`, `assignLocker` (đã có, KHÔNG đổi),
+            // hoặc lúc nạp tại tủ (nhánh walk-in trong `ShipperService.depositPackage` chọn ngăn
+            // khi `order.compartment == null`).
+            //
+            // <p>Slot lịch biểu vẫn trừ như cũ (dòng ngay trên) — đó là "chỗ nhận hàng theo
+            // ngày", không phải khoá ngăn vật lý.
+            //
+            // <p><b>Hệ quả cần nhớ:</b> `available_slots` KHÔNG còn là chốt chặn "hết ngăn" cho
+            // đơn hôm nay, vì việc giữ/không giữ ngăn do thao tác của shipper quyết định, không
+            // do số slot. Khối đồng bộ `availableSlots = số ngăn EMPTY` phía trên giữ nguyên.
         }
 
         orderRepository.save(order);
@@ -362,26 +364,11 @@ public class OrderService {
     }
 
     /**
-     * Chọn ngăn cho một đơn — GĐ18: <b>mọi ngăn đều dùng được như nhau</b>.
+     * GĐ65a — ĐÃ XOÁ {@code selectSuitableCompartment}.
      *
-     * <p><b>Vì sao bỏ phân biệt size:</b> user chốt hệ thống chỉ có 2 cỡ ngăn (S/L) nhưng việc
-     * phân biệt không mang lại lợi ích thực tế — nó chỉ làm đơn bị từ chối ("hết ngăn phù hợp kích
-     * thước") trong khi tủ vẫn còn ngăn trống, và buộc phải bảo trì thêm logic "nâng cấp S→L".
-     *
-     * <p><b>Hành vi mới:</b> lấy <b>ngăn EMPTY ĐẦU TIÊN</b> trong danh sách (danh sách đã được
-     * truy vấn sắp theo {@code compIndex} ASC), không đọc {@code size} để quyết định gì nữa.
-     *
-     * <p><b>Tham số {@code requiredSize} giữ lại nhưng KHÔNG dùng:</b> giữ chữ ký để không phải
-     * sửa mọi chỗ gọi, và vì {@code requiredSize} vẫn còn trong DTO để tương thích frontend.
-     * Cột {@code compartments.size} <b>vẫn giữ trong DB</b> — dữ liệu cũ phải đọc được, chỉ là
-     * không còn là tiêu chí chọn.
-     *
-     * @return ngăn EMPTY đầu tiên, hoặc {@code null} nếu không còn ngăn nào
+     * <p>Hàm này chỉ phục vụ khối "giữ ngăn vật lý lúc checkout" vừa bỏ, nên nay không còn chỗ
+     * gọi nào. Giữ lại code chết chỉ làm người đọc sau tưởng rằng checkout vẫn chọn ngăn.
+     * Việc chọn ngăn nay do shipper quyết định ({@code reserveCompartment}/{@code assignLocker})
+     * hoặc do nhánh nạp tại tủ ({@code ShipperService.depositPackage} lấy ngăn EMPTY đầu tiên).
      */
-    private Compartment selectSuitableCompartment(List<Compartment> emptyComps, String requiredSize) {
-        if (emptyComps == null || emptyComps.isEmpty()) {
-            return null;
-        }
-        return emptyComps.get(0);
-    }
 }

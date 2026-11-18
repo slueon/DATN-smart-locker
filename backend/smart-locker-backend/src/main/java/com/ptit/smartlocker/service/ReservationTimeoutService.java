@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -52,6 +54,14 @@ public class ReservationTimeoutService {
     private final CompartmentRepository compartmentRepository;
     private final TransactionTemplate transactionTemplate;
 
+    @Autowired(required = false)
+    @Lazy
+    private KioskEventService kioskEventService;
+
+    @Autowired(required = false)
+    @Lazy
+    private NotificationService notificationService;
+
     /**
      * Số phút giữ chỗ tối đa cho một lần shipper đặt trước. Mặc định 120 phút.
      * Đặt 0 hoặc số âm để TẮT hoàn toàn tác vụ này.
@@ -92,6 +102,22 @@ public class ReservationTimeoutService {
                         .map(Order::getOrderId)
                         .toList());
 
+        // GĐ65b — phiên nạp trực tiếp không đặt trước có thể kẹt PENDING_OPENED nếu tủ
+        // không gửi door_closed=true. Chỉ quét đơn KHÔNG có shipperReservedAt.
+        List<String> stuckDirect = transactionTemplate.execute(status ->
+                orderRepository.findStuckDirectDepositSessions(now).stream()
+                        .map(Order::getOrderId)
+                        .toList());
+        if (stuckDirect != null) {
+            for (String orderId : stuckDirect) {
+                try {
+                    transactionTemplate.execute(status -> releaseStuckDirectSession(orderId));
+                } catch (Exception e) {
+                    log.error("Không phục hồi phiên nạp kẹt của đơn {}: {}", orderId, e.getMessage());
+                }
+            }
+        }
+
         if (candidates == null || candidates.isEmpty()) {
             return;
         }
@@ -119,6 +145,40 @@ public class ReservationTimeoutService {
      *
      * <p>Mọi điều kiện được kiểm lại trên entity VỪA ĐƯỢC KHOÁ — không dùng dữ liệu đã quét trước đó.
      */
+    private boolean releaseStuckDirectSession(String orderId) {
+        Order order = orderRepository.findByIdForReleaseWithLock(orderId).orElse(null);
+        if (order == null
+                || !"PENDING_OPENED".equalsIgnoreCase(order.getStatus())
+                || order.getShipperReservedAt() != null) {
+            return false;
+        }
+
+        Compartment compartment = order.getCompartment();
+        order.setStatus("PENDING");
+        order.setCompartment(null);
+        order.setReserveExpiresAt(null);
+        orderRepository.save(order);
+
+        if (compartment != null
+                && !"OCCUPIED".equalsIgnoreCase(compartment.getStatus())) {
+            compartment.setStatus("EMPTY");
+            compartmentRepository.save(compartment);
+        }
+
+        if (kioskEventService != null && order.getLocker() != null) {
+            kioskEventService.record(order.getLocker().getLockerId(),
+                    KioskEventService.DEPOSIT_LEFT_EMPTY,
+                    order.getOrderId(), order.getTrackingCode(),
+                    compartment != null ? compartment.getCompIndex() : null, null,
+                    "Phiên nạp không đóng cửa — ngăn đã trả lại, vui lòng nạp lại");
+        }
+        if (notificationService != null) {
+            notificationService.depositLeftEmpty(order,
+                    compartment != null ? compartment.getCompIndex() : null);
+        }
+        return true;
+    }
+
     private boolean releaseOne(String orderId) {
         Order order = orderRepository.findByIdForReleaseWithLock(orderId).orElse(null);
         if (order == null) {

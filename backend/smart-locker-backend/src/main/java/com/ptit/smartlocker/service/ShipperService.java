@@ -671,6 +671,10 @@ public class ShipperService {
             LocalDateTime now = LocalDateTime.now();
             order.setDepositedAt(now);
             order.setExpiryDeadline(LocalDateTime.of(now.toLocalDate().plusDays(1), java.time.LocalTime.MAX));
+            // GĐ65b — hạn phiên nạp trực tiếp hết ý nghĩa khi đã nạp xong.
+            if (order.getShipperReservedAt() == null) {
+                order.setReserveExpiresAt(null);
+            }
             orderRepository.save(order);
 
             if (compartment != null) {
@@ -710,6 +714,10 @@ public class ShipperService {
                     order.getOrderId(), order.getTrackingCode(),
                     compartment != null ? compartment.getCompIndex() : null, null,
                     "Chưa phát hiện kiện hàng — ngăn đã trả lại, vui lòng nạp lại");
+        }
+        if (notificationService != null) {
+            notificationService.depositLeftEmpty(order,
+                    compartment != null ? compartment.getCompIndex() : null);
         }
         return false;
     }

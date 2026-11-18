@@ -375,6 +375,8 @@ export default function AdminTab() {
         return <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">TRỐNG</span>;
       case 'RESERVED':
         return <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">ĐÃ GIỮ CHỖ</span>;
+      case 'PENDING_OPENED':
+        return <span className="bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded text-[10px] font-bold">ĐANG NẠP HÀNG</span>;
       case 'OCCUPIED':
         return <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">CÓ BƯU KIỆN</span>;
       case 'OVERDUE':
@@ -711,6 +713,12 @@ export default function AdminTab() {
                       const isOccupied = comp.status === 'OCCUPIED';
                       const isOverdue = comp.status === 'OVERDUE';
                       const isDoorOpen = comp.doorOpen;
+                      // GĐ65b — API danh sách ngăn KHÔNG trả `orderId`, nên khớp theo tủ + số ngăn.
+                      const pendingOpened = orders.find((order) =>
+                        order.status === 'PENDING_OPENED'
+                        && order.lockerId === locker.lockerId
+                        && Number(order.compartmentIndex) === Number(comp.compIndex));
+                      const physicalStatus = pendingOpened ? 'PENDING_OPENED' : comp.status;
 
                       return (
                         <div
@@ -732,7 +740,7 @@ export default function AdminTab() {
                           </div>
 
                           <div className="py-0.5">
-                            {getCompartmentBadge(comp.status)}
+                            {getCompartmentBadge(physicalStatus)}
                             {comp.orderId && (
                               <span className="text-[10px] font-mono text-slate-600 block mt-1 truncate bg-white py-0.5 rounded-md border border-slate-200">
                                 {comp.orderId}

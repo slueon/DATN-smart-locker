@@ -95,6 +95,20 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     List<Order> findExpiredShipperReservations(@Param("cutoff") LocalDateTime cutoff,
                                                @Param("now") LocalDateTime now);
 
+    /**
+     * GĐ65b — các phiên nạp trực tiếp chưa đặt trước nhưng kẹt ở PENDING_OPENED.
+     *
+     * <p>Đơn đặt trước không nằm trong truy vấn này vì có luồng ReservationTimeout riêng.
+     * Cửa/lệnh đóng hoặc nạp thành công sẽ đổi status trước khi timeout quét lại.
+     */
+    @Query("SELECT o FROM Order o "
+            + "LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "WHERE o.status = 'PENDING_OPENED' "
+            + "AND o.shipperReservedAt IS NULL "
+            + "AND o.reserveExpiresAt IS NOT NULL "
+            + "AND o.reserveExpiresAt < :now")
+    List<Order> findStuckDirectDepositSessions(@Param("now") LocalDateTime now);
+
     Optional<Order> findByOrderId(String orderId);
 
     /**
