@@ -655,7 +655,7 @@ export default function AdminTab() {
                     <div className="flex items-center gap-2 mt-1.5 text-[11px] font-mono text-slate-600">
                       <span>IP: {locker.ipAddress}</span>
                       <span>•</span>
-                      <span>ESP32 NodeMCU • Port 1883</span>
+                      <span>ESP32 NodeMCU • MQTT TLS 8883</span>
                     </div>
                   </div>
                   {/* GĐ5-B2 — badge này TRƯỚC ĐÂY ghi cứng "Đang kết nối" màu xanh cho mọi tủ,

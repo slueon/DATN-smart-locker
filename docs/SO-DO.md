@@ -27,7 +27,7 @@ flowchart TB
         SEC --> CTRL --> SVC --> REPO --> DB
     end
 
-    subgraph BROKER["☁️ MQTT Broker — broker.emqx.io:1883"]
+    subgraph BROKER["☁️ MQTT Broker — broker.emqx.io:8883 (TLS)"]
         B1["Topic UPLINK (chung, không id)<br/>ptit/status · ptit/qr/* · ptit/receive/*<br/>ptit/compartment/N/*"]
         B2["Topic DOWNLINK (riêng từng tủ, có id)<br/>ptit/{dev}/verified/* · ptit/{dev}/locker/open"]
     end

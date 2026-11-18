@@ -12,14 +12,14 @@
 **Mức độ: NGHIÊM TRỌNG**
 
 **Mô tả**
-Backend và firmware cùng dùng broker công cộng `tcp://broker.emqx.io:1883` với cấu hình mặc
-định trong `application.properties`:
+Backend và firmware cùng dùng broker công cộng `ssl://broker.emqx.io:8883` (TLS) với cấu hình mặc
+định trong `application.properties`. TLS chỉ mã hoá đường truyền — broker vẫn công cộng và ẩn danh:
 
 ```properties
-mqtt.broker.url=${MQTT_BROKER_URL:tcp://broker.emqx.io:1883}
+mqtt.broker.url=${MQTT_BROKER_URL:ssl://broker.emqx.io:8883}
 mqtt.username=${MQTT_USERNAME:}          # rỗng — kết nối ẩn danh
 mqtt.password=${MQTT_PASSWORD:}          # rỗng
-mqtt.ssl.enabled=${MQTT_SSL_ENABLED:false}   # truyền plaintext
+mqtt.ssl.enabled=${MQTT_SSL_ENABLED:true}    # TLS, nhưng ai cũng kết nối được
 mqtt.acl.enforce=${MQTT_ACL_ENFORCE:true}    # cờ này KHÔNG được broker thực thi
 ```
 

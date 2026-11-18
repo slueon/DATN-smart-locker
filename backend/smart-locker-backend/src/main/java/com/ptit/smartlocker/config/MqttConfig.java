@@ -14,7 +14,7 @@ import java.util.UUID;
 @Configuration
 public class MqttConfig {
 
-    @Value("${mqtt.broker.url:tcp://broker.emqx.io:1883}")
+    @Value("${mqtt.broker.url:ssl://broker.emqx.io:8883}")
     private String brokerUrl;
 
     @Value("${mqtt.client.id:smart_locker_backend_server}")
