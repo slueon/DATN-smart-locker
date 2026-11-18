@@ -64,3 +64,6 @@ backups/
 application-local.properties
 backend/smart-locker-backend/application-local.properties
 **/application-local.properties
+
+# Tri nho cua team bot Kilo Code (rieng tu, KHONG commit)
+.kilo/memory/
