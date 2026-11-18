@@ -67,3 +67,7 @@ backend/smart-locker-backend/application-local.properties
 
 # Tri nho cua team bot Kilo Code (rieng tu, KHONG commit)
 .kilo/memory/
+# Cau hinh agent Team Tinh Gon (rieng tu, KHONG commit)
+.kilo/
+scripts/team-export.mjs
+scripts/evidence/team-export/
