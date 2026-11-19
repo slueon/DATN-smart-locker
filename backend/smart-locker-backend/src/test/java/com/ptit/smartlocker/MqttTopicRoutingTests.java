@@ -533,6 +533,34 @@ class MqttTopicRoutingTests {
     }
 
     @Test
+    @DisplayName("GĐ72 (#2): deposit_success đặt hạn lưu kho đúng luật và đồng bộ hạn mã nhận hàng")
+    void depositSuccessDatHanLuuKhoDungLuatVaDongBoMa() {
+        Order don = taoDonCoMaVanDon("ORD-SEL-G72", "TRACK-SEL-G72", null);
+        credentialRepository.save(com.ptit.smartlocker.entity.PickupCredential.builder()
+                .order(don)
+                .qrToken("QR-SEL-G72")
+                .otpCode("")
+                .isUsed(false)
+                .failedAttempts(0)
+                .expiredAt(LocalDateTime.now().plusHours(3)) // hạn cũ lúc tạo đơn — phải bị thay
+                .build());
+        taoPhienShipper("SHIP-SEL-G72", locker.getLockerId());
+
+        publish("ptit/locker/select_compartment",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":1,\"qr\":\"TRACK-SEL-G72\"}");
+        publish("ptit/compartment/2/event",
+                "{\"locker_id\":\"Tu_1\",\"compartment\":2,\"status\":\"deposit_success\"}");
+
+        Order sau = orderRepository.findById(don.getOrderId()).orElseThrow();
+        assertEquals("DEPOSITED", sau.getStatus());
+        assertEquals(com.ptit.smartlocker.service.ShipperService.hanLuuKho(sau.getDepositedAt()),
+                sau.getExpiryDeadline(), "Hạn lưu kho phải là hết 24h00 ngày hôm sau (trước GĐ72: now + 2 ngày)");
+        assertEquals(sau.getExpiryDeadline(),
+                credentialRepository.findByOrder_OrderId(don.getOrderId()).orElseThrow().getExpiredAt(),
+                "Hạn mã nhận hàng phải đồng bộ với hạn lưu kho");
+    }
+
+    @Test
     @DisplayName("Heartbeat plaintext 'ONLINE' vẫn cập nhật nhịp tim (không được bỏ qua)")
     void heartbeatPlaintextVanCapNhatNhipTim() {
         // Firmware hiện tại publish ptit/Tu_1/status với payload "ONLINE" (không JSON, không locker_id).

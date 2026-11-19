@@ -1806,10 +1806,18 @@ public class MqttService implements MqttCallbackExtended {
                         .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PENDING");
                 for (Order ord : pendingOrders) {
                     if (ord.getCompartment() != null && ord.getCompartment().getCompIndex().equals(compIndex)) {
+                        // GĐ72 — cùng luật hạn lưu kho với các đường nạp khác (trước: now + 2 ngày)
+                        // và ĐỒNG BỘ hạn mã nhận hàng; thiếu bước này thì QR/OTP chết theo hạn
+                        // lúc tạo đơn trong khi web vẫn hiện hạn lưu kho mới.
+                        LocalDateTime napLuc = LocalDateTime.now();
                         ord.setStatus("DEPOSITED");
-                        ord.setDepositedAt(LocalDateTime.now());
-                        ord.setExpiryDeadline(LocalDateTime.now().plusDays(2));
+                        ord.setDepositedAt(napLuc);
+                        ord.setExpiryDeadline(ShipperService.hanLuuKho(napLuc));
                         orderRepository.save(ord);
+                        credentialRepository.findByOrder_OrderId(ord.getOrderId()).ifPresent(cred -> {
+                            cred.setExpiredAt(ord.getExpiryDeadline());
+                            credentialRepository.save(cred);
+                        });
                         log.info("Đã chuyển đơn hàng {} sang trạng thái DEPOSITED", ord.getOrderId());
                         // Sự kiện cho web: popup "Nạp hàng thành công" + tải lại danh sách đơn.
                         kioskEventService.record(locker.getLockerId(), KioskEventService.DEPOSIT_SUCCESS,

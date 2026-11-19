@@ -135,6 +135,17 @@ public class ShipperService {
     private static final LocalDateTime PERPETUAL_EXPIRY = LocalDateTime.of(9999, 12, 31, 23, 59, 59);
 
     /**
+     * GĐ72 — LUẬT DUY NHẤT cho hạn lưu kho: hết 24h00 ngày hôm sau ngày nạp (23:59:59.999…).
+     *
+     * <p>Trước GĐ72 mỗi đường nạp tự tính: nạp qua web/cảm biến đóng cửa dùng luật này, còn nhánh
+     * MQTT {@code deposit_success} dùng {@code now + 2 ngày} ⇒ cùng một kiện mà hạn lệch tới gần 1
+     * ngày tuỳ đường nạp. Mọi chỗ đặt {@code expiryDeadline} phải gọi hàm này.
+     */
+    public static LocalDateTime hanLuuKho(LocalDateTime thoiDiemNap) {
+        return LocalDateTime.of(thoiDiemNap.toLocalDate().plusDays(1), LocalTime.MAX);
+    }
+
+    /**
      * 1. Sinh mã QR định danh cho Shipper — <b>KHÔNG có hạn</b> (GĐ15) và <b>CỐ ĐỊNH theo shipper</b>
      * (GĐ33, user chốt: "ấn mấy lần thì cũng chỉ có 1 mã đó").
      *
@@ -379,8 +390,7 @@ public class ShipperService {
 
         // Quy định lưu trữ: Đến hết ngày tiếp theo (24h00 của ngày N+1)
         LocalDateTime now = LocalDateTime.now();
-        LocalDate nextDay = now.toLocalDate().plusDays(1);
-        LocalDateTime expiryDeadline = LocalDateTime.of(nextDay, LocalTime.MAX); // 23:59:59.999999999
+        LocalDateTime expiryDeadline = hanLuuKho(now);
 
         order.setStatus("DEPOSITED");
         order.setDepositedAt(now);
@@ -670,7 +680,7 @@ public class ShipperService {
             order.setStatus("DEPOSITED");
             LocalDateTime now = LocalDateTime.now();
             order.setDepositedAt(now);
-            order.setExpiryDeadline(LocalDateTime.of(now.toLocalDate().plusDays(1), java.time.LocalTime.MAX));
+            order.setExpiryDeadline(hanLuuKho(now));
             // GĐ65b — hạn phiên nạp trực tiếp hết ý nghĩa khi đã nạp xong.
             if (order.getShipperReservedAt() == null) {
                 order.setReserveExpiresAt(null);

@@ -6,6 +6,7 @@ import { store } from '../services/store';
 import { pickupApi, orderApi, lockerApi } from '../services/api';
 // GĐ40 — suy trạng thái tủ từ `lastHeartbeat`, dùng chung helper GĐ12 (không tự viết ngưỡng mới).
 import { getLockerHealth } from '../utils/lockerHealth';
+import { nhanMocHan } from '../utils/dateTime';
 import {
   Package, Clock, CheckCircle2, AlertTriangle, QrCode,
   Search, MapPin, X, XCircle, AlertCircle, Timer,
@@ -281,7 +282,18 @@ export default function CustomerPickupTab({ currentUser }) {
     }
   };
 
+  // GĐ72 — lời báo khi đơn đã qua hạn lưu kho nhưng tác vụ nền (10 phút/lần) chưa chuyển OVERDUE.
+  const MSG_QUA_HAN_LUU_KHO = 'Đơn hàng đã quá hạn lưu kho tại tủ. Vui lòng liên hệ quản trị viên để được hỗ trợ!';
+  const baoQuaHanLuuKho = () => {
+    setOtpToast(MSG_QUA_HAN_LUU_KHO);
+    setTimeout(() => setOtpToast(null), 4000);
+  };
+
   const handleOpenQrModal = (order) => {
+    if (order?.status === 'DEPOSITED' && calculateRemainingTime(order.expiryDeadline).isOverdue) {
+      baoQuaHanLuuKho();
+      return;
+    }
     setQrModalOrder(order);
     loadRealQrToken(order);
   };
@@ -297,11 +309,16 @@ export default function CustomerPickupTab({ currentUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qrModalOrder?.orderId]);
 
-  const calculateRemainingTime = (expiryDeadline) => {
+  // GĐ72 (#3) — nhãn mốc hạn tính theo NGÀY thật của hạn (trước: ghi cứng "Đến 24h00 mai", sai từ
+  // sau 0h). Thanh tiến độ tính trên khung thật `depositedAt → expiryDeadline` (24–48 giờ tuỳ giờ
+  // nạp); thiếu `depositedAt` mới lùi về khung 36 giờ cũ.
+  const calculateRemainingTime = (expiryDeadline, depositedAt) => {
     if (!expiryDeadline) return { label: 'Chờ nạp tủ', color: 'slate', percent: 0, isOverdue: false };
     const deadline = new Date(expiryDeadline).getTime();
     const now = new Date().getTime();
     const diffMs = deadline - now;
+    const napMs = depositedAt ? new Date(depositedAt).getTime() : NaN;
+    const khungMs = Number.isFinite(napMs) && deadline > napMs ? deadline - napMs : 36 * 3600 * 1000;
 
     if (diffMs <= 0) {
       return { label: 'Đã quá hạn lưu kho', color: 'rose', percent: 100, isOverdue: true };
@@ -309,7 +326,7 @@ export default function CustomerPickupTab({ currentUser }) {
 
     const hours = Math.floor(diffMs / (1000 * 60 * 60));
     const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-    const percent = Math.min(100, Math.max(0, Math.round(((36 * 3600 * 1000 - diffMs) / (36 * 3600 * 1000)) * 100)));
+    const percent = Math.min(100, Math.max(0, Math.round(((khungMs - diffMs) / khungMs) * 100)));
 
     let color = 'emerald';
     if (hours < 3) {
@@ -319,7 +336,7 @@ export default function CustomerPickupTab({ currentUser }) {
     }
 
     return {
-      label: `Còn ${hours}h ${minutes}m (Đến 24h00 mai)`,
+      label: `Còn ${hours}h ${minutes}m (Đến ${nhanMocHan(expiryDeadline, now)})`,
       color,
       percent,
       isOverdue: false,
@@ -357,9 +374,10 @@ export default function CustomerPickupTab({ currentUser }) {
       setTimeout(() => setOtpToast(null), 4000);
       return;
     }
-    if (order.status === 'OVERDUE') {
-      setOtpToast('Đơn hàng đã quá hạn lưu kho tại tủ. Vui lòng liên hệ quản trị viên để được hỗ trợ!');
-      setTimeout(() => setOtpToast(null), 4000);
+    // GĐ72 — xét cả hạn lưu kho, không chỉ trạng thái: trong ≤10 phút trước khi tác vụ nền chạy
+    // đơn vẫn là DEPOSITED dù đã quá hạn.
+    if (order.status === 'OVERDUE' || calculateRemainingTime(order.expiryDeadline).isOverdue) {
+      baoQuaHanLuuKho();
       return;
     }
 
@@ -1020,7 +1038,7 @@ export default function CustomerPickupTab({ currentUser }) {
           ) : (
             <div className="space-y-3">
               {donDangCho.map((ord) => {
-                const conHan = calculateRemainingTime(ord.expiryDeadline);
+                const conHan = calculateRemainingTime(ord.expiryDeadline, ord.depositedAt);
                 return (
                   <div
                     key={ord.orderId}
@@ -1062,16 +1080,18 @@ export default function CustomerPickupTab({ currentUser }) {
 
                     {/* 2 nút QR / OTP — DÙNG LẠI NGUYÊN handler hiện có (điều cấm #1). */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {/* GĐ72 — quá hạn lưu kho thì khoá cả 2 nút: mã đã chết, xin OTP cũng vô ích. */}
                       <button
                         onClick={() => handleOpenQrModal(ord)}
-                        className="ios-btn px-3 py-3 rounded-lg border-2 border-blue-600 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                        disabled={conHan.isOverdue}
+                        className="ios-btn px-3 py-3 rounded-lg border-2 border-blue-600 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <QrCode className="w-4 h-4" />
                         <span>Mã QR Nhận Hàng</span>
                       </button>
                       <button
                         onClick={() => handleGenerateOtp(ord)}
-                        disabled={generatingOtpId === ord.orderId}
+                        disabled={generatingOtpId === ord.orderId || conHan.isOverdue}
                         className="ios-btn px-3 py-3 rounded-lg border-2 border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
                       >
                         <Key className="w-4 h-4 text-blue-600" />
@@ -1332,13 +1352,13 @@ export default function CustomerPickupTab({ currentUser }) {
                       Thời hạn lưu kho miễn phí:
                     </span>
                     <span className="font-bold text-blue-700 font-mono">
-                      {calculateRemainingTime(selectedOrder.expiryDeadline).label}
+                      {calculateRemainingTime(selectedOrder.expiryDeadline, selectedOrder.depositedAt).label}
                     </span>
                   </div>
                   <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
                     <div
                       className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all"
-                      style={{ width: `${calculateRemainingTime(selectedOrder.expiryDeadline).percent}%` }}
+                      style={{ width: `${calculateRemainingTime(selectedOrder.expiryDeadline, selectedOrder.depositedAt).percent}%` }}
                     />
                   </div>
                   <p className="text-[11px] text-slate-600">

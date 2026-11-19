@@ -187,6 +187,12 @@ public class PickupService {
         // không lọc được (chưa biết credential là của đơn nào) nên phải chặn ở đây — không có chốt
         // này thì đơn có `otp_expired_at` quá khứ vẫn mở được bằng OTP.
         if (!conHieuLuc(credential, isOtpMethod)) {
+            // GĐ72 — quá hạn LƯU KHO thì xin OTP mới cũng vô ích (OTP bị chặn trần bằng hạn lưu
+            // kho) ⇒ không được bảo khách "tạo mã OTP mới", nếu không khách lặp mãi trong khoảng
+            // ≤10 phút trước khi tác vụ nền chuyển đơn sang OVERDUE.
+            if (quaHanLuuKho(credential)) {
+                throw new BusinessException(MSG_QUA_HAN_LUU_KHO);
+            }
             throw new BusinessException("Mã OTP/QR nhận hàng đã hết hiệu lực. Vui lòng tạo mã OTP mới trên ứng dụng!");
         }
 
@@ -256,19 +262,9 @@ public class PickupService {
         log.info("Mở phiên nhận hàng cho đơn {} tại tủ {} ngăn {} — chờ cảm biến xác nhận",
                 order.getOrderId(), lockerId, compartment != null ? compartment.getCompIndex() : "N/A");
 
-        // Tự động giải phóng slot khả dụng trên lịch biểu ngày hôm nay
-        if (order.getLocker() != null) {
-            LocalDate today = LocalDate.now();
-            slotScheduleRepository.findByLocker_LockerIdAndScheduleDate(order.getLocker().getLockerId(), today)
-                    .ifPresent(schedule -> {
-                        int total = order.getLocker().getTotalCompartments();
-                        int currentAvail = schedule.getAvailableSlots() != null ? schedule.getAvailableSlots() : 0;
-                        if (currentAvail < total) {
-                            schedule.setAvailableSlots(currentAvail + 1);
-                            slotScheduleRepository.save(schedule);
-                        }
-                    });
-        }
+        // GĐ72 (#5) — KHÔNG hoàn slot ở đây. Mở cửa chưa có nghĩa là hàng đã ra (ngăn vẫn
+        // OCCUPIED, khách có thể quên hàng hoặc mở lại). Trước GĐ72 mỗi lần mở đều +1 slot hôm nay
+        // ⇒ tủ báo thừa chỗ trống. Slot được hoàn ở `chotPhienLayHang` khi chốt COMPLETED.
 
         log.info("Xác thực nhận hàng thành công cho đơn {} tại tủ {} ngăn {}", 
                 order.getOrderId(), lockerId, compartment != null ? compartment.getCompIndex() : "N/A");
@@ -361,6 +357,8 @@ public class PickupService {
             compartment.setStatus("EMPTY");
             compartmentRepository.save(compartment);
         }
+        // GĐ72 (#5) — hoàn slot hôm nay đúng lúc ngăn thật sự trống (trước: lúc mở cửa).
+        hoanSlotHomNay(order);
         log.info("Khách đã lấy hàng xong đơn {} — COMPLETED, ngăn EMPTY", order.getOrderId());
 
         // GĐ32 — sự kiện "lấy hàng thành công" bắn ở ĐÂY (chỗ chốt thật), không phải lúc mở cửa.
@@ -428,6 +426,13 @@ public class PickupService {
         PickupCredential credential = credentialRepository.findByOrder_OrderId(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin nhận hàng của đơn: " + orderId));
 
+        // GĐ72 — đã qua hạn lưu kho nhưng tác vụ nền (10 phút/lần) chưa chuyển OVERDUE: không cấp
+        // OTP. Trước GĐ72 vẫn trả 200 + mã mới, nhưng hạn OTP bị chặn trần bằng `expired_at` đã
+        // qua ⇒ mã chết ngay khi sinh, web hiện "Hết hạn (quá 5p)" và khách bấm đổi mã mãi.
+        if (quaHanLuuKho(credential)) {
+            throw new BusinessException(MSG_QUA_HAN_LUU_KHO);
+        }
+
         // Sinh mã OTP 6 số ngẫu nhiên an toàn bảo mật, chống trùng lặp tại trạm tủ
         String newOtp;
         int attempts = 0;
@@ -471,6 +476,43 @@ public class PickupService {
      *
      * <p>Biên: {@code now == hạn} vẫn còn hiệu lực (giữ nguyên luật cũ {@code !now.isAfter(...)}).
      */
+    /**
+     * GĐ72 (#5) — cộng lại 1 slot vào lịch HÔM NAY của tủ (không vượt tổng số ngăn). Cùng quy ước
+     * "hoàn vào hôm nay" với huỷ đặt trước và thu hồi quá hạn ({@code ShipperService}).
+     */
+    private void hoanSlotHomNay(Order order) {
+        if (order.getLocker() == null) {
+            return;
+        }
+        slotScheduleRepository.findByLocker_LockerIdAndScheduleDate(order.getLocker().getLockerId(), LocalDate.now())
+                .ifPresent(schedule -> {
+                    int total = order.getLocker().getTotalCompartments();
+                    int currentAvail = schedule.getAvailableSlots() != null ? schedule.getAvailableSlots() : 0;
+                    if (currentAvail < total) {
+                        schedule.setAvailableSlots(currentAvail + 1);
+                        slotScheduleRepository.save(schedule);
+                    }
+                });
+    }
+
+    /** GĐ72 — lời báo chung khi đơn đã qua hạn lưu kho (dù trạng thái còn là DEPOSITED). */
+    static final String MSG_QUA_HAN_LUU_KHO =
+            "Đơn hàng đã quá hạn lưu kho tại tủ, mã nhận hàng đã hết hiệu lực. Vui lòng liên hệ quản trị viên để được hỗ trợ!";
+
+    /**
+     * GĐ72 — đơn đã qua hạn lưu kho chưa: xét {@code expired_at} của mã (hạn mã nhận hàng) và
+     * {@code expiry_deadline} của đơn. Hai giá trị lẽ ra bằng nhau; xét cả hai để dữ liệu cũ đã lệch
+     * (trước GĐ72 nhánh MQTT {@code deposit_success} không đồng bộ) vẫn được nhận ra.
+     */
+    private boolean quaHanLuuKho(PickupCredential credential) {
+        LocalDateTime now = LocalDateTime.now();
+        if (credential.getExpiredAt() != null && now.isAfter(credential.getExpiredAt())) {
+            return true;
+        }
+        Order order = credential.getOrder();
+        return order != null && order.getExpiryDeadline() != null && now.isAfter(order.getExpiryDeadline());
+    }
+
     private boolean conHieuLuc(PickupCredential credential, boolean isOtp) {
         LocalDateTime now = LocalDateTime.now();
         if (credential.getExpiredAt() == null || now.isAfter(credential.getExpiredAt())) {

@@ -7,6 +7,7 @@ import { store } from '../services/store';
 import { shipperApi, lockerApi, orderApi } from '../services/api';
 // GĐ40 — suy trạng thái tủ từ `lastHeartbeat` (dùng chung với màn admin, không tự viết ngưỡng mới).
 import { getLockerHealth } from '../utils/lockerHealth';
+import { ngayDiaPhuong } from '../utils/dateTime';
 import {
   Truck, QrCode, Timer, ShieldCheck, CheckCircle2, AlertTriangle,
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
@@ -427,7 +428,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
 
     try {
       // 1. Gửi request tạo đơn hàng thật vào Backend CSDL
-      const today = new Date().toISOString().split('T')[0];
+      // GĐ72 (#4) — ngày theo giờ máy; toISOString() là UTC nên 00:00–06:59 giờ VN ra hôm qua.
+      const today = ngayDiaPhuong();
       const res = await orderApi.checkout({
         customerName: chosen.fullName,
         customerPhone: chosen.phone,
