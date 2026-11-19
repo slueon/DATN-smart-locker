@@ -78,7 +78,10 @@ class Gd54FixTests {
                 .status("DEPOSITED").totalAmount(BigDecimal.TEN).productName("p")
                 .locker(locker).compartment(c).build());
         credentialRepository.save(PickupCredential.builder().order(o).qrToken("QR-GD54")
-                .otpCode("123456").expiredAt(LocalDateTime.now().plusHours(1)).build());
+                .otpCode("123456").expiredAt(LocalDateTime.now().plusHours(1))
+                // GĐ69 — OTP có hạn RIÊNG; thiếu cột này thì đường OTP bị từ chối là đúng luật mới,
+                // nhưng test này đo đếm lần thử nên OTP phải còn hạn để so khớp được.
+                .otpExpiredAt(LocalDateTime.now().plusHours(1)).build());
 
         int[] conLai = {4, 3, 2, 1};
         for (int i = 0; i < 5; i++) {

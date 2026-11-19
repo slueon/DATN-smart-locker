@@ -57,8 +57,10 @@ export async function withOrder(opts, fn) {
         expected_date,product_name,total_amount,payment_method,payment_status,created_at)
       VALUES ('${orderId}','${customerName}','${customerPhone}','LOCKER','${lockerId}','${status}',
         CURDATE(),'${productName}',50000,'ONLINE_VIETQR','PAID',NOW());`);
-  run(`INSERT INTO pickup_credentials (order_id,qr_token,otp_code,is_used,failed_attempts,expired_at)
-      VALUES ('${orderId}','QR-${orderId}','975310',0,0,DATE_ADD(NOW(), INTERVAL 1 DAY));`);
+  // GĐ69 — `expired_at` = hạn MÃ NHẬN HÀNG, `otp_expired_at` = hạn RIÊNG của OTP. Thiếu cột thứ
+  // hai thì đơn dựng bằng fixture sẽ bị đường OTP từ chối ("hết hiệu lực") dù OTP còn đúng mã.
+  run(`INSERT INTO pickup_credentials (order_id,qr_token,otp_code,is_used,failed_attempts,expired_at,otp_expired_at)
+      VALUES ('${orderId}','QR-${orderId}','975310',0,0,DATE_ADD(NOW(), INTERVAL 1 DAY),DATE_ADD(NOW(), INTERVAL 5 MINUTE));`);
 
   const order = { orderId, lockerId, status, trackingCode };
   const ketQua = { orderId, lockerId, status };

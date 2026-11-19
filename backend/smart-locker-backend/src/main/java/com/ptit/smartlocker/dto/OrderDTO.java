@@ -106,12 +106,17 @@ public class OrderDTO {
         private String qrToken;
         private String otpCode;
         /**
-         * GĐ27 — hạn của mã OTP, lấy từ {@code pickup_credentials.expired_at}.
+         * GĐ27/GĐ69 — hạn của mã OTP, lấy từ {@code pickup_credentials.otp_expired_at}.
          *
-         * <p><b>Vì sao thêm:</b> trước đây response chỉ có {@code otpCode} mà không có hạn, nên
-         * {@code CustomerPickupTab.getOtpStatus} — hàm cần CẢ HAI để biết mã còn hiệu lực — luôn
-         * trả {@code isGenerated:false}, và modal OTP **luôn hiện "Mã OTP đã hết hạn"** dù mã vừa
-         * tạo. Client phải tự gắn hạn 5 phút tại chỗ, tức là đoán thay vì đọc dữ liệu thật.
+         * <p><b>Vì sao thêm (GĐ27):</b> trước đây response chỉ có {@code otpCode} mà không có hạn,
+         * nên {@code CustomerPickupTab.getOtpStatus} — hàm cần CẢ HAI để biết mã còn hiệu lực —
+         * luôn trả {@code isGenerated:false}, và modal OTP **luôn hiện "Mã OTP đã hết hạn"** dù mã
+         * vừa tạo. Client phải tự gắn hạn 5 phút tại chỗ, tức là đoán thay vì đọc dữ liệu thật.
+         *
+         * <p><b>GĐ69:</b> nguồn đổi từ {@code expired_at} sang {@code otp_expired_at}. Tên field
+         * GIỮ NGUYÊN để frontend ({@code CustomerPickupTab.jsx:173}, {@code :330-333}) không phải
+         * sửa; {@code expired_at} nay là hạn mã nhận hàng/hạn lưu kho, không phải hạn OTP.
+         * {@code null} = chưa cấp OTP (hoặc OTP đã bị xoá khi khách quên lấy hàng).
          *
          * <p>Chỉ trả khi {@code includeSecrets = true} (chủ đơn đúng SĐT), giống {@code otpCode}.
          */

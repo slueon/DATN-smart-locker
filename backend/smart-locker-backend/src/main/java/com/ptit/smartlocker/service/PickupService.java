@@ -107,6 +107,11 @@ public class PickupService {
 
         PickupCredential credential = null;
 
+        // GĐ69 — phương thức xác thực quyết định xét hạn nào: QR chỉ xét `expired_at` (hạn MÃ NHẬN
+        // HÀNG), OTP xét CẢ `expired_at` và `otp_expired_at` (hạn riêng của OTP). Trước GĐ69 chỉ có
+        // một cột hạn dùng chung nên `request-otp` ghi đè làm QR chết sau 5 phút.
+        boolean isOtpMethod = "OTP".equalsIgnoreCase(request.getAuthMethod());
+
         // 2. Tra cứu mã xác thực (hỗ trợ có hoặc không có orderId)
         if (request.getOrderId() != null && !request.getOrderId().isBlank()) {
             credential = credentialRepository.findByOrder_OrderId(request.getOrderId().trim())
@@ -128,7 +133,6 @@ public class PickupService {
             // - ngược lại (QR)  -> chỉ chấp nhận qrToken
             // TUYỆT ĐỐI không suy ra mã hợp lệ từ orderId (không có nhánh "PKUP-" + orderId,
             // không có tiền tố "-", không nhận chính orderId làm mã mở tủ).
-            boolean isOtpMethod = "OTP".equalsIgnoreCase(request.getAuthMethod());
             boolean isMatch;
             if (isOtpMethod) {
                 isMatch = credential.getOtpCode() != null
@@ -155,15 +159,15 @@ public class PickupService {
             }
         } else {
             // Không truyền orderId: Tra cứu trực tiếp theo mã OTP hoặc QR của tủ
-            if ("OTP".equalsIgnoreCase(request.getAuthMethod())) {
+            if (isOtpMethod) {
                 List<PickupCredential> list = credentialRepository.findValidByLockerAndOtp(lockerId, code);
-                credential = list.stream().filter(c -> !LocalDateTime.now().isAfter(c.getExpiredAt())).findFirst().orElse(null);
+                credential = list.stream().filter(c -> conHieuLuc(c, true)).findFirst().orElse(null);
             } else {
                 // Chỉ tra cứu khớp CHÍNH XÁC qrToken trong CSDL.
                 // Đã bỏ toàn bộ nhánh "đoán" mã từ orderId (bỏ tiền tố "PKUP-", bỏ hậu tố "-T",
                 // không tra ngược theo orderId) vì đó chính là đường vòng bỏ qua mã bí mật.
                 List<PickupCredential> list = credentialRepository.findValidByLockerAndQr(lockerId, code);
-                credential = list.stream().filter(c -> !LocalDateTime.now().isAfter(c.getExpiredAt())).findFirst().orElse(null);
+                credential = list.stream().filter(c -> conHieuLuc(c, false)).findFirst().orElse(null);
             }
 
             if (credential == null) {
@@ -177,7 +181,12 @@ public class PickupService {
         }
 
         // 3. Kiểm tra thời hạn hiệu lực của mã
-        if (LocalDateTime.now().isAfter(credential.getExpiredAt())) {
+        //
+        // GĐ69 — hạn xét theo PHƯƠNG THỨC: QR chỉ xét `expired_at`; OTP xét cả `expired_at` lẫn
+        // `otp_expired_at`. Đường OTP đã lọc ở nhánh tra cứu không orderId, nhưng nhánh CÓ orderId
+        // không lọc được (chưa biết credential là của đơn nào) nên phải chặn ở đây — không có chốt
+        // này thì đơn có `otp_expired_at` quá khứ vẫn mở được bằng OTP.
+        if (!conHieuLuc(credential, isOtpMethod)) {
             throw new BusinessException("Mã OTP/QR nhận hàng đã hết hiệu lực. Vui lòng tạo mã OTP mới trên ứng dụng!");
         }
 
@@ -311,8 +320,10 @@ public class PickupService {
                 // GĐ67 — còn hàng ⇒ mã cũ (QR + OTP) HẾT hiệu lực; lấy lần 2 đi lại quy trình như
                 // lần 1 bằng MÃ MỚI: QR mới ngẫu nhiên (cùng hàm sinh với OrderService), OTP xoá
                 // (khách xin OTP mới qua request-otp). Giữ nguyên hạn lưu kho (`expiredAt`).
+                // GĐ69 — xoá luôn hạn riêng của OTP ⇒ OTP cũ chết thật, không chỉ chết vì mã rỗng.
                 cred.setQrToken(OrderService.generateRandomQrToken(credentialRepository));
                 cred.setOtpCode("");
+                cred.setOtpExpiredAt(null);
                 cred.setIsUsed(false);
                 cred.setFailedAttempts(0);
                 cred.setUsedAt(null);
@@ -427,18 +438,49 @@ public class PickupService {
         } while (attempts < 10 && !lockerId.isEmpty() && !credentialRepository.findValidByLockerAndOtp(lockerId, newOtp).isEmpty());
 
         credential.setOtpCode(newOtp);
-        credential.setExpiredAt(LocalDateTime.now().plusMinutes(5)); // Hiệu lực 5 phút
+        // GĐ69 — CHỈ đặt hạn riêng của OTP, KHÔNG đụng `expired_at` (hạn mã nhận hàng / hạn lưu
+        // kho). Trước GĐ69 dòng này là `setExpiredAt(now + 5 phút)` ⇒ xin OTP làm QR cũng chết sau
+        // 5 phút. Lấy `min(now + 5 phút, expired_at)`: OTP không bao giờ sống lâu hơn hạn lưu kho.
+        LocalDateTime hanOtp = LocalDateTime.now().plusMinutes(5);
+        if (credential.getExpiredAt() != null && hanOtp.isAfter(credential.getExpiredAt())) {
+            hanOtp = credential.getExpiredAt();
+        }
+        credential.setOtpExpiredAt(hanOtp);
         credential.setFailedAttempts(0); // Mở khóa và reset số lần thử sai
         credential.setIsUsed(false);
         credentialRepository.save(credential);
 
-        log.info("Đã tạo mã OTP mới cho đơn hàng {}: hết hạn sau 5 phút, reset failedAttempts về 0", orderId);
+        log.info("Đã tạo mã OTP mới cho đơn hàng {}: hạn OTP {} (hạn lưu kho {}), reset failedAttempts về 0",
+                orderId, hanOtp, credential.getExpiredAt());
         return newOtp;
     }
 
     @Transactional
     public String generateNewOtp(String orderId) {
         return generateNewOtp(orderId, null);
+    }
+
+    /**
+     * GĐ69 — mã còn hiệu lực không, xét hạn THEO PHƯƠNG THỨC xác thực.
+     *
+     * <ul>
+     *   <li>{@code expired_at} là hạn của MÃ NHẬN HÀNG (hạn lưu kho) — áp cho CẢ QR lẫn OTP.</li>
+     *   <li>{@code otp_expired_at} là hạn riêng của OTP — CHỈ xét khi {@code isOtp == true};
+     *       {@code NULL} = chưa từng cấp OTP ⇒ OTP bị từ chối, QR không bị ảnh hưởng.</li>
+     * </ul>
+     *
+     * <p>Biên: {@code now == hạn} vẫn còn hiệu lực (giữ nguyên luật cũ {@code !now.isAfter(...)}).
+     */
+    private boolean conHieuLuc(PickupCredential credential, boolean isOtp) {
+        LocalDateTime now = LocalDateTime.now();
+        if (credential.getExpiredAt() == null || now.isAfter(credential.getExpiredAt())) {
+            return false;
+        }
+        if (!isOtp) {
+            return true;
+        }
+        LocalDateTime otpHan = credential.getOtpExpiredAt();
+        return otpHan != null && !now.isAfter(otpHan);
     }
 
     private void recordLockerFailure(String lockerId) {

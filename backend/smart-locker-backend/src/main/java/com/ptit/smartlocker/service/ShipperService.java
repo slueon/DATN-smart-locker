@@ -1338,7 +1338,8 @@ public class ShipperService {
                 .paymentStatus(don.getPaymentStatus())
                 .qrToken(cred.getQrToken())
                 .otpCode(cred.getOtpCode())
-                .otpExpiresAt(cred.getExpiredAt())
+                // GĐ69 — hạn RIÊNG của OTP (`otp_expired_at`), không phải hạn mã nhận hàng.
+                .otpExpiresAt(cred.getOtpExpiredAt())
                 .createdAt(don.getCreatedAt())
                 .build();
     }

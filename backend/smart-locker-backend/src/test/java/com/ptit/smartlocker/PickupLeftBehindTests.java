@@ -74,6 +74,9 @@ class PickupLeftBehindTests {
                 .isUsed(false)
                 .failedAttempts(0)
                 .expiredAt(LocalDateTime.now().plusMinutes(5))
+                // GĐ69 — hạn RIÊNG của OTP; thiếu thì OTP bị từ chối vì "hết hiệu lực" chứ không
+                // phải vì bị xoá, làm test GĐ67 mất ý nghĩa.
+                .otpExpiredAt(LocalDateTime.now().plusMinutes(5))
                 .build());
     }
 

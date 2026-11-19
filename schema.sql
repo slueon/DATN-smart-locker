@@ -103,10 +103,33 @@ CREATE TABLE IF NOT EXISTS pickup_credentials (
     otp_code VARCHAR(10) NOT NULL,
     is_used BOOLEAN NOT NULL DEFAULT FALSE,
     failed_attempts INT NOT NULL DEFAULT 0,
+    -- GĐ69: hạn của MÃ NHẬN HÀNG (QR + OTP) = hạn lưu kho của đơn.
+    -- KHÔNG còn bị request-otp ghi đè (trước GĐ69 xin OTP làm QR hết hạn sau 5 phút).
     expired_at DATETIME NOT NULL,
+    -- GĐ69: hạn RIÊNG của OTP do request-otp đặt = min(now + 5 phút, expired_at).
+    -- NULL = chưa cấp OTP (hoặc OTP cũ đã bị xoá khi khách quên lấy hàng) ⇒ đường OTP từ chối.
+    otp_expired_at DATETIME DEFAULT NULL,
     used_at DATETIME DEFAULT NULL,
     FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- GĐ69 — thêm cột `otp_expired_at` cho DB ĐANG CÓ DỮ LIỆU.
+-- `CREATE TABLE IF NOT EXISTS` ở trên chỉ tạo bảng mới nên bảng cũ không có cột này.
+-- MySQL 8 không hỗ trợ `ADD COLUMN IF NOT EXISTS` ⇒ kiểm INFORMATION_SCHEMA rồi mới ALTER;
+-- chạy lại file bao nhiêu lần cũng an toàn, không mất dữ liệu.
+SET @gd69_sql = (
+    SELECT IF(
+        (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = 'smart_locker_db'
+            AND TABLE_NAME = 'pickup_credentials'
+            AND COLUMN_NAME = 'otp_expired_at') = 0,
+        'ALTER TABLE pickup_credentials ADD COLUMN otp_expired_at DATETIME DEFAULT NULL AFTER expired_at',
+        'SET @gd69_noop = 1'
+    )
+);
+PREPARE gd69_stmt FROM @gd69_sql;
+EXECUTE gd69_stmt;
+DEALLOCATE PREPARE gd69_stmt;
 
 -- 8. BẢNG MÃ QR ĐỊNH DANH CỐ ĐỊNH CỦA SHIPPER (SHIPPER_IDENTITY_TOKENS)
 CREATE TABLE IF NOT EXISTS shipper_identity_tokens (

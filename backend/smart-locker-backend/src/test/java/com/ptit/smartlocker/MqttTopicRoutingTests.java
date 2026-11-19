@@ -713,6 +713,9 @@ class MqttTopicRoutingTests {
                 .isUsed(false)
                 .failedAttempts(0)
                 .expiredAt(LocalDateTime.now().plusMinutes(5))
+                // GĐ69 — OTP có hạn RIÊNG; thiếu `otp_expired_at` thì nhánh OTP bị từ chối và
+                // test đếm lệnh mở sẽ ra 0 thay vì 1.
+                .otpExpiredAt(LocalDateTime.now().plusMinutes(5))
                 .build());
     }
 

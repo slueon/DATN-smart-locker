@@ -133,6 +133,9 @@ class SmartLockerBackendApplicationTests {
                 .isUsed(false)
                 .failedAttempts(0)
                 .expiredAt(LocalDateTime.now().plusMinutes(5))
+                // GĐ69 — OTP có hạn RIÊNG (`otp_expired_at`); thiếu thì đường OTP bị từ chối ngay
+                // ở bước kiểm hạn, test đo đếm lần thử/khoá sẽ fail vì lý do khác.
+                .otpExpiredAt(LocalDateTime.now().plusMinutes(5))
                 .build();
         credentialRepository.save(credential);
 
@@ -219,6 +222,8 @@ class SmartLockerBackendApplicationTests {
 
         // 3. Khi đúng trạng thái DEPOSITED và đúng số điện thoại: Cho phép tạo OTP và
         // reset failedAttempts về 0
+        LocalDateTime hanMaNhanHangTruoc = credentialRepository.findByOrder_OrderId(testOrderId)
+                .orElseThrow().getExpiredAt();
         String newOtp = pickupService.generateNewOtp(testOrderId, "0988776655");
         assertNotNull(newOtp);
         assertEquals(6, newOtp.length(), "Mã OTP mới phải có đúng 6 chữ số");
@@ -226,8 +231,12 @@ class SmartLockerBackendApplicationTests {
         PickupCredential updatedCred = credentialRepository.findByOrder_OrderId(testOrderId).orElseThrow();
         assertEquals(0, updatedCred.getFailedAttempts(), "Số lần nhập sai phải được reset về 0");
         assertEquals(newOtp, updatedCred.getOtpCode(), "Mã OTP trong CSDL phải được cập nhật");
-        assertTrue(updatedCred.getExpiredAt().isAfter(LocalDateTime.now().plusMinutes(4)),
+        // GĐ69 — hạn OTP đọc ở cột RIÊNG `otp_expired_at`; `expired_at` (hạn mã nhận hàng) không
+        // được đổi bởi request-otp nữa.
+        assertTrue(updatedCred.getOtpExpiredAt().isAfter(LocalDateTime.now().plusMinutes(4)),
                 "Hạn OTP phải là 5 phút tiếp theo");
+        assertEquals(hanMaNhanHangTruoc, updatedCred.getExpiredAt(),
+                "GĐ69: xin OTP KHÔNG được đổi hạn mã nhận hàng");
     }
 
     @Test

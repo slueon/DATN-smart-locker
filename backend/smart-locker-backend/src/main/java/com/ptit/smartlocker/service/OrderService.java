@@ -285,6 +285,11 @@ public class OrderService {
         // biết mã còn hiệu lực lại luôn nhận `null` cho hạn và kết luận "đã hết hạn" — modal OTP
         // hiện sai ngay sau khi tạo mã. Giá trị lấy từ `pickup_credentials.expired_at`, KHÔNG tự
         // cộng 5 phút ở client.
+        //
+        // GĐ69 — đổi nguồn sang `pickup_credentials.otp_expired_at` (hạn RIÊNG của OTP). Cột
+        // `expired_at` giờ là hạn mã nhận hàng/hạn lưu kho, không còn bị request-otp ghi đè; nếu
+        // vẫn đọc `expired_at` thì modal 5 phút sẽ đếm ngược tới hạn lưu kho. `null` = chưa cấp
+        // OTP ⇒ frontend `getOtpStatus` trả `isGenerated:false` như trước.
         LocalDateTime otpExpiresAt = null;
 
         if (includeSecrets) {
@@ -295,7 +300,7 @@ public class OrderService {
                 if (credOpt.isPresent()) {
                     qrToken = credOpt.get().getQrToken();
                     otpCode = credOpt.get().getOtpCode();
-                    otpExpiresAt = credOpt.get().getExpiredAt();
+                    otpExpiresAt = credOpt.get().getOtpExpiredAt();
                 }
             }
         }
