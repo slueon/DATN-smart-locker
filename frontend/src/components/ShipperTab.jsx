@@ -880,7 +880,8 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   // GĐ31b — `PENDING_OPENED` = đơn đang trong phiên nạp (cửa đã mở). Vẫn phải hiện trong danh
   // sách chờ nạp, nếu không shipper mở cửa xong là đơn biến mất và không chốt được.
   const pendingOrders = orders.filter((o) => o.status === 'PENDING' || o.status === 'PENDING_OPENED');
-  const depositedOrders = orders.filter((o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED'
+  // GĐ73 (N2) — RECALLED = đơn đã thu hồi (trước GĐ73 là COMPLETED) nên vẫn nằm trong lịch sử này.
+  const depositedOrders = orders.filter((o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED' || o.status === 'RECALLED'
     || o.status === 'PICKUP_OPENED');
   const overdueOrders = orders.filter((o) => o.status === 'OVERDUE');
 

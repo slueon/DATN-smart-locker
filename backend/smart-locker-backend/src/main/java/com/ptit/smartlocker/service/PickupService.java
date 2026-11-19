@@ -211,6 +211,10 @@ public class PickupService {
             if ("COMPLETED".equalsIgnoreCase(order.getStatus())) {
                 throw new BusinessException("Đơn hàng này đã được lấy thành công trước đó!");
             }
+            // GĐ73 (N2) — đơn đã được shipper thu hồi về kho: mã nhận hàng không còn dùng tại tủ.
+            if ("RECALLED".equalsIgnoreCase(order.getStatus())) {
+                throw new BusinessException(MSG_DA_THU_HOI);
+            }
             if ("OVERDUE".equalsIgnoreCase(order.getStatus())) {
                 throw new BusinessException("Đơn hàng này đã quá hạn lưu kho, hệ thống đã khóa mã lấy đồ!");
             }
@@ -417,6 +421,9 @@ public class PickupService {
             if ("COMPLETED".equalsIgnoreCase(order.getStatus())) {
                 throw new BusinessException("Đơn hàng này đã được nhận thành công trước đó!");
             }
+            if ("RECALLED".equalsIgnoreCase(order.getStatus())) {
+                throw new BusinessException(MSG_DA_THU_HOI);
+            }
             if ("OVERDUE".equalsIgnoreCase(order.getStatus())) {
                 throw new BusinessException("Đơn hàng đã quá hạn lưu kho tại tủ. Vui lòng liên hệ quản trị viên để được hỗ trợ!");
             }
@@ -495,6 +502,10 @@ public class PickupService {
                 });
     }
 
+    /** GĐ73 (N2) — đơn đã được shipper thu hồi về kho. */
+    static final String MSG_DA_THU_HOI =
+            "Bưu kiện đã được Shipper thu hồi về kho do quá hạn lưu kho. Vui lòng liên hệ quản trị viên để nhận lại.";
+
     /** GĐ72 — lời báo chung khi đơn đã qua hạn lưu kho (dù trạng thái còn là DEPOSITED). */
     static final String MSG_QUA_HAN_LUU_KHO =
             "Đơn hàng đã quá hạn lưu kho tại tủ, mã nhận hàng đã hết hiệu lực. Vui lòng liên hệ quản trị viên để được hỗ trợ!";
@@ -536,6 +547,10 @@ public class PickupService {
                 tracker.lockoutUntil = LocalDateTime.now().plusMinutes(LOCKOUT_DURATION_MINUTES);
                 log.warn("Trạm tủ {} bị tạm khóa thao tác nhận đồ trong {} phút do có {} lần nhập sai liên tiếp!",
                         lockerId, LOCKOUT_DURATION_MINUTES, tracker.failures);
+                // GĐ73 (N3) — bắt đầu đếm lại từ 0 cho lượt sau khi hết khoá. Trước GĐ73 bộ đếm giữ
+                // nguyên ≥5 ⇒ hết 2 phút khoá, chỉ MỘT lần nhập sai (của bất kỳ ai) là cả tủ bị khoá
+                // lại ngay, và cứ thế cho tới khi có người mở tủ thành công.
+                tracker.failures = 0;
             }
             return tracker;
         });

@@ -3,21 +3,31 @@ package com.ptit.smartlocker.controller;
 import com.ptit.smartlocker.dto.ApiResponse;
 import com.ptit.smartlocker.dto.KioskEventDTO;
 import com.ptit.smartlocker.dto.PickupDTO;
+import com.ptit.smartlocker.entity.User;
+import com.ptit.smartlocker.repository.UserRepository;
 import com.ptit.smartlocker.service.KioskEventService;
 import com.ptit.smartlocker.service.PickupService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/pickup")
 public class PickupController {
 
+    /** GĐ73 (N1) — xin OTP cho đơn không thuộc SĐT của tài khoản đang đăng nhập. */
+    static final String DENY_OTP = "Bạn không có quyền tạo mã OTP cho đơn hàng của số điện thoại này!";
+
     private final PickupService pickupService;
     private final KioskEventService kioskEventService;
+    private final UserRepository userRepository;
 
-    public PickupController(PickupService pickupService, KioskEventService kioskEventService) {
+    public PickupController(PickupService pickupService, KioskEventService kioskEventService,
+                            UserRepository userRepository) {
         this.pickupService = pickupService;
         this.kioskEventService = kioskEventService;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -41,7 +51,16 @@ public class PickupController {
     @PostMapping("/request-otp")
     public ResponseEntity<ApiResponse<String>> requestOtp(
             @RequestParam String orderId,
-            @RequestParam String customerPhone) {
+            @RequestParam String customerPhone,
+            Authentication authentication) {
+        // GĐ73 (N1) — chống IDOR: SĐT gửi lên phải là SĐT của CHÍNH tài khoản đang đăng nhập.
+        // Trước GĐ73 chỉ so SĐT gửi lên với SĐT của đơn ⇒ khách A biết orderId + SĐT của khách B
+        // là xin được OTP của B (trả thẳng trong response) rồi mở tủ của B.
+        String sdtPhien = authentication == null || authentication.getName() == null ? null
+                : userRepository.findByUsername(authentication.getName()).map(User::getPhone).orElse(null);
+        if (sdtPhien == null || customerPhone == null || !sdtPhien.trim().equalsIgnoreCase(customerPhone.trim())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(DENY_OTP));
+        }
         String otp = pickupService.generateNewOtp(orderId, customerPhone);
         return ResponseEntity.ok(ApiResponse.ok("Tạo mã OTP thành công (hiệu lực 5 phút)!", otp));
     }

@@ -763,8 +763,6 @@ public class ShipperService {
         }
 
         Compartment compartment = order.getCompartment();
-        String lockerId = order.getLocker() != null ? order.getLocker().getLockerId() : null;
-
         // Chỉ nhả khi ngăn chưa bị dùng: EMPTY (bình thường) hoặc vẫn đang RESERVED (đúng ca này).
         boolean canRelease = "RESERVED".equalsIgnoreCase(compartment.getStatus())
                 || "EMPTY".equalsIgnoreCase(compartment.getStatus());
@@ -774,7 +772,6 @@ public class ShipperService {
                             + " nên không thể huỷ đặt trước.");
         }
 
-        boolean becameEmpty = !"EMPTY".equalsIgnoreCase(compartment.getStatus());
         compartment.setStatus("EMPTY");
         compartmentRepository.save(compartment);
 
@@ -787,19 +784,11 @@ public class ShipperService {
         order.setReserveExpiresAt(null);
         orderRepository.save(order);
 
-        // R2: chỉ cộng slot khi ngăn thật sự chuyển về EMPTY ở lần huỷ này.
-        if (becameEmpty && lockerId != null) {
-            LocalDate today = LocalDate.now();
-            slotScheduleRepository.findByLocker_LockerIdAndScheduleDate(lockerId, today)
-                    .ifPresent(schedule -> {
-                        Integer total = order.getLocker() != null ? order.getLocker().getTotalCompartments() : null;
-                        int currentAvail = schedule.getAvailableSlots() != null ? schedule.getAvailableSlots() : 0;
-                        if (total == null || currentAvail < total) {
-                            schedule.setAvailableSlots(currentAvail + 1);
-                            slotScheduleRepository.save(schedule);
-                        }
-                    });
-        }
+        // GĐ73 (N4) — KHÔNG cộng slot khi huỷ đặt trước. Đặt trước (`reserveCompartment`) không trừ
+        // slot nào, và đơn vẫn PENDING nên vẫn giữ slot đã trừ lúc tạo đơn (`OrderService.createOrder`).
+        // Trước GĐ73 khối này cộng +1 vào lịch hôm nay ⇒ mỗi lần đặt/huỷ là tủ báo thừa 1 chỗ trống.
+        // Sức chứa HÔM NAY vẫn tự khớp theo số ngăn EMPTY thật (`LockerService`), nên ngăn vừa nhả
+        // vẫn được tính là trống.
 
         DeviceEvent event = DeviceEvent.builder()
                 .locker(order.getLocker())
@@ -1158,8 +1147,17 @@ public class ShipperService {
     public void recallOverduePackage(String orderId, String dynamicToken, String currentUsername) {
         Order order = xacThucVaTimDonThuHoi(orderId, dynamicToken, currentUsername);
 
-        order.setStatus("COMPLETED");
+        // GĐ73 (N2) — trạng thái RIÊNG cho đơn bị thu hồi. Trước GĐ73 đặt `COMPLETED` nên web khách
+        // hiện "Đã nhận thành công" (và KPI admin đếm là đã giao) trong khi khách CHƯA nhận hàng
+        // — mâu thuẫn với chính thông báo "Bưu kiện đã được thu hồi về kho".
+        order.setStatus("RECALLED");
         orderRepository.save(order);
+        // Mã nhận hàng chết hẳn: hàng đã rời tủ (trước GĐ73 vẫn `is_used = 0`).
+        credentialRepository.findByOrder_OrderId(order.getOrderId()).ifPresent(cred -> {
+            cred.setIsUsed(true);
+            cred.setUsedAt(LocalDateTime.now());
+            credentialRepository.save(cred);
+        });
 
         if (order.getCompartment() != null) {
             Compartment compartment = order.getCompartment();

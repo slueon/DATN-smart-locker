@@ -126,7 +126,7 @@ public class Order {
 
     @Column(name = "status", nullable = false, length = 30)
     @Builder.Default
-    private String status = "PENDING"; // PENDING, DEPOSITED, COMPLETED, OVERDUE
+    private String status = "PENDING"; // PENDING, PENDING_OPENED, DEPOSITED, PICKUP_OPENED, COMPLETED, OVERDUE, RECALLED (GĐ73), CANCELLED
 
     @Column(name = "total_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount;

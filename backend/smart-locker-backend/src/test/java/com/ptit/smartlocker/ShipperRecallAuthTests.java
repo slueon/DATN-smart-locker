@@ -155,8 +155,8 @@ class ShipperRecallAuthTests {
     void tokenHopLeThiThuHoiDuoc() {
         shipperService.recallOverduePackage("ORD-GD41-OVERDUE", TOKEN_OK, "shipper");
 
-        assertEquals("COMPLETED", orderRepository.findById("ORD-GD41-OVERDUE").orElseThrow().getStatus(),
-                "Đơn phải sang COMPLETED");
+        assertEquals("RECALLED", orderRepository.findById("ORD-GD41-OVERDUE").orElseThrow().getStatus(),
+                "GĐ73 — đơn thu hồi phải sang RECALLED (trước: COMPLETED)");
         assertEquals("EMPTY",
                 compartmentRepository.findByLocker_LockerIdAndCompIndex(LOCKER, 1).orElseThrow().getStatus(),
                 "Ngăn phải được giải phóng");

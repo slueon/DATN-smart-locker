@@ -936,6 +936,14 @@ export default function CustomerPickupTab({ currentUser }) {
             <AlertTriangle className="w-3.5 h-3.5 text-rose-600" /> Quá hạn lưu kho
           </span>
         );
+      // GĐ73 (N2) — đơn quá hạn đã được shipper thu hồi về kho. Trước GĐ73 backend đặt COMPLETED
+      // nên khách thấy "Đã nhận thành công" dù chưa hề nhận hàng.
+      case 'RECALLED':
+        return (
+          <span className="bg-orange-50 text-orange-800 border border-orange-200 text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 shadow-2xs">
+            <AlertTriangle className="w-3.5 h-3.5 text-orange-600" /> Đã thu hồi về kho
+          </span>
+        );
       // BUG ĐÃ SỬA: trước đây thiếu nhánh CANCELLED nên rơi vào `default: return null`.
       // Hậu quả: đơn đã huỷ hiện trong danh sách của khách với KHÔNG nhãn trạng thái và
       // KHÔNG có cách nhận — khách tưởng hệ thống lỗi, không hiểu vì sao không nhận được.
@@ -1524,7 +1532,9 @@ export default function CustomerPickupTab({ currentUser }) {
                           câu cũ sẽ tưởng hàng đã rời tủ và không biết phải làm gì tiếp. */}
                       {selectedOrder.status === 'OVERDUE'
                         && 'Đơn quá hạn lưu kho — bưu kiện đang chờ shipper thu hồi về bưu cục.'}
-                      {!['PENDING', 'PENDING_OPENED', 'CANCELLED', 'COMPLETED', 'OVERDUE'].includes(selectedOrder.status)
+                      {selectedOrder.status === 'RECALLED'
+                        && 'Bưu kiện đã được shipper thu hồi khỏi tủ về bưu cục do quá hạn lưu kho.'}
+                      {!['PENDING', 'PENDING_OPENED', 'CANCELLED', 'COMPLETED', 'OVERDUE', 'RECALLED'].includes(selectedOrder.status)
                         && `Trạng thái hiện tại: ${selectedOrder.status || 'không rõ'}.`}
                     </p>
                     <p>
@@ -1536,7 +1546,7 @@ export default function CustomerPickupTab({ currentUser }) {
                         && 'Nếu bạn vẫn cần kiện hàng này, liên hệ bưu cục để tạo đơn mới.'}
                       {selectedOrder.status === 'COMPLETED'
                         && 'Xem lại lịch sử ở bộ lọc "Đã nhận".'}
-                      {selectedOrder.status === 'OVERDUE'
+                      {(selectedOrder.status === 'OVERDUE' || selectedOrder.status === 'RECALLED')
                         && 'Liên hệ bưu cục để được hỗ trợ nhận lại kiện.'}
                     </p>
                   </div>

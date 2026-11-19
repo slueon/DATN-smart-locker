@@ -207,7 +207,11 @@ public class OrderService {
         }
 
         // Chỉ tiết lộ mã mở tủ khi đã xác thực đúng số điện thoại và đơn hàng đã ở trong tủ (DEPOSITED)
-        boolean revealSecrets = isAuthorized && "DEPOSITED".equalsIgnoreCase(order.getStatus());
+        // GĐ73 (N5) — trả mã cả khi `PICKUP_OPENED`: `PickupService.verifyAndPickup` cho mở lại bằng
+        // chính mã trong phiên nhận, nên web khách phải hiện được mã đó. Trước GĐ73 chỉ DEPOSITED
+        // ⇒ modal QR của đơn đang mở phiên báo "Chờ nạp hàng" dù kiện vẫn trong tủ.
+        boolean revealSecrets = isAuthorized && ("DEPOSITED".equalsIgnoreCase(order.getStatus())
+                || "PICKUP_OPENED".equalsIgnoreCase(order.getStatus()));
         OrderDTO.OrderResponse response = mapToOrderResponse(order, null, null, revealSecrets);
 
         // Che giấu dữ liệu định danh PII nếu người truy vấn chưa xác thực khớp SĐT
