@@ -71,3 +71,5 @@ backend/smart-locker-backend/application-local.properties
 .kilo/
 scripts/team-export.mjs
 scripts/evidence/team-export/
+.opencode/
+opencode.json
