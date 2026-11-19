@@ -164,4 +164,41 @@ export function snapshotShipperToken(tokenId) {
                 FROM shipper_identity_tokens WHERE token_id=${tokenId};`);
 }
 
+/**
+ * GĐ68 — trả token shipper về ĐÚNG ảnh chụp của {@link snapshotShipperToken}.
+ *
+ * <p>Cấm ghi cứng `0/NULL` khi dọn: token trước đo có thể đang `1/LOCKER_HN_02` và lượt sau sẽ bị
+ * `SHIPPER_REJECTED` (FAIL giả ở GĐ64a). Ảnh chụp sai dạng ⇒ ném lỗi, không đoán.
+ * @param {number} tokenId
+ * @param {string} snap chuỗi `"1/LOCKER_HN_02"` hoặc `"0/NULL"`
+ */
+export function restoreShipperToken(tokenId, snap) {
+  const m = /^([01])\/(.+)$/.exec(String(snap ?? ''));
+  if (!m) throw new Error(`restoreShipperToken: ảnh chụp không hợp lệ "${snap}"`);
+  setShipperToken(tokenId, m[1] === '1', m[2] === 'NULL' ? null : m[2]);
+  return snapshotShipperToken(tokenId);
+}
+
+/**
+ * GĐ68 — chụp token ⇒ đặt `{verified, lockerId}` ⇒ chạy `fn` ⇒ `finally` TRẢ VỀ ảnh chụp,
+ * kể cả khi `fn` ném lỗi (lỗi vẫn được ném tiếp ra ngoài).
+ *
+ * <p>`lockerId` khác null phải là tủ ảo — kiểm bằng {@link assertVirtualLocker} TRƯỚC mọi lệnh ghi.
+ * @param {number} tokenId
+ * @param {{verified?:boolean, lockerId?:string|null}} opts
+ * @param {(ctx:{snap:string}) => Promise<any>|any} fn
+ */
+export async function withShipperToken(tokenId, opts, fn) {
+  const { verified = true, lockerId = LOCKER_AO } = opts || {};
+  if (lockerId != null) assertVirtualLocker(lockerId);
+  const snap = snapshotShipperToken(tokenId);
+  if (snap == null) throw new Error(`withShipperToken: không có token_id=${tokenId}`);
+  setShipperToken(tokenId, verified, lockerId);
+  try {
+    return await fn({ snap });
+  } finally {
+    restoreShipperToken(tokenId, snap);
+  }
+}
+
 export { pub, pubOrThrow, heartbeat, sleep, baseline, diffBaseline, q, one, run };

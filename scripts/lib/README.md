@@ -2,9 +2,11 @@
 
 Script đo viết ngắn: `import` từ đây, đừng tự viết lại CDP/MySQL/MQTT. Chỉ dùng **tủ ảo `LOCKER_HN_02`**.
 
-- `db.mjs`: `q(sql)`→mảng object · `one(sql)` · `num(sql)` · `run(sql)` · `baseline()`→`{orders,creds,cmd,tokens,users,compartments,hn01}` · `diffBaseline(a,b)`→`{same,changed}` · `assertVirtualLocker(id)` chặn tủ thật.
+- `db.mjs`: `q(sql)`→mảng object · `one(sql)` · `num(sql)` · `run(sql)` · `baseline()`→`{orders,creds,cmd,tokens,users,compartments,hn01,token142}` · `diffBaseline(a,b)`→`{same,changed}` · `assertVirtualLocker(id)` chặn tủ thật.
 - `mqtt.mjs`: `pub(topic,payload,{tries})`→`{ok,soLan}` **tự thử lại** (broker TLS rớt ~50%; `soLan>1`=hạ tầng) · `pubOrThrow` · `heartbeat(id)` (bắt buộc trước luồng nạp, GĐ30) · `compartmentStatus/Event`.
-- `fixture.mjs`: `withOrder(opts,fn)` tạo đơn PENDING+credential trên tủ ảo rồi **luôn dọn trong `finally`** (kể cả khi `fn` ném lỗi) → `{ketQua,loi,baseline:{truoc,sau,diff}}` · `kioskFlow(id,{shipperToken,compartment})` = QR shipper → mã vận đơn → chọn ngăn (**0-based**) → `deposit_success` (**1-based**) · `orderStatus` · `snapshotShipperToken` · `setShipperToken`.
+- `fixture.mjs`: `withOrder(opts,fn)` tạo đơn PENDING+credential trên tủ ảo rồi **luôn dọn trong `finally`** (kể cả khi `fn` ném lỗi) → `{ketQua,loi,baseline:{truoc,sau,diff}}` · `kioskFlow(id,{shipperToken,compartment})` = QR shipper → mã vận đơn → chọn ngăn (**0-based**) → `deposit_success` (**1-based**) · `orderStatus` · `snapshotShipperToken` · `setShipperToken` · `restoreShipperToken(id,snap)`.
+- **Token shipper (GĐ68):** bọc phép đo bằng `await withShipperToken(142, { verified: true, lockerId: LOCKER_AO }, async () => { ... })` — `finally` tự trả token về ảnh chụp kể cả khi lỗi; `lockerId` tủ thật bị chặn trước khi ghi.
+- **Cấm ghi cứng `0/NULL`** khi dọn token; tự dọn thì `const snap = snapshotShipperToken(142)` ở ĐẦU script, `restoreShipperToken(142, snap)` trong `finally`.
 - `cdp.mjs` (hàm cũ giữ nguyên): `withPage` · `loginAs` · `waitReady` · `screenshot` · `hasText` · `clickByText` · `textsOf`; thêm `watchAttr(p,sel,attrs)`→`{stop(),muts(),thoiLuong(pred)}` (MutationObserver+rAF, bắt khung vài ms) · `collectErrors(p)`→`{loi,net,hienTai()}` gắn **TRƯỚC** `Page.navigate` · `openTab(p,role,label)` bấm tab theo nhãn chính xác, ném lỗi kèm danh sách nút nếu hụt.
 
 ## Ví dụ — đo lại phép (2) GĐ57 (bước 6 giữ ≥4 s)

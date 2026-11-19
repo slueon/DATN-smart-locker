@@ -78,7 +78,8 @@ export function run(sql) {
  * Ảnh chụp các con số phải giữ nguyên sau khi đo — chụp TRƯỚC rồi so SAU.
  *
  * <p>Đúng các cột mà mọi thẻ trước đây đều phải chép tay: số đơn, số credential, số lệnh mở tủ,
- * token shipper, user, số ngăn theo trạng thái, và nhịp tim tủ thật `LOCKER_HN_01`.
+ * token shipper, user, số ngăn theo trạng thái, nhịp tim tủ thật `LOCKER_HN_01`, và trạng thái
+ * token 142 (`token142`, GĐ68).
  * KHÔNG gồm `device_events` (luôn tăng vì chính script đo bơm bản tin) — đọc riêng nếu cần.
  */
 export function baseline() {
@@ -95,6 +96,10 @@ export function baseline() {
     users: num('SELECT COUNT(*) FROM users;'),
     compartments,
     hn01: { lastHeartbeat: hb.last_heartbeat ?? null, connectionStatus: hb.connection_status ?? null },
+    // GĐ68 — token shipper dùng lại khi đo, dạng `"1/LOCKER_HN_02"` / `"0/NULL"` (cùng dạng
+    // `snapshotShipperToken`). Có ở đây để `diffBaseline` bắt được script dọn ghi cứng sai.
+    token142: one(`SELECT CONCAT(CAST(is_verified AS UNSIGNED),'/',IFNULL(locker_id,'NULL'))
+                     FROM shipper_identity_tokens WHERE token_id=142;`),
   };
 }
 
