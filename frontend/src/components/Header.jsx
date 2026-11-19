@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { store, NOTIFS_UPDATED_EVENT } from '../services/store';
 import { getAuthToken } from '../services/api';
+import { nhanThoiGianThongBao } from '../utils/dateTime';
 
 /** GĐ64b — nhịp poll thông báo máy chủ (DoD: thông báo có ở máy khác trong ≤ 6 s). */
 const NOTIF_POLL_MS = 5000;
@@ -104,6 +105,12 @@ export default function Header({
       return n.type === 'OTP_REQUEST' || n.type === 'KIOSK_METHOD_CHOSEN';
     }
     return true;
+  // GĐ74 — luôn xếp MỚI NHẤT lên đầu ngay tại chỗ hiển thị (backend đã ORDER BY createdAt DESC,
+  // nhưng không để thứ tự phụ thuộc vào nguồn dữ liệu). Cùng thời điểm thì id lớn hơn đứng trước.
+  }).sort((a, b) => {
+    const ta = new Date(a.createdAt).getTime() || 0;
+    const tb = new Date(b.createdAt).getTime() || 0;
+    return tb - ta || (Number(b.id) || 0) - (Number(a.id) || 0);
   });
 
   /** Thông báo Kiosk bấm được để mở modal QR/OTP tương ứng. */
@@ -265,11 +272,10 @@ export default function Header({
                             {n.type === 'RECALL_SUCCESS' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
                             {n.title}
                           </span>
-                          <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                            {new Date(n.createdAt).toLocaleTimeString('vi-VN', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                          {/* GĐ74 — hiện cả ngày khi không phải hôm nay. Trước chỉ có giờ nên thông báo
+                              23:58 hôm qua trông "mới hơn" 17:47 hôm nay ⇒ tưởng danh sách xếp ngược. */}
+                          <span className="text-[10px] text-slate-400 font-mono shrink-0" title={new Date(n.createdAt).toLocaleString('vi-VN')}>
+                            {nhanThoiGianThongBao(n.createdAt)}
                           </span>
                         </div>
                         <p className="text-[11px] leading-relaxed text-slate-600">{n.message}</p>

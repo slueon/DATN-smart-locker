@@ -29,3 +29,23 @@ export function nhanMocHan(expiryDeadline, nowMs = Date.now()) {
   if (lech === 1) return '24h00 mai';
   return `24h00 ${pad2(han.getDate())}/${pad2(han.getMonth() + 1)}`;
 }
+
+/**
+ * GĐ74 — mốc thời gian của thông báo: "17:47" (hôm nay), "Hôm qua 23:58", "18/11 23:58".
+ *
+ * <p>Trước GĐ74 panel thông báo chỉ hiện giờ, nên thông báo 23:58 hôm qua đứng SAU 17:47 hôm nay
+ * trông như danh sách bị xếp ngược dù thứ tự đúng là mới nhất trước.
+ */
+export function nhanThoiGianThongBao(createdAt, nowMs = Date.now()) {
+  const t = new Date(createdAt);
+  if (Number.isNaN(t.getTime())) return '';
+  const gio = `${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+  const homNay = new Date(nowMs);
+  homNay.setHours(0, 0, 0, 0);
+  const ngay = new Date(t);
+  ngay.setHours(0, 0, 0, 0);
+  const lech = Math.round((homNay - ngay) / 86400000);
+  if (lech === 0) return gio;
+  if (lech === 1) return `Hôm qua ${gio}`;
+  return `${pad2(t.getDate())}/${pad2(t.getMonth() + 1)} ${gio}`;
+}
