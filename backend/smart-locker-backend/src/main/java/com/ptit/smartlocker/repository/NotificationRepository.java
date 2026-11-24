@@ -13,22 +13,29 @@ import java.util.List;
 
 /**
  * GĐ64a — truy vấn thông báo. "Của mình" = {@code recipient_phone} khớp SĐT HOẶC
- * {@code recipient_role} khớp vai của người đang đăng nhập. Tham số {@code null} không khớp dòng
- * nào (so sánh SQL với NULL luôn sai), nên người không có SĐT/vai không thấy gì thừa.
+ * {@code recipient_role} khớp vai của người đang đăng nhập. Thông báo thu hồi cũ từng gửi chung
+ * theo vai SHIPPER được loại khỏi phạm vi vai trò; thông báo mới gắn trực tiếp với SĐT người nhận.
+ * Tham số {@code null} không khớp dòng nào (so sánh SQL với NULL luôn sai).
  */
 @Repository
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
 
-    @Query("SELECT n FROM Notification n WHERE n.recipientPhone = :phone OR n.recipientRole = :role "
+    @Query("SELECT n FROM Notification n WHERE n.recipientPhone = :phone "
+            + "OR (n.recipientRole = :role "
+            + "AND (:role <> 'SHIPPER' OR n.type NOT IN ('OVERDUE_ALERT', 'RECALL_SUCCESS'))) "
             + "ORDER BY n.createdAt DESC, n.id DESC")
     List<Notification> findMine(@Param("phone") String phone, @Param("role") String role, Pageable pageable);
 
-    @Query("SELECT COUNT(n) FROM Notification n WHERE (n.recipientPhone = :phone OR n.recipientRole = :role) "
+    @Query("SELECT COUNT(n) FROM Notification n WHERE (n.recipientPhone = :phone "
+            + "OR (n.recipientRole = :role "
+            + "AND (:role <> 'SHIPPER' OR n.type NOT IN ('OVERDUE_ALERT', 'RECALL_SUCCESS')))) "
             + "AND n.isRead = false")
     long countUnreadMine(@Param("phone") String phone, @Param("role") String role);
 
     @Modifying
-    @Query("UPDATE Notification n SET n.isRead = true WHERE (n.recipientPhone = :phone OR n.recipientRole = :role) "
+    @Query("UPDATE Notification n SET n.isRead = true WHERE (n.recipientPhone = :phone "
+            + "OR (n.recipientRole = :role "
+            + "AND (:role <> 'SHIPPER' OR n.type NOT IN ('OVERDUE_ALERT', 'RECALL_SUCCESS')))) "
             + "AND n.isRead = false")
     int markAllReadMine(@Param("phone") String phone, @Param("role") String role);
 

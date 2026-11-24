@@ -27,20 +27,14 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final LockerRepository lockerRepository;
-    private final CompartmentRepository compartmentRepository;
-    private final LockerSlotScheduleRepository slotScheduleRepository;
     private final PickupCredentialRepository pickupCredentialRepository;
 
     public OrderService(
             OrderRepository orderRepository,
             LockerRepository lockerRepository,
-            CompartmentRepository compartmentRepository,
-            LockerSlotScheduleRepository slotScheduleRepository,
             PickupCredentialRepository pickupCredentialRepository) {
         this.orderRepository = orderRepository;
         this.lockerRepository = lockerRepository;
-        this.compartmentRepository = compartmentRepository;
-        this.slotScheduleRepository = slotScheduleRepository;
         this.pickupCredentialRepository = pickupCredentialRepository;
     }
 
@@ -64,16 +58,12 @@ public class OrderService {
         return "Tủ " + t;
     }
 
-    /**
-     * Tạo đơn gửi bưu kiện vào Tủ với Cơ chế Pessimistic Locking chống Race Condition
-     */
+    /** Tạo đơn chờ nạp, không giữ lịch suất hoặc ngăn vật lý. */
     @Transactional
     public OrderDTO.OrderResponse createOrder(OrderDTO.CheckoutRequest request) {
         String orderId = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         BigDecimal totalAmount = request.getTotalAmount() != null ? request.getTotalAmount() : BigDecimal.ZERO;
-        String requiredSize = request.getRequiredSize() != null && !request.getRequiredSize().isBlank()
-                ? request.getRequiredSize().trim().toUpperCase() : "S";
         String productName = request.getProductName() != null && !request.getProductName().isBlank()
                 ? request.getProductName().trim() : "Bưu kiện Smart Locker";
 
@@ -98,16 +88,8 @@ public class OrderService {
                 .productName(productName)
                 .build();
 
-        // GĐ11 — KHÔNG còn bắt buộc chọn tủ khi tạo đơn.
-        //
-        // <p>Định hướng mới: khách chỉ NHẬN hàng, shipper toàn quyền chọn tủ trước khi giao.
-        // Vì vậy một đơn `LOCKER` hoàn toàn có thể ra đời mà chưa biết giao vào tủ nào —
-        // `locker`/`compartment` để NULL, shipper chọn sau qua
-        // `POST /api/shipper/orders/{orderId}/assign-locker`.
-        //
-        // <p>Nếu CÓ `lockerId` thì giữ NGUYÊN hành vi cũ (giữ slot + khoá ngăn) — tủ đó chỉ
-        // còn là ĐỀ XUẤT, shipper vẫn đổi được. Nhờ vậy không phá luồng cũ và không cần
-        // migration dữ liệu: `orders.locker_id` vốn đã cho phép NULL.
+        // Gán tủ đích nếu người tạo đã chọn, nhưng không giữ lịch/ngăn tại bước tạo đơn.
+        // Shipper có thể đặt trước ngăn riêng; nếu không, kiosk cho shipper chọn ngăn khi nạp.
         String requestedLockerId = request.getLockerId();
         boolean hasRequestedLocker = requestedLockerId != null && !requestedLockerId.isBlank();
 
@@ -117,61 +99,12 @@ public class OrderService {
                     .orElseThrow(() -> new RuntimeException("Tủ không tồn tại: " + requestedLockerId));
             order.setLocker(locker);
 
-            // GĐ10 ý 3 — CHẶN ĐẶT HÀNG VÀO TỦ ĐANG BẢO TRÌ.
-            //
-            // Vị trí quan trọng: phải nằm NGAY SAU `findById(lockerId)` và TRƯỚC
-            // `getOrCreateScheduleWithLock`. Nếu đặt sau, slot lịch biểu đã bị trừ cho một đơn
-            // rồi mới ném lỗi ⇒ slot mất oan, và sau vài lần thử tủ báo "hết chỗ" dù không ai
-            // đặt được. Chặn trước thì không có gì bị thay đổi.
-            //
-            // Ngăn `OUT_OF_SERVICE` không cần kiểm ở đây: các truy vấn cấp ngăn bên dưới chỉ lấy
-            // `EMPTY`, nên ngăn bảo trì tự động không được cấp.
+            // Không nhận đơn giao đến tủ đang bảo trì.
             if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
                 throw new com.ptit.smartlocker.exception.BusinessException(
                         tenTu(locker) + " đang bảo trì, vui lòng chọn tủ khác hoặc giao tận nhà.");
             }
 
-            // 1. Áp dụng PESSIMISTIC LOCKING để khóa và lấy lịch biểu an toàn (Atomic Lock)
-            LockerSlotSchedule schedule = getOrCreateScheduleWithLock(locker, deliveryDate);
-
-            // Nếu đặt cho HÔM NAY: Đồng bộ availableSlots với số ngăn EMPTY thực tế
-            if (deliveryDate.isEqual(LocalDate.now())) {
-                List<Compartment> currentEmptyComps = compartmentRepository
-                        .findByLocker_LockerIdAndStatus(requestedLockerId, "EMPTY");
-                if (currentEmptyComps.size() > schedule.getAvailableSlots()) {
-                    schedule.setAvailableSlots(currentEmptyComps.size());
-                    slotScheduleRepository.save(schedule);
-                }
-            }
-
-            if (schedule.getAvailableSlots() <= 0) {
-                throw new RuntimeException(tenTu(locker) + " đã hết chỗ vào ngày " 
-                        + deliveryDate + ". Vui lòng chọn ngày khác hoặc Giao tận nhà!");
-            }
-
-            // Trừ 1 slot khả dụng trên lịch biểu theo ngày
-            schedule.setAvailableSlots(schedule.getAvailableSlots() - 1);
-            slotScheduleRepository.save(schedule);
-
-            // 2. Chỉ khóa trước ngăn tủ vật lý nếu ngày giao hàng là HÔM NAY
-            // Nếu đặt trước cho ngày tương lai, ngăn tủ sẽ được gán tự động khi Shipper nạp hàng vào ngày đó
-            if (deliveryDate.isEqual(LocalDate.now())) {
-                List<Compartment> lockedEmptyComps = compartmentRepository
-                        .findWithLockByLockerIdAndStatus(requestedLockerId, "EMPTY");
-
-                Compartment assignedComp = selectSuitableCompartment(lockedEmptyComps, requiredSize);
-                if (assignedComp == null) {
-                    // GĐ18 — KHÔNG còn nhắc "kích thước": mọi ngăn đều dùng được, nên lý do duy
-                    // nhất có thể là tủ hết ngăn trống. Nói sai lý do sẽ khiến người dùng đi chọn
-                    // tủ khác để "vừa cỡ" trong khi vấn đề là tủ đã kín.
-                    throw new RuntimeException(tenTu(locker) + " đã hết ngăn trống. "
-                            + "Vui lòng chọn tủ khác hoặc hình thức Giao tận nhà!");
-                }
-
-                assignedComp.setStatus("RESERVED");
-                compartmentRepository.save(assignedComp);
-                order.setCompartment(assignedComp);
-            }
         }
 
         orderRepository.save(order);
@@ -323,6 +256,10 @@ public class OrderService {
                 .otpCode(otpCode)
                 .otpExpiresAt(otpExpiresAt)
                 .createdAt(order.getCreatedAt())
+                .trackingCode(order.getTrackingCode() != null && !order.getTrackingCode().isBlank()
+                        ? order.getTrackingCode() : order.getOrderId())
+                .assignedShipperUsername(order.getAssignedShipper() != null
+                        ? order.getAssignedShipper().getUsername() : null)
                 .build();
     }
 
@@ -345,43 +282,4 @@ public class OrderService {
         throw new IllegalStateException("Không thể sinh qrToken duy nhất sau 5 lần thử!");
     }
 
-    /**
-     * Khởi tạo an toàn và khóa bi quan bản ghi Lịch biểu (Pessimistic Lock).
-     * Sử dụng INSERT IGNORE để ngăn ngừa hoàn toàn Race Condition / DataIntegrityViolationException.
-     */
-    private LockerSlotSchedule getOrCreateScheduleWithLock(Locker locker, LocalDate deliveryDate) {
-        slotScheduleRepository.initScheduleIfNotExists(
-                locker.getLockerId(),
-                deliveryDate,
-                locker.getTotalCompartments()
-        );
-
-        return slotScheduleRepository
-                .findWithLockByLockerIdAndDate(locker.getLockerId(), deliveryDate)
-                .orElseThrow(() -> new RuntimeException("Không thể khóa lịch biểu cho tủ: " + locker.getLockerId()));
-    }
-
-    /**
-     * Chọn ngăn cho một đơn — GĐ18: <b>mọi ngăn đều dùng được như nhau</b>.
-     *
-     * <p><b>Vì sao bỏ phân biệt size:</b> user chốt hệ thống chỉ có 2 cỡ ngăn (S/L) nhưng việc
-     * phân biệt không mang lại lợi ích thực tế — nó chỉ làm đơn bị từ chối ("hết ngăn phù hợp kích
-     * thước") trong khi tủ vẫn còn ngăn trống, và buộc phải bảo trì thêm logic "nâng cấp S→L".
-     *
-     * <p><b>Hành vi mới:</b> lấy <b>ngăn EMPTY ĐẦU TIÊN</b> trong danh sách (danh sách đã được
-     * truy vấn sắp theo {@code compIndex} ASC), không đọc {@code size} để quyết định gì nữa.
-     *
-     * <p><b>Tham số {@code requiredSize} giữ lại nhưng KHÔNG dùng:</b> giữ chữ ký để không phải
-     * sửa mọi chỗ gọi, và vì {@code requiredSize} vẫn còn trong DTO để tương thích frontend.
-     * Cột {@code compartments.size} <b>vẫn giữ trong DB</b> — dữ liệu cũ phải đọc được, chỉ là
-     * không còn là tiêu chí chọn.
-     *
-     * @return ngăn EMPTY đầu tiên, hoặc {@code null} nếu không còn ngăn nào
-     */
-    private Compartment selectSuitableCompartment(List<Compartment> emptyComps, String requiredSize) {
-        if (emptyComps == null || emptyComps.isEmpty()) {
-            return null;
-        }
-        return emptyComps.get(0);
-    }
 }

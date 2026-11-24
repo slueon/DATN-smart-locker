@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import LoginPage from './components/LoginPage';
+import { authApi, clearAuthSession } from './services/api';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import CustomerPickupTab from './components/CustomerPickupTab';
@@ -12,25 +13,42 @@ import ShipperRouteMap from './components/ShipperRouteMap';
 // Dock đó poll `/api/mqtt/recent-logs` mỗi 6 giây và chỉ để trình diễn; endpoint backend VẪN GIỮ
 // (ADMIN còn xem lịch sử mở tủ), chỉ frontend không còn gọi.
 
-export default function App() {
-  const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('smart_locker_user');
-    if (saved) {
-      try {
-        const u = JSON.parse(saved);
-        if (u) {
-          if (u.username === 'admin') u.fullName = 'Quản Trị Viên Hệ Thống';
-          else if (u.username === 'shipper') u.fullName = 'Nguyễn Văn Shipper PTIT';
-          else if (u.username === 'khachhang') u.fullName = 'Đoàn Viết Hoàng';
-          localStorage.setItem('smart_locker_user', JSON.stringify(u));
-        }
-        return u;
-      } catch {
-        return null;
-      }
-    }
+const AUTH_USER_KEY = 'smart_locker_user';
+const getAccountPath = (username) => `/account/${encodeURIComponent(username)}`;
+
+const loadCurrentTabUser = () => {
+  try {
+    localStorage.removeItem(AUTH_USER_KEY);
+  } catch {
+    // The authenticated session is stored in sessionStorage, not shared across tabs.
+  }
+
+  let saved = null;
+  try {
+    saved = sessionStorage.getItem(AUTH_USER_KEY);
+  } catch {
     return null;
-  });
+  }
+
+  if (!saved) return null;
+  try {
+    const user = JSON.parse(saved);
+    if (!user?.token) {
+      sessionStorage.removeItem(AUTH_USER_KEY);
+      return null;
+    }
+    if (user.username === 'admin') user.fullName = 'Quản Trị Viên Hệ Thống';
+    else if (user.username === 'shipper') user.fullName = 'Nguyễn Văn Shipper PTIT';
+    else if (user.username === 'khachhang') user.fullName = 'Đoàn Viết Hoàng';
+    sessionStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+    return user;
+  } catch {
+    return null;
+  }
+};
+
+export default function App() {
+  const [currentUser, setCurrentUser] = useState(loadCurrentTabUser);
 
   const getDefaultTab = (role) => {
     if (role === 'CUSTOMER') return 'customer';
@@ -44,6 +62,23 @@ export default function App() {
   );
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [customerLockerFilter, setCustomerLockerFilter] = useState(null);
+
+  useEffect(() => {
+    if (currentUser?.username) {
+      const accountPath = getAccountPath(currentUser.username);
+      if (window.location.pathname !== accountPath) {
+        window.history.replaceState(null, '', accountPath);
+      }
+    }
+  }, [currentUser?.username]);
+
+  const handleSetActiveTab = (tab) => {
+    if (tab === 'customer') {
+      setCustomerLockerFilter(null);
+    }
+    setActiveTab(tab);
+  };
 
   // Đảm bảo mỗi vai trò chỉ được truy cập các tab thuộc thẩm quyền của mình
   useEffect(() => {
@@ -52,7 +87,7 @@ export default function App() {
         setActiveTab('admin');
       }
     } else if (currentUser?.role === 'SHIPPER') {
-      if (!['shipper', 'shipper-recall', 'gis-map'].includes(activeTab)) {
+      if (!['shipper', 'shipper-recall', 'shipper-map', 'gis-map'].includes(activeTab)) {
         setActiveTab('shipper');
       }
     } else if (currentUser?.role === 'CUSTOMER') {
@@ -64,14 +99,30 @@ export default function App() {
 
   const handleLoginSuccess = (user) => {
     setCurrentUser(user);
-    localStorage.setItem('smart_locker_user', JSON.stringify(user));
+    sessionStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+    window.history.replaceState(null, '', getAccountPath(user.username));
     setActiveTab(getDefaultTab(user.role));
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    let deletedSessions;
+    try {
+      const response = await authApi.logout();
+      if (!response.data?.success) {
+        throw new Error(response.data?.message || 'Máy chủ không xác nhận đăng xuất.');
+      }
+      deletedSessions = response.data.data;
+    } catch (err) {
+      window.alert(err?.response?.data?.message || 'Không thể đăng xuất khỏi máy chủ. Vui lòng thử lại.');
+      return;
+    }
     setCurrentUser(null);
-    localStorage.removeItem('smart_locker_user');
+    clearAuthSession();
+    window.history.replaceState(null, '', '/');
     setActiveTab('customer');
+    if (deletedSessions === 0) {
+      window.alert('Giao diện đã đăng xuất nhưng máy chủ không tìm thấy phiên cần thu hồi. Nếu đăng nhập lại vẫn bị chặn, hãy dùng nút thu hồi phiên cũ.');
+    }
   };
 
   if (!currentUser) {
@@ -88,7 +139,7 @@ export default function App() {
       {/* Enterprise App Sidebar */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleSetActiveTab}
         currentUser={currentUser}
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
@@ -100,7 +151,7 @@ export default function App() {
         {/* Top Header & Command Bar */}
         <Header
           activeTab={activeTab}
-          setActiveTab={setActiveTab}
+          setActiveTab={handleSetActiveTab}
           currentUser={currentUser}
         />
 
@@ -115,7 +166,10 @@ export default function App() {
               — điều cấm #3: transform trên phần tử fixed gây nhảy. Wrapper này là block thường. */}
           <div key={activeTab} className="animate-in fade-in slide-in-from-bottom-2">
           {activeTab === 'customer' && (
-            <CustomerPickupTab currentUser={currentUser} />
+            <CustomerPickupTab
+              currentUser={currentUser}
+              lockerFilterId={customerLockerFilter}
+            />
           )}
 
           {activeTab === 'shipper' && (
@@ -152,10 +206,23 @@ export default function App() {
                 // `customer` (xem effect kiểm `activeTab` ở trên), nên truyền vào chỉ tạo ra
                 // nút bấm không có tác dụng. Nhánh ADMIN trong component đã đổi nút đó thành
                 // "Xem chi tiết trạm". CUSTOMER vẫn nhận đủ prop và chạy y như cũ.
-                onNavigateToPickup={currentUser?.role === 'ADMIN' ? undefined : () => setActiveTab('customer')}
+                onNavigateToPickup={currentUser?.role === 'ADMIN'
+                  ? undefined
+                  : (lockerId) => {
+                      setCustomerLockerFilter(lockerId || null);
+                      setActiveTab('customer');
+                    }}
                 onNavigateToShipper={() => setActiveTab('shipper')}
               />
             )
+          )}
+
+          {activeTab === 'shipper-map' && (
+            <LockerNetworkMapTab
+              currentUser={currentUser}
+              onNavigateToPickup={undefined}
+              onNavigateToShipper={() => setActiveTab('shipper')}
+            />
           )}
           </div>
         </main>

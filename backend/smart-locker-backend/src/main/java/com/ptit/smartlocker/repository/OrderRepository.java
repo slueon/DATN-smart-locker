@@ -4,11 +4,13 @@ import com.ptit.smartlocker.entity.Order;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,6 +39,22 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     List<Order> findByCustomerPhone(@Param("customerPhone") String customerPhone);
     List<Order> findByLocker_LockerIdAndStatus(String lockerId, String status);
     List<Order> findByStatus(String status);
+    long countByCustomerPhone(String customerPhone);
+    long countByAssignedShipper_IdAndStatusIn(Long shipperId, Collection<String> statuses);
+
+    @Modifying
+    @Query("UPDATE Order o SET o.assignedShipper = null WHERE o.assignedShipper.id = :shipperId")
+    int clearAssignedShipper(@Param("shipperId") Long shipperId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.orderId = :orderId")
+    Optional<Order> findByIdForShipperClaim(@Param("orderId") String orderId);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.compartment.compartmentId = :compartmentId "
+            + "AND o.orderId <> :orderId AND o.status IN :statuses")
+    long countOtherActiveOrdersForCompartment(@Param("compartmentId") Integer compartmentId,
+                                               @Param("orderId") String orderId,
+                                               @Param("statuses") Collection<String> statuses);
 
     /**
      * Như {@link #findExpiredShipperReservations} nhưng KHÓA BI QUAN từng đơn ({@code SELECT ... FOR UPDATE}).
@@ -148,6 +166,10 @@ public interface OrderRepository extends JpaRepository<Order, String> {
             + "WHERE o.status = :status")
     List<Order> findByStatusWithCompartment(@Param("status") String status);
 
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "LEFT JOIN FETCH o.assignedShipper WHERE o.status IN :statuses")
+    List<Order> findByStatusWithCompartmentAndAssignedShipper(@Param("statuses") Collection<String> statuses);
+
     /**
      * Đơn theo tủ + trạng thái, NẠP SẴN cả {@code compartment} và {@code locker}.
      *
@@ -161,14 +183,39 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     List<Order> findByLockerAndStatusFetchAll(@Param("lockerId") String lockerId,
                                               @Param("status") String status);
 
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "LEFT JOIN FETCH o.assignedShipper "
+            + "WHERE o.locker.lockerId = :lockerId AND o.status IN :statuses")
+    List<Order> findByLockerAndStatusFetchAllWithAssignedShipper(@Param("lockerId") String lockerId,
+                                                                  @Param("statuses") Collection<String> statuses);
+
     /**
      * Đơn quá hạn, NẠP SẴN {@code locker} để đọc được {@code lockerId} mà không phát thêm query.
      * Dùng bởi {@code OverdueSchedulerService.scanAndLockOverdueOrders()} — vòng lặp của nó đọc
      * {@code order.getLocker().getLockerId()} cho từng đơn.
      */
     @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.locker "
+            + "LEFT JOIN FETCH o.assignedShipper "
             + "WHERE o.status = 'DEPOSITED' AND o.expiryDeadline < :now")
     List<Order> findOverdueOrdersFetchLocker(@Param("now") LocalDateTime now);
+
+    @Query("SELECT DISTINCT o FROM Order o "
+            + "LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "LEFT JOIN FETCH o.assignedShipper "
+            + "WHERE o.status = 'OVERDUE' "
+            + "AND o.assignedShipper.username = :shipperUsername "
+            + "AND (:lockerId IS NULL OR o.locker.lockerId = :lockerId) "
+            + "ORDER BY o.createdAt DESC")
+    List<Order> findOverdueAssignedToShipper(@Param("shipperUsername") String shipperUsername,
+                                             @Param("lockerId") String lockerId);
+
+    @Query("SELECT DISTINCT o FROM Order o "
+            + "LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker "
+            + "LEFT JOIN FETCH o.assignedShipper "
+            + "WHERE o.status = 'OVERDUE' "
+            + "AND (:lockerId IS NULL OR o.locker.lockerId = :lockerId) "
+            + "ORDER BY o.createdAt DESC")
+    List<Order> findOverdueForAdmin(@Param("lockerId") String lockerId);
 
     /**
      * GĐ7 — danh sách đơn cho ADMIN, lọc tuỳ chọn theo trạng thái và theo tủ.
@@ -183,6 +230,7 @@ public interface OrderRepository extends JpaRepository<Order, String> {
      * lọc, thay vì 4 hàm riêng.
      */
     @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.compartment LEFT JOIN FETCH o.locker l "
+            + "LEFT JOIN FETCH o.assignedShipper "
             + "WHERE (:status IS NULL OR o.status = :status) "
             + "AND (:lockerId IS NULL OR l.lockerId = :lockerId) "
             + "ORDER BY o.createdAt DESC")

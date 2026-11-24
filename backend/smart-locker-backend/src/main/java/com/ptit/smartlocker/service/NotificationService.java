@@ -41,6 +41,7 @@ import java.util.Objects;
 public class NotificationService {
 
     public static final String DEPOSIT_SUCCESS = "DEPOSIT_SUCCESS";
+    public static final String DEPOSIT_FAILED = "DEPOSIT_FAILED";
     public static final String KIOSK_METHOD_CHOSEN = "KIOSK_METHOD_CHOSEN";
     public static final String PICKUP_SUCCESS = "PICKUP_SUCCESS";
     public static final String PICKUP_LEFT_BEHIND = "PICKUP_LEFT_BEHIND";
@@ -134,6 +135,21 @@ public class NotificationService {
         }
     }
 
+    /** Cửa đóng nhưng chưa phát hiện kiện hàng ⇒ shipper được phân công. */
+    public void depositFailed(Order order, Integer compIndex) {
+        try {
+            if (order == null || order.getAssignedShipper() == null) return;
+            notify(DEPOSIT_FAILED, order.getAssignedShipper().getPhone(), null,
+                    order.getOrderId(), null,
+                    "Nạp hàng thất bại",
+                    "Không phát hiện kiện hàng sau khi đóng cửa"
+                            + (compIndex != null ? " tại ngăn #" + compIndex : "")
+                            + ". Ngăn đã được trả lại; vui lòng chọn ngăn trống và thử nạp lại.");
+        } catch (RuntimeException ex) {
+            log.warn("depositFailed: {}", ex.toString());
+        }
+    }
+
     /**
      * Khách chọn cách nhận trên màn hình tủ ⇒ khách.
      *
@@ -188,7 +204,7 @@ public class NotificationService {
         }
     }
 
-    /** Quá hạn ⇒ khách + SHIPPER. */
+    /** Quá hạn ⇒ khách + shipper được admin phân công (nếu đã có). */
     public void overdue(Order order) {
         try {
             if (order == null) return;
@@ -197,7 +213,7 @@ public class NotificationService {
                     "⚠️ Bưu kiện quá hạn lưu kho",
                     "Bưu kiện " + order.getOrderId() + " tại " + lockerName
                             + " đã quá hạn lưu kho 24h00. Mã mở tủ đã tạm khóa. Shipper sẽ tiến hành thu hồi về kho bãi.");
-            notify(OVERDUE_ALERT, null, ROLE_SHIPPER, order.getOrderId(), null,
+            notifyAssignedShipper(order, OVERDUE_ALERT,
                     "🚨 Lệnh Thu Hồi Bưu Kiện Quá Hạn!",
                     "Phát hiện bưu kiện " + order.getOrderId() + " tại " + lockerName + " - Ngăn #"
                             + compIndex(order) + " đã quá hạn lưu kho. Vui lòng tới trạm thu hồi để giải phóng ngăn tủ!");
@@ -206,7 +222,21 @@ public class NotificationService {
         }
     }
 
-    /** Thu hồi xong ⇒ khách + SHIPPER. */
+    /** Admin phân công hoặc chuyển đơn quá hạn ⇒ thông báo shipper mới được giao. */
+    public void overdueAssigned(Order order) {
+        try {
+            if (order == null) return;
+            String lockerName = lockerName(order);
+            notifyAssignedShipper(order, OVERDUE_ALERT,
+                    "🚨 Bạn được phân công thu hồi bưu kiện quá hạn",
+                    "Bạn phụ trách thu hồi bưu kiện " + order.getOrderId() + " tại " + lockerName
+                            + " - Ngăn #" + compIndex(order) + ". Vui lòng tới trạm để giải phóng ngăn tủ.");
+        } catch (RuntimeException ex) {
+            log.warn("overdueAssigned: {}", ex.toString());
+        }
+    }
+
+    /** Thu hồi xong ⇒ khách + shipper được phân công. */
     public void recalled(Order order) {
         try {
             if (order == null) return;
@@ -215,7 +245,7 @@ public class NotificationService {
                     "Bưu kiện đã được thu hồi về kho bãi",
                     "Đơn hàng " + order.getOrderId() + " tại " + lockerName
                             + " đã được Shipper thu hồi về kho do vượt quá hạn lưu kho 24h00. Vui lòng liên hệ hotline/quản trị viên để nhận lại bưu phẩm.");
-            notify(RECALL_SUCCESS, null, ROLE_SHIPPER, order.getOrderId(), null,
+            notifyAssignedShipper(order, RECALL_SUCCESS,
                     "Đã giải phóng ngăn tủ thành công",
                     "Đã thu hồi thành công bưu kiện " + order.getOrderId() + " tại " + lockerName
                             + " - Ngăn #" + compIndex(order)
@@ -223,6 +253,16 @@ public class NotificationService {
         } catch (RuntimeException ex) {
             log.warn("recalled: {}", ex.toString());
         }
+    }
+
+    private void notifyAssignedShipper(Order order, String type, String title, String message) {
+        User shipper = order.getAssignedShipper();
+        if (shipper == null || shipper.getPhone() == null || shipper.getPhone().isBlank()) {
+            log.info("Không gửi thông báo {} cho đơn {}: chưa có shipper được phân công",
+                    type, order.getOrderId());
+            return;
+        }
+        notify(type, shipper.getPhone(), null, order.getOrderId(), null, title, message);
     }
 
     // ------------------------------------------------------------------ đọc (API)
@@ -270,7 +310,14 @@ public class NotificationService {
     static boolean isMine(Notification n, User me) {
         return (n.getRecipientPhone() != null && n.getRecipientPhone().equals(me.getPhone()))
                 || (n.getRecipientRole() != null && me.getRole() != null
-                && n.getRecipientRole().equalsIgnoreCase(me.getRole()));
+                && n.getRecipientRole().equalsIgnoreCase(me.getRole())
+                && !isLegacyShipperBroadcast(n, me));
+    }
+
+    private static boolean isLegacyShipperBroadcast(Notification notification, User user) {
+        return "SHIPPER".equalsIgnoreCase(user.getRole())
+                && (OVERDUE_ALERT.equals(notification.getType())
+                || RECALL_SUCCESS.equals(notification.getType()));
     }
 
     private static NotificationDTO.Item toItem(Notification n) {

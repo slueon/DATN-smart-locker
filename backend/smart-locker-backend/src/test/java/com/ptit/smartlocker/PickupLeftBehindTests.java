@@ -9,6 +9,9 @@ import com.ptit.smartlocker.repository.LockerRepository;
 import com.ptit.smartlocker.repository.OrderRepository;
 import com.ptit.smartlocker.repository.PickupCredentialRepository;
 import com.ptit.smartlocker.service.PickupService;
+import com.ptit.smartlocker.service.KioskEventService;
+import com.ptit.smartlocker.service.MqttService;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +20,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -43,6 +47,8 @@ class PickupLeftBehindTests {
     @Autowired private CompartmentRepository compartmentRepository;
     @Autowired private OrderRepository orderRepository;
     @Autowired private PickupCredentialRepository credentialRepository;
+    @Autowired private MqttService mqttService;
+    @Autowired private KioskEventService kioskEventService;
 
     private Order order;
     private Compartment compartment;
@@ -94,6 +100,21 @@ class PickupLeftBehindTests {
         assertFalse(Boolean.TRUE.equals(cred.getIsUsed()),
                 "Mã cũ phải còn hiệu lực để khách mở lại bằng CHÍNH mã đó");
         assertNull(cred.getUsedAt(), "usedAt phải NULL khi hàng còn trong tủ");
+    }
+
+    @Test
+    @DisplayName("Firmware báo item_uncollected → chốt nhận hàng thất bại và báo khách")
+    void firmwareItemUncollectedThiChotThatBai() {
+        long truoc = kioskEventService.latestSeq();
+        String payload = "{\"locker_id\":\"Tu_1\",\"status\":\"item_uncollected\",\"compartment\":1,\"weight\":120}";
+
+        mqttService.messageArrived("ptit/Tu_1/compartment/1/event",
+                new MqttMessage(payload.getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals("DEPOSITED", orderRepository.findById("ORD-GD31A-LEFT").orElseThrow().getStatus());
+        assertTrue(kioskEventService.since(LOCKER, truoc).stream()
+                        .anyMatch(e -> "PICKUP_LEFT_BEHIND".equals(e.getType())),
+                "item_uncollected của firmware phải tạo failure event cho khách");
     }
 
     @Test

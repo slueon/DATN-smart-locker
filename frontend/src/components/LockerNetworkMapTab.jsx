@@ -197,10 +197,12 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
 
   useEffect(() => {
     loadLockerData();
+    const refreshTimer = setInterval(loadLockerData, 10000);
     const handleUpdate = () => loadLockerData();
     window.addEventListener('smart_locker_lockers_updated', handleUpdate);
     window.addEventListener('smart_locker_store_updated', handleUpdate);
     return () => {
+      clearInterval(refreshTimer);
       window.removeEventListener('smart_locker_lockers_updated', handleUpdate);
       window.removeEventListener('smart_locker_store_updated', handleUpdate);
     };
@@ -347,12 +349,12 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           : 'Không lấy được vị trí (quá 10 giây hoặc mất tín hiệu). Bạn có thể tự tìm trạm theo tên.');
         setGeoBusy(false);
       },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     );
   };
 
   /**
-   * GĐ34 ý 2 — "Xem đường đi": dùng LẠI `fetchDrivingRoute` đã nghiệm thu ở GĐ14 (điều cấm #3).
+   * "Xem đường đi": lấy GPS mới tại thời điểm bấm rồi dùng `fetchDrivingRoute`.
    *
    * <p>Chỉ gọi khi ĐÃ CÓ toạ độ khách (điều cấm: không đoán điểm đầu). Lỗi/timeout → fallback
    * "chim bay" bằng Haversine kèm nhãn amber, map không trắng.
@@ -361,16 +363,38 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
    * (`routingApi.js:37-40`) — KHÔNG tự dựng URL ở đây (điều cấm #4).
    */
   const handleShowRoute = async (locker) => {
-    if (isAdmin || !locker) return;
-    if (!userPos) {
-      setRouteMsg('Bấm "Gần tôi" trước để biết bạn đang ở đâu.');
+    if (isAdmin || currentUser?.role === 'SHIPPER' || !locker) return;
+    if (!navigator.geolocation) {
+      setRouteMsg('Trình duyệt này không hỗ trợ lấy vị trí thực tế.');
       return;
     }
     setRouteBusy(true);
     setRouteMsg(null);
-    const tu = { lat: locker.latitude, lng: locker.longitude };
+    setRouteInfo(null);
+
+    let origin;
     try {
-      const r = await fetchDrivingRoute([userPos, tu]);
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        });
+      });
+      origin = { lat: position.coords.latitude, lng: position.coords.longitude };
+      setUserPos(origin);
+      setGeoMsg(null);
+    } catch (err) {
+      setRouteMsg(err?.code === 1
+        ? 'Bạn chưa cho phép truy cập vị trí. Hãy bật quyền định vị để xem đường đi.'
+        : 'Không lấy được vị trí thực tế. Kiểm tra GPS rồi thử lại.');
+      setRouteBusy(false);
+      return;
+    }
+
+    const tu = { lat: Number(locker.latitude), lng: Number(locker.longitude) };
+    try {
+      const r = await fetchDrivingRoute([origin, tu]);
       setRouteInfo({
         lockerId: locker.lockerId,
         distanceKm: r.distanceKm,
@@ -380,12 +404,12 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
       });
     } catch (err) {
       // Fallback có NHÃN RÕ — không bịa số đường đi.
-      const chimBay = haversineKm(userPos, tu);
+      const chimBay = haversineKm(origin, tu);
       setRouteInfo({
         lockerId: locker.lockerId,
         distanceKm: chimBay != null ? Math.round(chimBay * 10) / 10 : null,
         durationMin: null,
-        geometry: [[userPos.lat, userPos.lng], [tu.lat, tu.lng]],
+        geometry: [[origin.lat, origin.lng], [tu.lat, tu.lng]],
         source: 'haversine',
       });
       setRouteMsg(`Không lấy được đường đi thật (${err?.message || 'lỗi mạng'}). Đang hiện khoảng cách chim bay.`);
@@ -751,8 +775,7 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
           />
         </div>
 
-        {/* GĐ34 ý 1 — "Gần tôi": CHỈ hiện ở nhánh khách (điều cấm #1: không đụng ADMIN).
-            Không tự bật định vị khi mở tab — chỉ chạy khi bấm (điều cấm #2). */}
+        {/* "Gần tôi" hiện cho khách và shipper; ADMIN không cần định vị cá nhân. */}
         {!isAdmin && (
           <button
             type="button"
@@ -957,18 +980,18 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                       );
                     })()}
 
-                    {/* GĐ34 ý 2 — "Xem đường đi": cần vị trí khách; chưa có thì nút mờ + tooltip. */}
-                    {!isAdmin && (
+                    {/* Chỉ khách được xem tuyến đường từ GPS hiện tại tới tủ. */}
+                    {!isAdmin && currentUser?.role !== 'SHIPPER' && (
                       <div className="mb-2 space-y-1.5">
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); handleShowRoute(locker); }}
-                          disabled={!userPos || routeBusy}
-                          title={!userPos ? 'Bấm "Gần tôi" trước' : 'Xem đường đi thật tới trạm này'}
+                          disabled={routeBusy}
+                          title="Lấy vị trí GPS hiện tại và xem đường đi tới trạm này"
                           className="w-full py-1.5 rounded-xl border border-blue-200 bg-blue-50/70 text-blue-700 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-100 transition"
                         >
                           <Route className="w-3.5 h-3.5" />
-                          {routeBusy ? 'Đang tính…' : 'Xem đường đi'}
+                          {routeBusy ? 'Đang định vị / tính đường…' : 'Xem đường đi'}
                         </button>
 
                         {routeInfo && routeInfo.lockerId === locker.lockerId && (

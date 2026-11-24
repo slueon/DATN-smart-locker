@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 // GĐ41 — KHÔNG còn CircularTimer ở file này (mã QR shipper là mã cố định, không đếm ngược).
 // File `CircularTimer.jsx` VẪN GIỮ vì `CustomerPickupTab` còn dùng cho OTP khách.
-import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
 import { shipperApi, lockerApi } from '../services/api';
 import {
@@ -70,6 +69,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   const [recallPhase, setRecallPhase] = useState('IDLE'); // 'IDLE' | 'DOOR_OPEN' | 'PROCESSING' | 'SUCCESS' | 'FAILSAFE_ERROR'
   const [doorSensorState, setDoorSensorState] = useState('CLOSED'); // 'CLOSED' | 'OPEN'
   const [loadcellWeight, setLoadcellWeight] = useState(0); // KG
+  const [overdueLoadError, setOverdueLoadError] = useState('');
   // GĐ5 — khối lượng THẬT đọc từ cảm biến HX711, dùng làm mốc khi vào quy trình thu hồi.
   //
   // Vì sao KHÔNG dùng `activeRecallOrder.weight` nữa: `OrderDTO.OrderResponse` **không có**
@@ -160,6 +160,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
    */
   const loadOrders = async () => {
     const lockerId = selectedLockerFilter !== 'ALL' ? selectedLockerFilter : null;
+    setOverdueLoadError('');
     try {
       const res = await shipperApi.getOverdueOrders(lockerId);
       const overdue = res?.data?.data || [];
@@ -174,20 +175,10 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
         setSelectedRecallOrderId(null);
       }
     } catch (err) {
-      // GĐ13 — FALLBACK CÓ KIỂM SOÁT: chỉ chạy khi API lỗi (mất mạng/401) để trang không trắng.
-      // Nguồn chính là `shipperApi.getOverdueOrders` ở nhánh try trên; dữ liệu dưới đây là cache
-      // trình duyệt và có thể đã cũ — đừng coi là danh sách quá hạn thật.
-      console.warn('[ShipperRecallTab] Không tải được đơn quá hạn từ API, dùng cache trình duyệt:', err?.message);
-      const all = store.getOrders();
-      setOrders(all);
-      const overdue = all.filter((o) => o.status === 'OVERDUE');
-      if (overdue.length > 0) {
-        if (!selectedRecallOrderId || !overdue.some((o) => o.orderId === selectedRecallOrderId)) {
-          setSelectedRecallOrderId(overdue[0].orderId);
-        }
-      } else {
-        setSelectedRecallOrderId(null);
-      }
+      console.warn('[ShipperRecallTab] Không tải được đơn quá hạn được phân công:', err?.message);
+      setOverdueLoadError(err?.response?.data?.message || 'Không tải được danh sách đơn được phân công. Vui lòng thử lại.');
+      setOrders([]);
+      setSelectedRecallOrderId(null);
     }
   };
 
@@ -447,7 +438,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     }
 
     let cancelled = false;
-    (async () => {
+    const pollSensors = async () => {
       try {
         const res = await lockerApi.getCompartments(lockerId);
         if (cancelled) return;
@@ -456,14 +447,25 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
         const kg = comp?.currentWeight != null ? Number(comp.currentWeight) / 1000 : 0;
         setSensorWeightKg(kg);
         setLoadcellWeight(kg);
+        if (comp?.isDoorClosed === true) {
+          setDoorSensorState('CLOSED');
+        } else if (comp?.isDoorClosed === false) {
+          setDoorSensorState('OPEN');
+        }
       } catch {
         if (cancelled) return;
-        // Mất mạng: không bịa số, để 0 và UI hiện "—".
+        // Mất mạng: không bịa số/cửa.
         setSensorWeightKg(null);
         setLoadcellWeight(0);
       }
-    })();
-    return () => { cancelled = true; };
+    };
+
+    pollSensors();
+    const sensorTimer = setInterval(pollSensors, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(sensorTimer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRecallOrderId, activeRecallOrder?.lockerId, activeRecallOrder?.compartmentIndex]);
 
@@ -504,18 +506,13 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
 
     setDoorOpenError(null);
     playSolenoidSound();
-    setDoorSensorState('OPEN');
     setRecallPhase('DOOR_OPEN');
-    // Mốc khối lượng để so sánh ở bước fail-safe: lấy đúng số cân đã đọc được.
-    setLoadcellWeight(sensorWeightKg != null ? sensorWeightKg : 0);
   };
 
   // BƯỚC 3 & 4: CẢM BIẾN KÉP TỰ ĐỘNG (ZERO-TOUCH)
   const handleSimulateRetrieveAndClose = () => {
     if (!activeRecallOrder) return;
 
-    setDoorSensorState('CLOSED');
-    setLoadcellWeight(0.00);
     setRecallPhase('PROCESSING');
     setFailsafeMessage(null);
 
@@ -671,6 +668,12 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
               </button>
             </div>
           </div>
+
+          {overdueLoadError && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+              {overdueLoadError}
+            </div>
+          )}
 
           {/* GĐ51 — hộp chọn tủ + khách. Chỉ hiện khi bấm nút; tạo xong tự đóng. */}
           {showThemDon && (
@@ -991,14 +994,6 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                         <span>Đã Lấy Hàng & Đóng Cửa</span>
                       </button>
 
-                      <button
-                        onClick={handleSimulateForgetPackageAndClose}
-                        className="ios-btn bg-white/80 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-white/90 hover:border-rose-300 font-semibold py-3.5 px-4 rounded-2xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
-                        title="Thử nghiệm kịch bản an toàn khi shipper quên lấy kiện hàng"
-                      >
-                        <AlertTriangle className="w-4 h-4 text-rose-500" />
-                        <span>Thử Quên Lấy Hàng (Fail-safe)</span>
-                      </button>
                     </div>
                   </div>
                 )}
@@ -1011,17 +1006,6 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                 )}
               </div>
 
-              {/* Real-time Physical Locker Visual Cabinet */}
-              <div className="pt-2">
-                <LockerCabinetVisualizer
-                  lockerName={activeRecallOrder.lockerName}
-                  lockerId={activeRecallOrder.lockerId}
-                  activeSlotId={activeRecallOrder.compartmentIndex}
-                  doorState={doorSensorState}
-                  sensorWeight={loadcellWeight}
-                  compact={true}
-                />
-              </div>
             </div>
           ) : (
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-12 text-center shadow-lg">

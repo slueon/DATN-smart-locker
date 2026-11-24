@@ -551,6 +551,23 @@ class MqttTopicRoutingTests {
                 "Nhịp tim phải được cập nhật dù payload thiếu locker_id");
     }
 
+    @Test
+    @DisplayName("Tu_2 tự ánh xạ tới LOCKER_HN_02 cho uplink và downlink")
+    void deviceIdTu2DuocAnhXaTuDong() {
+        Locker lockerThuHai = lockerRepository.findById("LOCKER_HN_02").orElseThrow();
+        lockerThuHai.setConnectionStatus("OFFLINE");
+        lockerThuHai.setLastHeartbeat(null);
+        lockerRepository.save(lockerThuHai);
+
+        publish("ptit/Tu_2/status", "ONLINE");
+
+        Locker sau = lockerRepository.findById("LOCKER_HN_02").orElseThrow();
+        assertEquals("ONLINE", sau.getConnectionStatus());
+        assertNotNull(sau.getLastHeartbeat());
+        assertEquals("Tu_2", mqttService.resolveDeviceId("LOCKER_HN_02"),
+                "Lệnh từ backend phải dùng đúng ID thiết bị Tu_2");
+    }
+
     // ─────────────────────────────────────────────────────────────
     // 6. TRẠNG THÁI NGĂN — chỉ số 1-based
     // ─────────────────────────────────────────────────────────────

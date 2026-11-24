@@ -77,7 +77,7 @@ function CountUp({ value, duration = 500 }) {
   return hienThi;
 }
 
-export default function CustomerPickupTab({ currentUser }) {
+export default function CustomerPickupTab({ currentUser, lockerFilterId = null }) {
   const [orders, setOrders] = useState([]);
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -129,6 +129,7 @@ export default function CustomerPickupTab({ currentUser }) {
    * phải F5 mới thấy dữ liệu mới.
    */
   const [pickupDoneInfo, setPickupDoneInfo] = useState(null);
+  const [pickupFailureInfo, setPickupFailureInfo] = useState(null);
 
   /**
    * GĐ32 — các đơn CHÍNH PHIÊN NÀY đã từng ở trong tủ (`DEPOSITED`/`PICKUP_OPENED`).
@@ -198,7 +199,7 @@ export default function CustomerPickupTab({ currentUser }) {
    * nó vẫn là thứ quyết định tab nào hiện đơn nào.
    *
    * <p>`currentUser.phone` lấy từ `UserResponse.phone` của backend khi login, đã lưu trong
-   * `localStorage.smart_locker_user`. Không có SĐT (dữ liệu đăng nhập hỏng) thì GIỮ NGUYÊN danh
+   * `sessionStorage.smart_locker_user`. Không có SĐT (dữ liệu đăng nhập hỏng) thì GIỮ NGUYÊN danh
    * sách hiện có thay vì xoá trắng màn hình.
    */
   /**
@@ -281,6 +282,8 @@ export default function CustomerPickupTab({ currentUser }) {
   };
 
   const handleOpenQrModal = (order) => {
+    setPickupFailureInfo(null);
+    setOtpModalOrder(null);
     setQrModalOrder(order);
     loadRealQrToken(order);
   };
@@ -362,6 +365,7 @@ export default function CustomerPickupTab({ currentUser }) {
       return;
     }
 
+    setPickupFailureInfo(null);
     setGeneratingOtpId(order.orderId);
     try {
       let apiOtp = null;
@@ -471,6 +475,7 @@ export default function CustomerPickupTab({ currentUser }) {
    * bộ lọc "Đơn đã huỷ" vẫn xem được (điều cấm #4: KHÔNG bỏ bộ lọc, chỉ đổi mặc định + thêm tab).
    */
   const filteredOrders = orders.filter((o) => {
+    if (lockerFilterId && o.lockerId !== lockerFilterId) return false;
     if (filterStatus === 'CANCELLED') return o.status === 'CANCELLED';
     if (o.status === 'CANCELLED') return false;      // mặc định (và mọi tab khác) ẩn đơn huỷ
     if (filterStatus !== 'ALL' && o.status !== filterStatus) return false;
@@ -494,14 +499,21 @@ export default function CustomerPickupTab({ currentUser }) {
   const donDangCho = orders.filter(
     (o) => o.status === 'DEPOSITED' || o.status === 'PICKUP_OPENED',
   );
+  const donDangChoTheoTu = lockerFilterId
+    ? donDangCho.filter((o) => o.lockerId === lockerFilterId)
+    : donDangCho;
 
-  const selectedOrder = orders.find((o) => o.orderId === selectedOrderId) || filteredOrders[0] || null;
+  const selectedOrder = donDangChoTheoTu.find((o) => o.orderId === selectedOrderId)
+    || donDangChoTheoTu[0]
+    || filteredOrders.find((o) => o.orderId === selectedOrderId && (!lockerFilterId || o.lockerId === lockerFilterId))
+    || filteredOrders.find((o) => !lockerFilterId || o.lockerId === lockerFilterId)
+    || null;
 
   /**
    * GĐ49b — đơn dùng cho KHỐI TRUNG TÂM + SƠ ĐỒ TỦ: ưu tiên đơn đang chờ, nếu không có thì đơn
    * đang chọn trong lịch sử. Nhờ vậy sơ đồ tủ luôn có chủ thể ngay màn đầu, không phải cuộn.
    */
-  const donTrungTam = donDangCho[0] || selectedOrder || null;
+  const donTrungTam = donDangChoTheoTu[0] || selectedOrder || null;
 
   // GĐ5 — đọc cảm biến của ngăn chứa đơn đang xem, để hiển thị đúng cân nặng thật.
   // Chỉ đọc khi đơn đã có ngăn; đơn chưa nạp tủ thì không có gì để đọc.
@@ -588,16 +600,16 @@ export default function CustomerPickupTab({ currentUser }) {
    *
    * <p>Nhịp 1,5 giây, cùng nhịp với poll Kiosk bên dưới (không tạo nhịp rời rạc mới — điều cấm #5).
    *
-   * <p>Chỉ chạy khi đơn đang xem là {@code DEPOSITED}: lúc đó trạng thái ngăn và số cân mới còn
-   * thay đổi (shipper vừa nạp, khách vừa mở cửa lấy). Đơn {@code COMPLETED}/{@code CANCELLED}
-   * không có gì để theo dõi nên KHÔNG poll — đây là điều cấm #3 (không rò interval/request).
+   * <p>Chạy khi đơn đang {@code DEPOSITED} hoặc {@code PICKUP_OPENED} để trạng thái cửa/cân tiếp tục
+   * cập nhật xuyên suốt phiên nhận hàng. Đơn {@code COMPLETED}/{@code CANCELLED} không còn hoạt động
+   * nên KHÔNG poll — tránh rò interval/request.
    */
   useEffect(() => {
     const lockerId = selectedOrder?.lockerId;
     const compIndex = selectedOrder?.compartmentIndex;
     const orderStatus = selectedOrder?.status;
     if (!lockerId || compIndex == null) return undefined;
-    if (orderStatus !== 'DEPOSITED') return undefined;
+    if (orderStatus !== 'DEPOSITED' && orderStatus !== 'PICKUP_OPENED') return undefined;
 
     const timer = setInterval(() => {
       docCamBien(lockerId, compIndex);
@@ -711,6 +723,9 @@ export default function CustomerPickupTab({ currentUser }) {
           const doneOrder = orders.find((o) => o.orderId === doneOrderId) || selectedOrder;
 
           await loadOrders();
+          setPickupFailureInfo((current) => (
+            current?.orderId === doneOrderId ? null : current
+          ));
           setPickupDoneInfo({
             orderId: doneOrderId,
             compartmentIndex: pickDone.compartment ?? doneOrder?.compartmentIndex ?? null,
@@ -729,8 +744,8 @@ export default function CustomerPickupTab({ currentUser }) {
         //
         // Backend (GĐ31a) **đã** bắn `PICKUP_LEFT_BEHIND` kèm câu tiếng Việt, nhưng trước GĐ42
         // `grep frontend/src` = **0 hit** ⇒ sự kiện được ghi rồi bị bỏ. Nay frontend đọc:
-        // `loadOrders()` để đơn quay về `DEPOSITED` trên UI (backend đã đổi), + thông báo bấm được
-        // qua chuông.
+        // `loadOrders()` để đơn quay về `DEPOSITED`, hiện rõ thông báo thất bại, tải lại cảm biến
+        // ngăn và cập nhật chuông thông báo.
         //
         // ⚠ KHÔNG hiện popup "Lấy hàng thành công" — đây là THẤT BẠI, hai sự kiện loại trừ nhau
         // (điều cấm #2 của thẻ GĐ42).
@@ -738,14 +753,27 @@ export default function CustomerPickupTab({ currentUser }) {
           .reverse()
           .find((e) => e.type === 'PICKUP_LEFT_BEHIND'
             && (!e.lockerId || e.lockerId === lockerId)
+            && e.orderId === orderId
             && !processedKioskSeqRef.current.has(e.seq));
 
         if (leftBehind) {
           processedKioskSeqRef.current.add(leftBehind.seq);
 
           await loadOrders();
-          // Mở lại modal QR/OTP để khách mở lại bằng CHÍNH mã cũ — dữ liệu đã về DEPOSITED.
-          setCompartmentSensor(null);
+          setPickupDoneInfo(null);
+          setQrModalOrder(null);
+          setQrToken('');
+          setOtpModalOrder(null);
+          setCopiedOtp(false);
+          setPickupFailureInfo({
+            orderId: leftBehind.orderId,
+            compartmentIndex: leftBehind.compartment ?? selectedOrder?.compartmentIndex ?? null,
+            message: leftBehind.message,
+          });
+          await docCamBien(
+            leftBehind.lockerId || lockerId,
+            leftBehind.compartment ?? selectedOrder?.compartmentIndex
+          );
 
           // GĐ64b — thông báo `PICKUP_LEFT_BEHIND` do backend ghi.
           store.refreshNotifications();
@@ -908,6 +936,37 @@ export default function CustomerPickupTab({ currentUser }) {
         </div>
       )}
 
+      {pickupFailureInfo && (
+        <div
+          role="alert"
+          data-testid="pickup-failure"
+          className="p-4 rounded-2xl bg-rose-50 border border-rose-300 text-rose-900 flex items-start gap-3 shadow-sm"
+        >
+          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-rose-600" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold">Nhận hàng thất bại</p>
+            <p className="text-xs mt-1">
+              {pickupFailureInfo.message || 'Kiện hàng vẫn còn trong ngăn.'}
+              {' '}Đơn vẫn sẵn sàng nhận; hãy mở lại bằng mã QR hoặc OTP và lấy kiện trước khi đóng cửa.
+            </p>
+            <p className="text-[11px] font-semibold mt-2">
+              Mã đơn {pickupFailureInfo.orderId}
+              {pickupFailureInfo.compartmentIndex != null
+                ? ` · Ngăn #${pickupFailureInfo.compartmentIndex}`
+                : ''}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPickupFailureInfo(null)}
+            className="shrink-0 p-1 rounded-lg text-rose-700 hover:bg-rose-100 cursor-pointer"
+            aria-label="Đóng thông báo thất bại"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* GĐ49b — 4 KPI THU GỌN thành 1 hàng nhỏ (trước: 4 thẻ lớn chiếm gần 1/3 màn đầu).
           Nội dung + số liệu GIỮ NGUYÊN (không đổi logic đếm). */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -949,9 +1008,9 @@ export default function CustomerPickupTab({ currentUser }) {
             <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <Package className="w-4 h-4 text-blue-600" />
               Bưu kiện đang chờ bạn
-              {donDangCho.length > 0 && (
+              {donDangChoTheoTu.length > 0 && (
                 <span className="text-[11px] font-bold text-white bg-blue-600 px-2 py-0.5 rounded-full">
-                  {donDangCho.length}
+                  {donDangChoTheoTu.length}
                 </span>
               )}
             </h2>
@@ -962,15 +1021,19 @@ export default function CustomerPickupTab({ currentUser }) {
               <div className="h-4 w-40 rounded bg-slate-200 mb-3" />
               <div className="h-3 w-2/3 rounded bg-slate-200" />
             </div>
-          ) : donDangCho.length === 0 ? (
+          ) : donDangChoTheoTu.length === 0 ? (
             /* Trạng thái TRỐNG rõ ràng (phép thử #4) */
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-8 text-center" data-testid="waiting-empty">
               <Package className="w-9 h-9 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm font-semibold text-slate-800">Chưa có bưu kiện nào về tủ</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {lockerFilterId
+                  ? 'Bạn không có bưu kiện nào ở tủ này'
+                  : 'Chưa có bưu kiện nào về tủ'}
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {donDangCho.map((ord) => {
+              {donDangChoTheoTu.map((ord) => {
                 const conHan = calculateRemainingTime(ord.expiryDeadline);
                 return (
                   <div

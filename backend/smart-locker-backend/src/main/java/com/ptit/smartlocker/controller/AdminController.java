@@ -32,13 +32,16 @@ public class AdminController {
     private final OrderService orderService;
     private final com.ptit.smartlocker.service.LockerService lockerService;
     private final com.ptit.smartlocker.service.OverdueSchedulerService overdueSchedulerService;
+    private final com.ptit.smartlocker.service.ShipperService shipperService;
 
     public AdminController(OrderService orderService,
                            com.ptit.smartlocker.service.LockerService lockerService,
-                           com.ptit.smartlocker.service.OverdueSchedulerService overdueSchedulerService) {
+                           com.ptit.smartlocker.service.OverdueSchedulerService overdueSchedulerService,
+                           com.ptit.smartlocker.service.ShipperService shipperService) {
         this.orderService = orderService;
         this.lockerService = lockerService;
         this.overdueSchedulerService = overdueSchedulerService;
+        this.shipperService = shipperService;
     }
 
     /**
@@ -95,5 +98,58 @@ public class AdminController {
         int changed = overdueSchedulerService.scanAndLockOverdueOrders();
         return ResponseEntity.ok(ApiResponse.ok(
                 "Đã quét đơn quá hạn: " + changed + " đơn vừa chuyển sang OVERDUE", changed));
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping("/customers")
+    public ResponseEntity<ApiResponse<List<com.ptit.smartlocker.dto.ShipperDTO.CustomerOptionResponse>>> getCustomers() {
+        List<com.ptit.smartlocker.dto.ShipperDTO.CustomerOptionResponse> customers =
+                shipperService.getCustomerOptions();
+        return ResponseEntity.ok(ApiResponse.ok(customers));
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping("/shippers")
+    public ResponseEntity<ApiResponse<List<com.ptit.smartlocker.dto.ShipperDTO.ShipperOptionResponse>>> getShippers() {
+        List<com.ptit.smartlocker.dto.ShipperDTO.ShipperOptionResponse> shippers =
+                shipperService.getShipperOptions();
+        return ResponseEntity.ok(ApiResponse.ok(shippers));
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/orders")
+    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> createOrder(
+            @org.springframework.web.bind.annotation.RequestBody
+            com.ptit.smartlocker.dto.ShipperDTO.CreateOrderByAdminRequest request) {
+        try {
+            OrderDTO.OrderResponse response = shipperService.createOrderByAdmin(request);
+            return ResponseEntity.ok(ApiResponse.ok("Admin đã tạo và phân công đơn hàng.", response));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/orders/{orderId}/assign")
+    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> assignOrder(
+            @org.springframework.web.bind.annotation.PathVariable String orderId,
+            @org.springframework.web.bind.annotation.RequestBody
+            com.ptit.smartlocker.dto.ShipperDTO.AssignShipperRequest request) {
+        try {
+            OrderDTO.OrderResponse response = shipperService.assignShipperByAdmin(
+                    orderId,
+                    request != null ? request.getShipperUserId() : null,
+                    request != null ? request.getShipperUsername() : null);
+            return ResponseEntity.ok(ApiResponse.ok("Đã phân công shipper phụ trách đơn.", response));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/orders/{orderId}")
+    public ResponseEntity<ApiResponse<Void>> deletePendingOrder(
+            @org.springframework.web.bind.annotation.PathVariable String orderId) {
+        try {
+            shipperService.deletePendingOrderByAdmin(orderId);
+            return ResponseEntity.ok(ApiResponse.ok("Đã xoá đơn " + orderId + ".", null));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
     }
 }

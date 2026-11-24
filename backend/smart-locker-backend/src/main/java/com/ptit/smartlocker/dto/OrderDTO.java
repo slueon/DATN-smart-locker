@@ -19,7 +19,7 @@ public class OrderDTO {
         private String customerName;
         private String customerPhone;
         private String deliveryType; // "LOCKER" hoặc "STANDARD"
-        private String lockerId;     // Bắt buộc nếu deliveryType = "LOCKER"
+        private String lockerId;     // Tủ đích nếu đã chọn; không đặt trước ngăn khi tạo đơn
         private LocalDate deliveryDate; // Ngày mong muốn giao vào tủ
         private String paymentMethod; // "ONLINE_VIETQR", "ONLINE_MOMO", "ONLINE_VNPAY", "COD"
         private String paymentStatus; // "PAID", "UNPAID"
@@ -28,9 +28,8 @@ public class OrderDTO {
          * GĐ18 — <b>KHÔNG còn dùng để quyết định</b> chọn ngăn nào.
          *
          * <p>Hệ thống đã bỏ phân biệt size: mọi ngăn trống đều nhận được mọi kiện
-         * ({@code OrderService.selectSuitableCompartment} lấy ngăn EMPTY đầu tiên). Field này
-         * <b>giữ lại để không vỡ contract</b> — frontend vẫn gửi lên và đọc được, tránh phải sửa
-         * đồng loạt; giá trị nhận vào bị bỏ qua.
+         * Field này <b>giữ lại để không vỡ contract</b>; giá trị nhận vào không được dùng để giữ
+         * ngăn lúc tạo đơn.
          */
         private String requiredSize;  // Giữ cho tương thích — GĐ18: không còn dùng
         private BigDecimal totalAmount;
@@ -119,6 +118,7 @@ public class OrderDTO {
         private LocalDateTime createdAt;
         /** T3: mã vận đơn in trên nhãn; null thì coi như bằng orderId. */
         private String trackingCode;
+        private String assignedShipperUsername;
 
         public OrderResponse(String orderId, String customerName, String customerPhone, String deliveryType, String lockerId, String lockerName, Integer compartmentIndex, LocalDate expectedDate, LocalDateTime depositedAt, LocalDateTime expiryDeadline, String status, String productName, BigDecimal totalAmount, String paymentMethod, String paymentStatus, String qrToken, String otpCode, LocalDateTime createdAt) {
             this.orderId = orderId;

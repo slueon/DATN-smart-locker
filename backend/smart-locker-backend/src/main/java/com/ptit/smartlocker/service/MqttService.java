@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
  * và parse CẢ JSON lẫn chuỗi thuần — đây là lớp tương thích, không phải làm ẩu.
  *
  * <p><b>Id thiết bị ≠ id tủ:</b> payload mang {@code Tu_1}, CSDL dùng {@code LOCKER_HN_01}.
- * Ánh xạ bằng cấu hình ({@code mqtt.locker.id.map}), KHÔNG đổi schema. Mọi thứ ghi xuống
+ * Ánh xạ theo quy ước đặt tên, có thể ghi đè bằng {@code mqtt.locker.id.map}, KHÔNG đổi schema. Mọi thứ ghi xuống
  * {@code device_events}/{@code command_logs} luôn là id tủ trong CSDL.
  */
 @Slf4j
@@ -79,8 +79,11 @@ public class MqttService implements MqttCallbackExtended {
     @Value("${mqtt.topic.base:ptit}")
     private String topicBase;
 
-    /** Danh sách {@code dev:DBID} phân tách bằng dấu phẩy, ví dụ {@code Tu_1:LOCKER_HN_01}. */
-    @Value("${mqtt.locker.id.map:Tu_1:LOCKER_HN_01}")
+    /**
+     * Ánh xạ ghi đè tùy chọn {@code dev:DBID}, phân tách bằng dấu phẩy.
+     * Theo quy ước, {@code Tu_2} tự ánh xạ tới {@code LOCKER_HN_02}.
+     */
+    @Value("${mqtt.locker.id.map:}")
     private String lockerIdMapRaw;
 
     /** Tủ dùng khi payload lẫn topic đều không cho biết thiết bị nào. */
@@ -253,13 +256,43 @@ public class MqttService implements MqttCallbackExtended {
                 return e.getKey();
             }
         }
-        // Không có ánh xạ: dùng chính id tủ. Tủ đó không có thật nên không ai nhận —
-        // đúng thực tế; muốn thiết bị thứ 2 chạy được chỉ cần thêm 1 dòng map.
+        String deviceId = conventionalDeviceId(dbLockerId);
+        if (deviceId != null) {
+            return deviceId;
+        }
         return dbLockerId;
     }
 
     private Set<String> knownDeviceIds() {
         return deviceToDbMap().keySet();
+    }
+
+    /** Quy ước thiết bị {@code Tu_N} ↔ khóa CSDL {@code LOCKER_HN_0N}. */
+    private String conventionalDatabaseLockerId(String deviceId) {
+        if (deviceId == null) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("^Tu_([1-9][0-9]?)$")
+                .matcher(deviceId.trim());
+        if (!matcher.matches()) {
+            return null;
+        }
+        return "LOCKER_HN_" + String.format(Locale.ROOT, "%02d", Integer.parseInt(matcher.group(1)));
+    }
+
+    private String conventionalDeviceId(String dbLockerId) {
+        if (dbLockerId == null) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("^LOCKER_HN_([0-9]{2})$")
+                .matcher(dbLockerId.trim());
+        if (!matcher.matches()) {
+            return null;
+        }
+        int number = Integer.parseInt(matcher.group(1));
+        return number > 0 ? "Tu_" + number : null;
     }
 
     /**
@@ -276,6 +309,13 @@ public class MqttService implements MqttCallbackExtended {
                     return byMap.get();
                 }
                 log.warn("mqtt.locker.id.map trỏ tới tủ không tồn tại trong CSDL: {} -> {}", key, mapped);
+            }
+            String conventionalId = conventionalDatabaseLockerId(key);
+            if (conventionalId != null) {
+                Optional<Locker> byConvention = lockerRepository.findById(conventionalId);
+                if (byConvention.isPresent()) {
+                    return byConvention.get();
+                }
             }
             // Payload gửi thẳng id tủ (một số firmware làm vậy).
             Optional<Locker> direct = lockerRepository.findById(key);
@@ -504,7 +544,7 @@ public class MqttService implements MqttCallbackExtended {
         if (seg.length < 3) {
             return false;
         }
-        if (!knownDeviceIds().contains(seg[0])) {
+        if (!knownDeviceIds().contains(seg[0]) && conventionalDatabaseLockerId(seg[0]) == null) {
             return false;
         }
         String second = seg[1].toLowerCase(Locale.ROOT);
@@ -1279,7 +1319,7 @@ public class MqttService implements MqttCallbackExtended {
                     reason = (coPhienShipper ? "" : "chưa có shipper xác thực tại tủ (" + lockerIdOfMessage + "); ")
                             + "đơn " + o.getOrderId() + " CHƯA ĐƯỢC ĐẶT TRƯỚC"
                             + " (ngăn " + o.getCompartment().getCompIndex()
-                            + " do hệ thống gán lúc checkout) — shipper cần đặt trước trên web"
+                            + " chưa được shipper giữ chỗ) — shipper cần đặt trước trên web"
                             + " hoặc chọn ngăn trên màn hình tủ";
                 } else {
                     reason = "đơn " + o.getOrderId() + " thuộc tủ "
@@ -1790,6 +1830,8 @@ public class MqttService implements MqttCallbackExtended {
             return;
         }
 
+        // Firmware sends explicit closure failures after its sensor-settle window; handle those
+        // too in case the companion compartment/status message arrives late or is missed.
         if ("deposit_success".equalsIgnoreCase(status)) {
             compartmentRepository.findByLocker_LockerIdAndCompIndex(locker.getLockerId(), compIndex).ifPresent(comp -> {
                 comp.setStatus("OCCUPIED");
@@ -1870,6 +1912,22 @@ public class MqttService implements MqttCallbackExtended {
                     }
                 }
             });
+        } else if ("deposit_cancelled".equalsIgnoreCase(status) && shipperService != null) {
+            compartmentRepository.findByLocker_LockerIdAndCompIndex(locker.getLockerId(), compIndex)
+                    .ifPresent(comp -> orderRepository
+                            .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PENDING_OPENED").stream()
+                            .filter(ord -> ord.getCompartment() != null
+                                    && comp.getCompartmentId().equals(ord.getCompartment().getCompartmentId()))
+                            .findFirst()
+                            .ifPresent(ord -> shipperService.chotPhienNapHang(ord, comp, false)));
+        } else if ("item_uncollected".equalsIgnoreCase(status) && pickupService != null) {
+            compartmentRepository.findByLocker_LockerIdAndCompIndex(locker.getLockerId(), compIndex)
+                    .ifPresent(comp -> orderRepository
+                            .findByLockerAndStatusWithCompartment(locker.getLockerId(), "PICKUP_OPENED").stream()
+                            .filter(ord -> ord.getCompartment() != null
+                                    && comp.getCompartmentId().equals(ord.getCompartment().getCompartmentId()))
+                            .findFirst()
+                            .ifPresent(ord -> pickupService.chotPhienLayHang(ord, comp, true)));
         }
     }
 

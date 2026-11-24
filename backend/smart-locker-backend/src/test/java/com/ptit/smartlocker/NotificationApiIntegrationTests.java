@@ -5,6 +5,7 @@ import com.ptit.smartlocker.repository.*;
 import com.ptit.smartlocker.service.NotificationService;
 import com.ptit.smartlocker.service.OverdueSchedulerService;
 import com.ptit.smartlocker.service.PickupService;
+import com.ptit.smartlocker.service.ShipperService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -52,10 +53,11 @@ class NotificationApiIntegrationTests {
     @Autowired private CompartmentRepository compartmentRepository;
     @Autowired private PickupService pickupService;
     @Autowired private OverdueSchedulerService overdueSchedulerService;
+    @Autowired private ShipperService shipperService;
     @Autowired private PlatformTransactionManager txManager;
 
     private final HttpClient http = HttpClient.newHttpClient();
-    private User userA, userB, userS;
+    private User userA, userB, userS, userS2;
     private String tokenA, tokenB, tokenS;
 
     @BeforeEach
@@ -64,6 +66,7 @@ class NotificationApiIntegrationTests {
         userA = saveUser("gd64a_khach_a", PHONE_A, "CUSTOMER");
         userB = saveUser("gd64a_khach_b", PHONE_B, "CUSTOMER");
         userS = saveUser("gd64a_shipper", PHONE_S, "SHIPPER");
+        userS2 = saveUser("gd64a_shipper_2", "0990640004", "SHIPPER");
         tokenA = saveSession(userA, "GD64A-TOKEN-A");
         tokenB = saveSession(userB, "GD64A-TOKEN-B");
         tokenS = saveSession(userS, "GD64A-TOKEN-S");
@@ -73,6 +76,7 @@ class NotificationApiIntegrationTests {
     void tearDown() {
         notificationRepository.findAll().stream()
                 .filter(n -> PHONE_A.equals(n.getRecipientPhone()) || PHONE_B.equals(n.getRecipientPhone())
+                        || PHONE_S.equals(n.getRecipientPhone()) || "0990640004".equals(n.getRecipientPhone())
                         || "SHIPPER".equals(n.getRecipientRole())
                         || (n.getOrderId() != null && n.getOrderId().startsWith("ORD-GD64A")))
                 .forEach(notificationRepository::delete);
@@ -96,7 +100,9 @@ class NotificationApiIntegrationTests {
     void chiThayCuaMinh() throws Exception {
         notificationService.notify("PICKUP_SUCCESS", PHONE_A, null, "ORD-GD64A-1", null, "A1", "của A");
         notificationService.notify("PICKUP_SUCCESS", PHONE_B, null, "ORD-GD64A-2", null, "B1", "của B");
-        notificationService.notify("OVERDUE_ALERT", null, "SHIPPER", "ORD-GD64A-3", null, "S1", "của shipper");
+        notificationService.notify("OVERDUE_ALERT", PHONE_S, null, "ORD-GD64A-3", null, "S1", "của shipper");
+        notificationService.notify("OVERDUE_ALERT", null, "SHIPPER", "ORD-GD64A-LEGACY", null,
+                "Thông báo cũ", "broadcast cũ");
 
         HttpResponse<String> a = get("/api/notifications?phone=" + PHONE_B + "&role=SHIPPER", tokenA);
         assertEquals(200, a.statusCode());
@@ -108,6 +114,8 @@ class NotificationApiIntegrationTests {
         HttpResponse<String> s = get("/api/notifications", tokenS);
         assertEquals(200, s.statusCode());
         assertTrue(s.body().contains("ORD-GD64A-3"), s.body());
+        assertFalse(s.body().contains("ORD-GD64A-LEGACY"),
+                "Thông báo thu hồi broadcast cũ không được hiện cho toàn bộ shipper");
         assertFalse(s.body().contains("ORD-GD64A-1"));
 
         assertEquals(401, get("/api/notifications", null).statusCode());
@@ -180,9 +188,31 @@ class NotificationApiIntegrationTests {
     }
 
     @Test
-    @DisplayName("GĐ64a điểm phát: quét quá hạn ⇒ OVERDUE_CUSTOMER cho khách + OVERDUE_ALERT cho SHIPPER")
+    @DisplayName("Đóng ngăn không có hàng: thông báo thất bại chỉ gửi shipper được phân công")
+    void diemPhatDepositFailedToAssignedShipper() {
+        Order order = saveOrder("ORD-GD64A-DF", 1, "PENDING_OPENED", null);
+        order.setAssignedShipper(userS);
+        orderRepository.save(order);
+        Compartment compartment = compartmentRepository
+                .findByLocker_LockerIdAndCompIndex(LOCKER, 1).orElseThrow();
+
+        assertFalse(shipperService.chotPhienNapHang(order, compartment, false));
+
+        List<Notification> shipperRows = rowsFor(PHONE_S).stream()
+                .filter(n -> "ORD-GD64A-DF".equals(n.getOrderId())).toList();
+        assertEquals(1, shipperRows.size());
+        assertEquals("DEPOSIT_FAILED", shipperRows.get(0).getType());
+        assertTrue(rowsFor("0990640004").stream()
+                .noneMatch(n -> "ORD-GD64A-DF".equals(n.getOrderId())));
+    }
+
+    @Test
+    @DisplayName("Quá hạn và phân công: thông báo chỉ gửi tới shipper được giao, không phát theo vai trò")
     void diemPhatOverdue() {
-        saveOrder("ORD-GD64A-O", 2, "DEPOSITED", LocalDateTime.now().minusHours(1));
+        Order assigned = saveOrder("ORD-GD64A-O", 1, "DEPOSITED", LocalDateTime.now().minusHours(1));
+        assigned.setAssignedShipper(userS);
+        orderRepository.save(assigned);
+        saveOrder("ORD-GD64A-UNASSIGNED", 2, "DEPOSITED", LocalDateTime.now().minusHours(1));
 
         overdueSchedulerService.scanAndLockOverdueOrders();
 
@@ -192,7 +222,21 @@ class NotificationApiIntegrationTests {
         assertEquals(1, all.stream().filter(n -> "OVERDUE_CUSTOMER".equals(n.getType())
                 && PHONE_A.equals(n.getRecipientPhone())).count());
         assertEquals(1, all.stream().filter(n -> "OVERDUE_ALERT".equals(n.getType())
-                && "SHIPPER".equals(n.getRecipientRole())).count());
+                && PHONE_S.equals(n.getRecipientPhone())
+                && n.getRecipientRole() == null).count());
+        assertTrue(notificationRepository.findAll().stream()
+                .noneMatch(n -> "ORD-GD64A-UNASSIGNED".equals(n.getOrderId())
+                        && "OVERDUE_ALERT".equals(n.getType())
+                        && "SHIPPER".equals(n.getRecipientRole())),
+                "Đơn chưa được phân công không được phát thông báo chung cho mọi shipper");
+
+        shipperService.assignShipperByAdmin("ORD-GD64A-UNASSIGNED", userS2.getId(), null);
+        assertEquals(1, notificationRepository.findAll().stream()
+                .filter(n -> "ORD-GD64A-UNASSIGNED".equals(n.getOrderId())
+                        && "OVERDUE_ALERT".equals(n.getType())
+                        && "0990640004".equals(n.getRecipientPhone())
+                        && n.getRecipientRole() == null).count(),
+                "Khi admin phân công đơn đã quá hạn, shipper mới phải nhận thông báo riêng");
     }
 
     // ------------------------------------------------------------------ tiện ích

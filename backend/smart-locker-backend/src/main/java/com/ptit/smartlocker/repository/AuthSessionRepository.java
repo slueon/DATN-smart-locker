@@ -19,6 +19,12 @@ public interface AuthSessionRepository extends JpaRepository<AuthSession, Long> 
 
     Optional<AuthSession> findByToken(String token);
 
+    boolean existsByUser_IdAndRevokedFalseAndExpiresAtAfter(Long userId, LocalDateTime now);
+
+    @Modifying(flushAutomatically = true)
+    @Query(value = "delete from auth_sessions where user_id = :userId", nativeQuery = true)
+    int deleteAllByUserId(@Param("userId") Long userId);
+
     /**
      * Lấy session còn sống: chưa revoked và chưa hết hạn.
      * Dùng một truy vấn để filter không phải tự so sánh thời gian sau khi nạp entity.
@@ -26,6 +32,8 @@ public interface AuthSessionRepository extends JpaRepository<AuthSession, Long> 
     @Query("select s from AuthSession s join fetch s.user "
             + "where s.token = :token and s.revoked = false and s.expiresAt > :now")
     Optional<AuthSession> findActiveByToken(@Param("token") String token, @Param("now") LocalDateTime now);
+
+    void deleteByUser_Id(Long userId);
 
     /** Dọn phiên hết hạn (chưa bật scheduler đợt này — xem R4 trong plan). */
     @Modifying

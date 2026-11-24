@@ -18,6 +18,13 @@ public interface CompartmentRepository extends JpaRepository<Compartment, Intege
     List<Compartment> findByLocker_LockerIdAndSizeAndStatus(String lockerId, String size, String status);
     List<Compartment> findByLocker_LockerIdAndStatus(String lockerId, String status);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Compartment c WHERE c.locker.lockerId = :lockerId AND c.compIndex = :compIndex")
+    Optional<Compartment> findWithLockByLockerIdAndCompIndex(
+            @Param("lockerId") String lockerId,
+            @Param("compIndex") Integer compIndex
+    );
+
     /**
      * Khóa dòng bi quan (Pessimistic Write Lock - SELECT ... FOR UPDATE)
      * Ngăn chặn nhiều giao dịch cùng tranh chấp một ngăn tủ EMPTY

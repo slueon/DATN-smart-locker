@@ -118,7 +118,8 @@ public class SecurityConfig {
                 .requestMatchers("/error").permitAll()
 
                 // --- Công khai: phải đăng nhập được mới có token ---
-                .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/login/replace-session",
+                        "/api/auth/register").permitAll()
 
                 // --- Swagger / OpenAPI ---
                 // Mặc định TẮT (app.swagger.enabled=false) → CHẶN HẲN, kể cả khi có token.
@@ -205,12 +206,9 @@ public class SecurityConfig {
                         .hasRole("SHIPPER")
                 // T3: đặt trước ngăn. Thiếu 3 dòng này là 403 vì anyRequest().denyAll() ở dưới.
                 .requestMatchers(HttpMethod.GET, "/api/shipper/orders/pending").hasRole("SHIPPER")
+                .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/claim").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.DELETE, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
-                // GĐ11 — shipper tự chọn tủ. CHỈ SHIPPER: ADMIN đã có công cụ bảo trì riêng, còn
-                // mở cho CUSTOMER thì khách tự chốt tủ hộ shipper (trái mô hình mới).
-                .requestMatchers(HttpMethod.GET, "/api/shipper/suggest-lockers").hasRole("SHIPPER")
-                .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/assign-locker").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.GET, "/api/shipper/overdue-orders").hasAnyRole("SHIPPER", "ADMIN")
                 // GĐ51 — TẠO đơn quá hạn để demo/thử luồng thu hồi. CHỈ SHIPPER: đây là công cụ của
                 // nghiệp vụ thu hồi, mà GĐ41 đã chốt "quyền thu hồi chỉ có tài khoản shipper".
@@ -240,6 +238,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/notifications").authenticated()
                 .requestMatchers(HttpMethod.POST,
                         "/api/notifications/*/read", "/api/notifications/read-all").authenticated()
+                .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
 
                 // --- Mặc định đóng ---
                 .anyRequest().denyAll());

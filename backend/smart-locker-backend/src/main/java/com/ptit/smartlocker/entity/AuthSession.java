@@ -16,7 +16,8 @@ import java.time.LocalDateTime;
  * TokenAuthFilter sẽ tra bảng này ở mỗi request để dựng SecurityContext.
  *
  * Vòng đời: createdAt -> expiresAt (TTL 8 giờ). revoked = true nghĩa là đã
- * bị thu hồi trước hạn; đợt này chưa có endpoint revoke (xem R6 trong plan).
+ * bị thu hồi trước hạn. Mỗi tài khoản chỉ được có một phiên còn hiệu lực và endpoint logout sẽ
+ * xóa phiên hiện tại.
  */
 @Entity
 @Table(

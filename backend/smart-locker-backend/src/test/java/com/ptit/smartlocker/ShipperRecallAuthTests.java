@@ -4,10 +4,12 @@ import com.ptit.smartlocker.entity.Compartment;
 import com.ptit.smartlocker.entity.Locker;
 import com.ptit.smartlocker.entity.Order;
 import com.ptit.smartlocker.entity.ShipperIdentityToken;
+import com.ptit.smartlocker.entity.User;
 import com.ptit.smartlocker.repository.CompartmentRepository;
 import com.ptit.smartlocker.repository.LockerRepository;
 import com.ptit.smartlocker.repository.OrderRepository;
 import com.ptit.smartlocker.repository.ShipperIdentityTokenRepository;
+import com.ptit.smartlocker.repository.UserRepository;
 import com.ptit.smartlocker.service.ShipperService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -48,8 +50,10 @@ class ShipperRecallAuthTests {
     @Autowired private CompartmentRepository compartmentRepository;
     @Autowired private OrderRepository orderRepository;
     @Autowired private ShipperIdentityTokenRepository tokenRepository;
+    @Autowired private UserRepository userRepository;
 
     private Order order;
+    private User otherShipper;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +62,9 @@ class ShipperRecallAuthTests {
                 .orElseThrow(() -> new AssertionError("Seed phải có ngăn #1"));
         comp.setStatus("OCCUPIED");
         compartmentRepository.save(comp);
+        otherShipper = userRepository.save(User.builder()
+                .username("shipper-khac").password("x").fullName("Shipper khác")
+                .phone("0912345099").role("SHIPPER").build());
 
         order = orderRepository.save(Order.builder()
                 .orderId("ORD-GD41-OVERDUE")
@@ -70,6 +77,7 @@ class ShipperRecallAuthTests {
                 .status("OVERDUE")
                 .totalAmount(BigDecimal.valueOf(50000))
                 .productName("Kiện test GĐ41")
+                .assignedShipper(userRepository.findByUsername("shipper").orElseThrow())
                 .build());
 
         LocalDateTime now = LocalDateTime.now();
@@ -85,7 +93,7 @@ class ShipperRecallAuthTests {
                 .isVerified(false).build());
         // token của SHIPPER KHÁC, đã quét
         tokenRepository.save(ShipperIdentityToken.builder()
-                .shipperId("shipper-khac").dynamicToken(TOKEN_OTHER)
+                .shipperId(otherShipper.getUsername()).dynamicToken(TOKEN_OTHER)
                 .createdAt(now).expiredAt(now.plusMinutes(5))
                 .isVerified(true).lockerId(LOCKER).build());
     }
@@ -140,6 +148,43 @@ class ShipperRecallAuthTests {
                 "Message: " + ex.getMessage());
         assertEquals("OVERDUE", orderRepository.findById("ORD-GD41-OVERDUE").orElseThrow().getStatus(),
                 "Đơn phải còn OVERDUE — không được thu hồi hộ người khác");
+    }
+
+    @Test
+    @DisplayName("Shipper khác không được thu hồi đơn dù QR của họ đã xác thực")
+    void chiShipperDuocPhanCongMoiDuocThuHoi() {
+        assertThrows(AccessDeniedException.class,
+                () -> shipperService.recallOverduePackage("ORD-GD41-OVERDUE", TOKEN_OTHER,
+                        otherShipper.getUsername()));
+        assertEquals("OVERDUE", orderRepository.findById("ORD-GD41-OVERDUE").orElseThrow().getStatus());
+    }
+
+    @Test
+    @DisplayName("Danh sách quá hạn chỉ trả đơn được phân công cho đúng shipper")
+    void danhSachQuaHanChiTraDonDuocPhanCong() {
+        Locker locker = lockerRepository.findById(LOCKER).orElseThrow();
+        Compartment otherCompartment = compartmentRepository
+                .findByLocker_LockerIdAndCompIndex(LOCKER, 2).orElseThrow();
+        orderRepository.save(Order.builder()
+                .orderId("ORD-GD41-OTHER")
+                .customerName("Khách khác")
+                .customerPhone("0912345677")
+                .deliveryType("LOCKER")
+                .locker(locker)
+                .compartment(otherCompartment)
+                .expectedDate(LocalDate.now())
+                .status("OVERDUE")
+                .totalAmount(BigDecimal.ZERO)
+                .assignedShipper(otherShipper)
+                .build());
+
+        var currentShipperOrders = shipperService.getOverdueOrders(null, "shipper");
+        var otherShipperOrders = shipperService.getOverdueOrders(null, otherShipper.getUsername());
+
+        assertTrue(currentShipperOrders.stream().anyMatch(o -> "ORD-GD41-OVERDUE".equals(o.getOrderId())));
+        assertFalse(currentShipperOrders.stream().anyMatch(o -> "ORD-GD41-OTHER".equals(o.getOrderId())));
+        assertTrue(otherShipperOrders.stream().anyMatch(o -> "ORD-GD41-OTHER".equals(o.getOrderId())));
+        assertFalse(otherShipperOrders.stream().anyMatch(o -> "ORD-GD41-OVERDUE".equals(o.getOrderId())));
     }
 
     @Test

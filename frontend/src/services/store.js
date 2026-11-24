@@ -208,10 +208,11 @@ export const store = {
     return [];
   },
 
-  // Tạo thêm 1 đơn hàng chờ nạp cho tài khoản Đoàn Viết Hoàng gửi về Tủ KTX A1 (LOCKER_HN_01)
-  generateSamplePendingOrder: (customLockerId = 'LOCKER_HN_01') => {
+  // Tạo đơn mẫu theo khách hàng và tủ được người dùng chọn trên màn shipper.
+  generateSamplePendingOrder: (customLockerId, customer = null) => {
     const lockers = store.getLockers();
-    const targetLocker = lockers.find((l) => l.lockerId === 'LOCKER_HN_01') || lockers[0];
+    const targetLocker = lockers.find((l) => l.lockerId === customLockerId)
+      || (customLockerId ? { lockerId: customLockerId, name: 'Tủ đã chọn', address: '' } : lockers[0]);
 
     const sampleProducts = [
       { name: 'Áo Hoodie PTIT Sinh Viên 2026', price: 280000, size: 'S', comp: 1 },
@@ -228,8 +229,8 @@ export const store = {
 
     const newOrder = {
       orderId: randId,
-      customerName: 'Đoàn Viết Hoàng',
-      customerPhone: '0988123456',
+      customerName: customer?.fullName || '',
+      customerPhone: customer?.phone || '',
       productName: randProd.name,
       productPrice: randProd.price,
       deliveryType: 'LOCKER',
@@ -783,7 +784,7 @@ export const store = {
       // Gắn token phiên đăng nhập — backend đã bật xác thực, /api/mqtt/command chỉ cho ADMIN.
       let token = null;
       try {
-        const rawUser = localStorage.getItem('smart_locker_user');
+        const rawUser = sessionStorage.getItem('smart_locker_user');
         if (rawUser) {
           const parsed = JSON.parse(rawUser);
           token = parsed && parsed.token ? parsed.token : null;
