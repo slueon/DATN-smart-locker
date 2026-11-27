@@ -14,6 +14,7 @@ export default function LoginPage({ onLoginSuccess }) {
   const [tab, setTab] = useState('login'); // 'login' | 'register'
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [canReplaceSession, setCanReplaceSession] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
   // Login form
@@ -27,64 +28,71 @@ export default function LoginPage({ onLoginSuccess }) {
   const [regPassword, setRegPassword] = useState('');
   const [regShowPass, setRegShowPass] = useState(false);
 
+  const showLoginError = (message) => {
+    const error = message || 'Đăng nhập thất bại.';
+    setErrorMsg(error);
+    setCanReplaceSession(error.toLowerCase().includes('đang đăng nhập trên một phiên khác'));
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
+    setCanReplaceSession(false);
     try {
       const res = await authApi.login({ username: loginUser, password: loginPass });
       if (res.data?.success) {
         onLoginSuccess(res.data.data);
         return;
       }
+      showLoginError(res.data?.message);
     } catch (err) {
-      // Fallback demo credentials
-      if ((loginUser === 'khachhang' || loginUser === '0988123456') && loginPass === '123456') {
-        onLoginSuccess({ id: 3, username: 'khachhang', fullName: 'Đoàn Viết Hoàng', phone: '0988123456', role: 'CUSTOMER' });
-        return;
-      }
-      if ((loginUser === 'shipper' || loginUser === '0900000002') && loginPass === 'shipper123') {
-        onLoginSuccess({ id: 2, username: 'shipper', fullName: 'Nguyễn Văn Shipper PTIT', phone: '0900000002', role: 'SHIPPER' });
-        return;
-      }
-      if ((loginUser === 'admin' || loginUser === '0900000001') && loginPass === 'admin123') {
-        onLoginSuccess({ id: 1, username: 'admin', fullName: 'Quản Trị Viên Hệ Thống', phone: '0900000001', role: 'ADMIN' });
-        return;
-      }
-      setErrorMsg(err.response?.data?.message || 'Tên đăng nhập hoặc mật khẩu không chính xác!');
+      showLoginError(err.response?.data?.message || 'Không thể kết nối máy chủ để xác thực tài khoản.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleQuickLogin = async (u, p) => {
+    setLoginUser(u);
+    setLoginPass(p);
     setLoading(true);
     setErrorMsg('');
+    setCanReplaceSession(false);
     try {
       const res = await authApi.login({ username: u, password: p });
       if (res.data?.success) {
         onLoginSuccess(res.data.data);
         return;
       }
+      showLoginError(res.data?.message);
     } catch (err) {
-      console.warn('Backend offline, using demo fallback account:', err);
+      showLoginError(err.response?.data?.message || 'Không thể kết nối máy chủ để xác thực tài khoản.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReplaceSession = async () => {
+    if (!window.confirm('Thao tác này sẽ đăng xuất phiên cũ (nếu còn tồn tại). Bạn có muốn tiếp tục không?')) {
+      return;
     }
 
-    let fallbackUser = null;
-    if (u === 'khachhang') {
-      fallbackUser = { id: 3, username: 'khachhang', fullName: 'Đoàn Viết Hoàng', phone: '0988123456', role: 'CUSTOMER' };
-    } else if (u === 'shipper') {
-      fallbackUser = { id: 2, username: 'shipper', fullName: 'Nguyễn Văn Shipper PTIT', phone: '0900000002', role: 'SHIPPER' };
-    } else if (u === 'admin') {
-      fallbackUser = { id: 1, username: 'admin', fullName: 'Quản Trị Viên Hệ Thống', phone: '0900000001', role: 'ADMIN' };
+    setLoading(true);
+    setErrorMsg('');
+    setCanReplaceSession(false);
+    try {
+      const res = await authApi.replaceSession({ username: loginUser, password: loginPass });
+      if (res.data?.success) {
+        onLoginSuccess(res.data.data);
+        return;
+      }
+      showLoginError(res.data?.message);
+    } catch (err) {
+      showLoginError(err.response?.data?.message || 'Không thể kết nối máy chủ để xác thực tài khoản.');
+    } finally {
+      setLoading(false);
     }
-
-    if (fallbackUser) {
-      onLoginSuccess(fallbackUser);
-    } else {
-      setErrorMsg('Đăng nhập thất bại!');
-    }
-    setLoading(false);
   };
 
   const handleRegister = async (e) => {
@@ -116,6 +124,7 @@ export default function LoginPage({ onLoginSuccess }) {
   const switchTab = (newTab) => {
     setTab(newTab);
     setErrorMsg('');
+    setCanReplaceSession(false);
     setLoginUser('');
     setLoginPass('');
     setRegFullName('');
@@ -180,6 +189,22 @@ export default function LoginPage({ onLoginSuccess }) {
             </div>
           )}
 
+          {tab === 'login' && canReplaceSession && (
+            <div className="mb-4">
+              <p className="mb-2 text-xs text-slate-600">
+                Nếu bạn không còn sử dụng được phiên cũ, hãy xác nhận để thu hồi phiên đó.
+              </p>
+              <button
+                type="button"
+                onClick={handleReplaceSession}
+                disabled={loading}
+                className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50"
+              >
+                Thu hồi phiên cũ và đăng nhập tại đây
+              </button>
+            </div>
+          )}
+
           {/* Login Tab */}
           {tab === 'login' && (
             <div className="space-y-5">
@@ -195,7 +220,10 @@ export default function LoginPage({ onLoginSuccess }) {
                       required
                       placeholder="VD: khachhang hoặc 0988123456"
                       value={loginUser}
-                      onChange={(e) => setLoginUser(e.target.value)}
+                      onChange={(e) => {
+                        setLoginUser(e.target.value);
+                        setCanReplaceSession(false);
+                      }}
                       className="w-full pl-10 pr-3.5 py-2.5 bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition"
                     />
                   </div>
@@ -217,7 +245,10 @@ export default function LoginPage({ onLoginSuccess }) {
                       required
                       placeholder="Nhập mật khẩu truy cập"
                       value={loginPass}
-                      onChange={(e) => setLoginPass(e.target.value)}
+                      onChange={(e) => {
+                        setLoginPass(e.target.value);
+                        setCanReplaceSession(false);
+                      }}
                       className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition"
                     />
                     <button

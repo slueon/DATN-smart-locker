@@ -15,14 +15,12 @@ const api = axios.create({
  *
  * Backend đã bật Spring Security: mọi endpoint (trừ /auth/login và /auth/register)
  * đều đòi `Authorization: Bearer <token>`. Token được cấp khi login và lưu trong
- * localStorage.smart_locker_user.token (do LoginPage lưu nguyên object user trả về).
+ * sessionStorage.smart_locker_user.token để mỗi tab có phiên riêng.
  *
  * Hai điều bắt buộc, nếu làm sai sẽ gây lỗi rất khó hiểu cho người dùng:
  *
- * 1. KHÔNG có token thì KHÔNG được gọi API kèm vòng lặp đăng nhập. Nhánh fallback
- *    của LoginPage.jsx tạo user KHÔNG có token (khi backend lỗi); nếu request 401
- *    mà ta cứ xoá phiên + reload() thì sẽ thành vòng lặp reload vô hạn, người dùng
- *    thấy như "gõ đúng mật khẩu mà không vào được".
+ * 1. KHÔNG có token thì KHÔNG được gọi API kèm vòng lặp đăng nhập. Nếu request
+ *    401 mà ta cứ reload() thì người dùng có thể gặp vòng lặp tải lại vô hạn.
  *
  * 2. Chỉ điều hướng về trang đăng nhập MỘT LẦN bằng cờ `redirecting`, và không
  *    reload khi đường dẫn hiện tại đã là trang đăng nhập.
@@ -30,10 +28,10 @@ const api = axios.create({
 
 const USER_KEY = 'smart_locker_user';
 
-/** Đọc token phiên hiện tại từ localStorage. Không có thì trả null. */
+/** Đọc token phiên hiện tại của tab này. Không có thì trả null. */
 export const getAuthToken = () => {
   try {
-    const raw = localStorage.getItem(USER_KEY);
+    const raw = sessionStorage.getItem(USER_KEY);
     if (!raw) return null;
     const user = JSON.parse(raw);
     return user && user.token ? user.token : null;
@@ -44,6 +42,11 @@ export const getAuthToken = () => {
 
 /** Xoá phiên đăng nhập ở client. */
 export const clearAuthSession = () => {
+  try {
+    sessionStorage.removeItem(USER_KEY);
+  } catch {
+    /* sessionStorage bị chặn — bỏ qua */
+  }
   try {
     localStorage.removeItem(USER_KEY);
   } catch {
@@ -92,7 +95,7 @@ api.interceptors.response.use(
         redirecting = true;
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new Event('smart_locker_unauthorized'));
-          // Tải lại trang để App.jsx đọc lại localStorage (đã xoá) và hiện màn đăng nhập.
+          // Tải lại trang để App.jsx đọc lại sessionStorage (đã xoá) và hiện màn đăng nhập.
           window.location.reload();
         }
       }
@@ -105,9 +108,15 @@ api.interceptors.response.use(
 
 export const authApi = {
   login: (data) => api.post('/auth/login', data),
+  replaceSession: (data) => api.post('/auth/login/replace-session', data),
+  logout: () => api.post('/auth/logout'),
   register: (data) => api.post('/auth/register', data),
   createAccountByAdmin: (data) => api.post('/auth/admin/create-user', data),
   getUsers: (role) => api.get(`/auth/users${role ? `?role=${role}` : ''}`),
+  updateUserRole: (userId, role) =>
+    api.patch(`/auth/admin/users/${encodeURIComponent(userId)}/role`, { role }),
+  deleteUser: (userId) =>
+    api.delete(`/auth/admin/users/${encodeURIComponent(userId)}`),
 };
 
 export const productApi = {
@@ -146,6 +155,8 @@ export const shipperApi = {
   generateToken: () => api.post('/shipper/token/generate'),
   verifyToken: (lockerId, dynamicToken) => api.post('/shipper/token/verify', { lockerId, dynamicToken }),
   depositPackage: (data) => api.post('/shipper/deposit', data),
+  deletePendingOrder: (orderId) =>
+    api.delete(`/shipper/orders/${encodeURIComponent(orderId)}`),
   getOverdueOrders: (lockerId) => api.get(`/shipper/overdue-orders${lockerId ? `?lockerId=${lockerId}` : ''}`),
 
   /**
@@ -184,6 +195,8 @@ export const shipperApi = {
   // T3 — đặt trước ngăn trên web.
   getPendingOrders: (lockerId) =>
     api.get('/shipper/orders/pending' + (lockerId ? '?lockerId=' + encodeURIComponent(lockerId) : '')),
+  claimPendingOrder: (orderId) =>
+    api.post('/shipper/orders/' + encodeURIComponent(orderId) + '/claim'),
 
   /**
    * GĐ21 — danh sách khách hàng để shipper chọn khi tạo đơn hộ.
@@ -302,6 +315,13 @@ export const adminApi = {
    * `localStorage` và báo con số của trình duyệt — bấm xong CSDL không đổi gì.
    */
   scanOverdue: () => api.post('/admin/scan-overdue'),
+  getCustomers: () => api.get('/admin/customers'),
+  getShippers: () => api.get('/admin/shippers'),
+  createOrder: (data) => api.post('/admin/orders', data),
+  assignShipper: (orderId, data) =>
+    api.post(`/admin/orders/${encodeURIComponent(orderId)}/assign`, data),
+  deletePendingOrder: (orderId) =>
+    api.delete(`/admin/orders/${encodeURIComponent(orderId)}`),
 };
 
 export default api;

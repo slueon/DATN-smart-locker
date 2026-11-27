@@ -26,8 +26,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * GĐ54 — L1: đếm lần thử OTP sai phải được LƯU dù request ném lỗi. L2: gán lại đơn vào chính tủ
- * đang giữ ngăn phải giữ nguyên ngăn. KHÔNG @Transactional ở lớp: L1 chỉ lộ khi transaction của
+ * GĐ54 — L1: đếm lần thử OTP sai phải được LƯU dù request ném lỗi. L2: gán tủ không được tự giữ ngăn.
+ * KHÔNG @Transactional ở lớp: L1 chỉ lộ khi transaction của
  * service thật sự commit/rollback.
  */
 @SpringBootTest
@@ -104,8 +104,8 @@ class Gd54FixTests {
     }
 
     @Test
-    @DisplayName("GĐ54-L2: gán lại đơn vào CHÍNH tủ đang giữ ngăn (tủ đầy) → giữ nguyên ngăn, không 409")
-    void ganLaiCungTu() {
+    @DisplayName("Gán lại tủ sẽ nhả ngăn cũ và không tự giữ ngăn mới")
+    void ganLaiTuKhongDatTruocNgan() {
         Locker locker = lockerRepository.findById(LOCKER).orElseThrow();
         List<Compartment> all = compartmentRepository.findByLocker_LockerId(LOCKER);
         for (Compartment c : all) {
@@ -120,16 +120,14 @@ class Gd54FixTests {
                 .status("PENDING").totalAmount(BigDecimal.TEN).productName("p")
                 .locker(locker).compartment(giu).build());
 
-        shipperService.assignLocker(ORD_L2, LOCKER, null, 1);
+        shipperService.assignLocker(ORD_L2, LOCKER);
 
         Order sau = orderRepository.findById(ORD_L2).orElseThrow();
-        assertEquals(giu.getCompartmentId(), sau.getCompartment().getCompartmentId());
-        assertNotNull(sau.getReserveExpiresAt());
-        assertEquals("RESERVED",
+        assertNull(sau.getCompartment());
+        assertNull(sau.getShipperReservedAt());
+        assertNull(sau.getReserveExpiresAt());
+        assertEquals(LOCKER, sau.getLocker().getLockerId());
+        assertEquals("EMPTY",
                 compartmentRepository.findById(giu.getCompartmentId()).orElseThrow().getStatus());
-        // Yêu cầu ngăn khác không trống → vẫn 409.
-        int khac = all.get(1).getCompIndex();
-        assertThrows(BusinessException.class,
-                () -> shipperService.assignLocker(ORD_L2, LOCKER, khac, 1));
     }
 }

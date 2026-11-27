@@ -36,8 +36,10 @@ public class OrderController {
      * thuộc về advice, một nguồn duy nhất.
      */
     @PostMapping("/checkout")
-    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> checkout(@RequestBody OrderDTO.CheckoutRequest request) {
-        OrderDTO.OrderResponse response = orderService.createOrder(request);
+    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> checkout(@RequestBody OrderDTO.CheckoutRequest request,
+            Authentication authentication) {
+        OrderDTO.OrderResponse response = orderService.createOrder(request,
+                authentication != null ? authentication.getName() : null);
         return ResponseEntity.ok(ApiResponse.ok("Đặt hàng thành công!", response));
     }
 

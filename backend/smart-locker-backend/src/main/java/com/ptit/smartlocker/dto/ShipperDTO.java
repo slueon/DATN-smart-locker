@@ -178,31 +178,20 @@ public class ShipperDTO {
         }
     }
 
-    /**
-     * GĐ11 — shipper chốt tủ cho đơn. {@code compartmentIndex} để trống thì backend tự chọn ngăn
-     * trống phù hợp cỡ kiện.
-     */
+    /** Request gán tủ; các trường đặt ngăn cũ được giữ để tương thích nhưng không còn sử dụng. */
     @Getter
     @Setter
     @Builder
     public static class AssignLockerRequest {
         private String lockerId;
         private Integer compartmentIndex;
-        /**
-         * GĐ23 — số giờ giữ chỗ shipper chọn ở luồng CHỌN TỦ: <b>chỉ 1 hoặc 2</b>, bỏ trống = 2.
-         *
-         * <p>Trước GĐ23 luồng này ghi {@code shipper_reserved_at} mà không ghi hạn, nên mọi đơn
-         * chọn tủ đều bị khoá cứng 120 phút và không ai chọn được 1 giờ — trái yêu cầu người dùng.
-         */
+        /** @deprecated Đặt ngăn qua {@code ReserveRequest}, không qua gán tủ. */
         private Integer reserveHours;
 
         public AssignLockerRequest() {
         }
 
-        /**
-         * Constructor đủ field — {@code @Builder} của Lombok cần bản bao trùm MỌI field (đã dính lỗi
-         * này ở GĐ21 khi thêm {@code reserveHours} vào {@code ReserveRequest}).
-         */
+        /** Constructor giữ tương thích với các client cũ. */
         public AssignLockerRequest(String lockerId, Integer compartmentIndex, Integer reserveHours) {
             this.lockerId = lockerId;
             this.compartmentIndex = compartmentIndex;
@@ -243,6 +232,69 @@ public class ShipperDTO {
         public CreateOverdueOrderRequest(String lockerId, String customerUsername) {
             this.lockerId = lockerId;
             this.customerUsername = customerUsername;
+        }
+    }
+
+    @Getter
+    @Setter
+    @Builder
+    public static class CreateOrderByAdminRequest {
+        private String customerUsername;
+        private String lockerId;
+        private String productName;
+        private java.math.BigDecimal totalAmount;
+        private String paymentMethod;
+        private String paymentStatus;
+        private Long shipperUserId;
+        private String shipperUsername;
+
+        public CreateOrderByAdminRequest() {}
+
+        public CreateOrderByAdminRequest(String customerUsername, String lockerId, String productName,
+                                         java.math.BigDecimal totalAmount, String paymentMethod,
+                                         String paymentStatus, Long shipperUserId, String shipperUsername) {
+            this.customerUsername = customerUsername;
+            this.lockerId = lockerId;
+            this.productName = productName;
+            this.totalAmount = totalAmount;
+            this.paymentMethod = paymentMethod;
+            this.paymentStatus = paymentStatus;
+            this.shipperUserId = shipperUserId;
+            this.shipperUsername = shipperUsername;
+        }
+    }
+
+    @Getter
+    @Setter
+    @Builder
+    public static class AssignShipperRequest {
+        private Long shipperUserId;
+        private String shipperUsername;
+
+        public AssignShipperRequest() {}
+
+        public AssignShipperRequest(Long shipperUserId, String shipperUsername) {
+            this.shipperUserId = shipperUserId;
+            this.shipperUsername = shipperUsername;
+        }
+    }
+
+    @Getter
+    @Setter
+    @Builder
+    public static class ShipperOptionResponse {
+        private Long userId;
+        private String username;
+        private String fullName;
+        private String phone;
+
+        public ShipperOptionResponse() {}
+
+        public ShipperOptionResponse(Long userId, String username, String fullName, String phone) {
+            this.userId = userId;
+            this.username = username;
+            this.fullName = fullName;
+            this.phone = phone;
         }
     }
 }

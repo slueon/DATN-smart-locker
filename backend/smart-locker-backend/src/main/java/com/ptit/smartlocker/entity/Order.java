@@ -18,7 +18,9 @@ import java.time.LocalDateTime;
         // file SQL sẽ không còn mô tả đúng schema thật.
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_orders_tracking",
-                columnNames = "tracking_code")
+                columnNames = "tracking_code"),
+        indexes = @Index(name = "idx_orders_assigned_shipper_status",
+                columnList = "assigned_shipper_id, status")
 )
 @Getter
 @Setter
@@ -84,6 +86,17 @@ public class Order {
                 depositedAt, expiryDeadline, status, totalAmount, paymentMethod, paymentStatus,
                 createdAt, productName, trackingCode, shipperReservedAt);
         this.reserveExpiresAt = reserveExpiresAt;
+    }
+
+    public Order(String orderId, String customerName, String customerPhone, String deliveryType,
+                 Locker locker, Compartment compartment, LocalDate expectedDate, LocalDateTime depositedAt,
+                 LocalDateTime expiryDeadline, String status, BigDecimal totalAmount, String paymentMethod,
+                 String paymentStatus, LocalDateTime createdAt, String productName, String trackingCode,
+                 LocalDateTime shipperReservedAt, LocalDateTime reserveExpiresAt, User assignedShipper) {
+        this(orderId, customerName, customerPhone, deliveryType, locker, compartment, expectedDate,
+                depositedAt, expiryDeadline, status, totalAmount, paymentMethod, paymentStatus,
+                createdAt, productName, trackingCode, shipperReservedAt, reserveExpiresAt);
+        this.assignedShipper = assignedShipper;
     }
 
     /** Constructor 17 tham số (không có {@code reserveExpiresAt}) — giữ cho code cũ. */
@@ -183,4 +196,8 @@ public class Order {
      */
     @Column(name = "reserve_expires_at")
     private LocalDateTime reserveExpiresAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assigned_shipper_id")
+    private User assignedShipper;
 }

@@ -55,6 +55,7 @@ async function viteUp() {
  * đúng cả khi dùng `run-logged.ps1` (ghi `backend-live.log`) hay `devctl up` (không ghi log).
  */
 async function mqttLine() {
+  if (!fs.existsSync(EVIDENCE)) return null;
   const candidates = fs
     .readdirSync(EVIDENCE)
     .filter((f) => /^backend.*\.log$/.test(f))
@@ -119,7 +120,7 @@ async function status() {
   return b && v;
 }
 
-function start(bg = true) {
+function start({ backend = true, vite = true, bg = true } = {}) {
   fs.mkdirSync(EVIDENCE, { recursive: true });
 
   // SỬA GĐ22 (minh bắt được): bản cũ dùng `stdio: 'ignore'` nên KHÔNG có log ở đâu cả.
@@ -134,19 +135,23 @@ function start(bg = true) {
   // ⇒ Kết luận: từ node thì không redirect được ổn định. Nên `up` ở đây chỉ BẬT (không log), còn
   // khi cần đọc log thì dùng `scripts/run-logged.ps1` do PowerShell chạy trực tiếp — cách đó đã
   // đo được file thật (26236 byte). Đừng thử redirect từ node lần nữa.
-  spawn('cmd.exe', ['/c', '.\\mvnw.cmd -o spring-boot:run'], {
-    cwd: BACKEND_DIR,
-    stdio: 'ignore',
-    detached: bg,
-    windowsHide: true,
-  }).unref();
+  if (backend) {
+    spawn('cmd.exe', ['/c', '.\\mvnw.cmd -o spring-boot:run'], {
+      cwd: BACKEND_DIR,
+      stdio: 'ignore',
+      detached: bg,
+      windowsHide: true,
+    }).unref();
+  }
 
-  spawn('cmd.exe', ['/c', 'npm.cmd run dev'], {
-    cwd: FRONTEND_DIR,
-    stdio: 'ignore',
-    detached: bg,
-    windowsHide: true,
-  }).unref();
+  if (vite) {
+    spawn('cmd.exe', ['/c', 'npm.cmd run dev'], {
+      cwd: FRONTEND_DIR,
+      stdio: 'ignore',
+      detached: bg,
+      windowsHide: true,
+    }).unref();
+  }
 
   console.log('  (không ghi log từ node — cần log thì chạy: powershell -File scripts\\run-logged.ps1)');
 }
@@ -159,7 +164,7 @@ async function up() {
     return status();
   }
   console.log('bật backend + vite...');
-  start();
+  start({ backend: !b, vite: !v });
   for (let i = 0; i < 60; i++) {
     await sleep(2000);
     const nb = await backendUp();
@@ -179,11 +184,27 @@ async function down() {
   console.log(p['8080'] || p['5173'] ? 'CẢNH BÁO: còn port mở' : 'đã tắt sạch');
 }
 
+async function stopBackend() {
+  console.log('dọn backend cũ trên port 8080...');
+  killPort(8080);
+  for (let i = 0; i < 15; i++) {
+    await sleep(500);
+    const p = portsListening();
+    if (!p['8080']) {
+      console.log('port 8080 đã trống');
+      return true;
+    }
+  }
+  console.log('CẢNH BÁO: port 8080 vẫn còn tiến trình');
+  return false;
+}
+
 const cmd = (process.argv[2] || 'status').toLowerCase();
 if (cmd === 'status') await status();
 else if (cmd === 'up') await up();
 else if (cmd === 'down') await down();
+else if (cmd === 'stop-backend') await stopBackend();
 else {
-  console.log('dùng: node scripts/devctl.mjs [status|up|down]');
+  console.log('dùng: node scripts/devctl.mjs [status|up|down|stop-backend]');
   process.exit(1);
 }

@@ -103,9 +103,37 @@ public class ShipperController {
      */
     @GetMapping("/orders/pending")
     public ResponseEntity<ApiResponse<List<OrderDTO.OrderResponse>>> getPendingOrders(
-            @RequestParam(required = false) String lockerId) {
-        List<OrderDTO.OrderResponse> response = shipperService.getPendingOrders(lockerId);
+            @RequestParam(required = false) String lockerId,
+            java.security.Principal principal) {
+        List<OrderDTO.OrderResponse> response =
+                shipperService.getPendingOrders(lockerId, principal.getName());
         return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách đơn chờ gửi thành công", response));
+    }
+
+    @PostMapping("/orders/{orderId}/claim")
+    public ResponseEntity<ApiResponse<Void>> claimPendingOrder(
+            @PathVariable String orderId,
+            java.security.Principal principal) {
+        try {
+            shipperService.claimPendingOrder(orderId, principal.getName());
+            return ResponseEntity.ok(ApiResponse.ok("Đã nhận đơn giao hàng.", null));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    /**
+     * Xoá đơn PENDING đã tạo nhầm. Không cho xoá đơn đã nạp hoặc đang xử lý.
+     */
+    @DeleteMapping("/orders/{orderId}")
+    public ResponseEntity<ApiResponse<Void>> deletePendingOrder(
+            @PathVariable String orderId, java.security.Principal principal) {
+        try {
+            shipperService.deletePendingOrder(orderId, principal.getName());
+            return ResponseEntity.ok(ApiResponse.ok("Đã xoá đơn " + orderId + ".", null));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
     }
 
     /**
@@ -120,24 +148,8 @@ public class ShipperController {
     }
 
     /**
-     * GĐ11 — shipper chốt tủ (và ngăn) giao cho đơn. Nhả ngăn cũ an toàn: nếu tủ đích hết ngăn,
-     * đơn giữ nguyên ngăn cũ (xem javadoc {@code ShipperService#assignLocker}).
+     * Gán tủ giao hàng cho đơn mà không giữ ngăn. Shipper đặt trước ngăn qua endpoint riêng.
      */
-    @PostMapping("/orders/{orderId}/assign-locker")
-    public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> assignLocker(
-            @PathVariable String orderId,
-            @RequestBody(required = false) ShipperDTO.AssignLockerRequest request) {
-        String lockerId = request != null ? request.getLockerId() : null;
-        Integer compartmentIndex = request != null ? request.getCompartmentIndex() : null;
-        // GĐ23 — thời hạn giữ chỗ (1|2 giờ, thiếu = 2) để luồng CHỌN TỦ cũng chọn được như
-        // `reserveCompartment`, thay vì bị khoá cứng 120 phút.
-        Integer reserveHours = request != null ? request.getReserveHours() : null;
-        OrderDTO.OrderResponse response =
-                shipperService.assignLocker(orderId, lockerId, compartmentIndex, reserveHours);
-        return ResponseEntity.ok(ApiResponse.ok(
-                "Đã chốt tủ " + response.getLockerName() + " cho đơn " + orderId + "!", response));
-    }
-
     /**
      * T3 — Đặt trước một ngăn cụ thể cho đơn PENDING (shipper chọn trên WEB, Q2).
      *
@@ -148,13 +160,15 @@ public class ShipperController {
     @PostMapping("/orders/{orderId}/reserve")
     public ResponseEntity<ApiResponse<OrderDTO.OrderResponse>> reserveCompartment(
             @PathVariable String orderId,
-            @RequestBody(required = false) OrderDTO.ReserveRequest request) {
+            @RequestBody(required = false) OrderDTO.ReserveRequest request,
+            java.security.Principal principal) {
         try {
             String trackingCode = request != null ? request.getTrackingCode() : null;
             Integer compartmentIndex = request != null ? request.getCompartmentIndex() : null;
             Integer reserveHours = request != null ? request.getReserveHours() : null;
             OrderDTO.OrderResponse response =
-                    shipperService.reserveCompartment(orderId, trackingCode, compartmentIndex, reserveHours);
+                    shipperService.reserveCompartment(orderId, trackingCode, compartmentIndex,
+                            reserveHours, principal.getName());
             return ResponseEntity.ok(ApiResponse.ok(
                     "Đặt trước ngăn " + response.getCompartmentIndex() + " cho đơn " + orderId + " thành công!",
                     response));
@@ -166,12 +180,13 @@ public class ShipperController {
     }
 
     /**
-     * T3 — Huỷ đặt trước, nhả ngăn về EMPTY và hoàn 1 slot.
+     * T3 — Huỷ đặt trước, nhả ngăn về EMPTY.
      */
     @DeleteMapping("/orders/{orderId}/reserve")
-    public ResponseEntity<ApiResponse<Void>> cancelReserve(@PathVariable String orderId) {
+    public ResponseEntity<ApiResponse<Void>> cancelReserve(
+            @PathVariable String orderId, java.security.Principal principal) {
         try {
-            shipperService.cancelReserve(orderId);
+            shipperService.cancelReserve(orderId, principal.getName());
             return ResponseEntity.ok(ApiResponse.ok(
                     "Đã huỷ đặt trước cho đơn " + orderId + " và nhả ngăn về trống.", null));
         } catch (IllegalArgumentException e) {
@@ -230,8 +245,10 @@ public class ShipperController {
      */
     @GetMapping("/overdue-orders")
     public ResponseEntity<ApiResponse<List<OrderDTO.OrderResponse>>> getOverdueOrders(
-            @RequestParam(required = false) String lockerId) {
-        List<OrderDTO.OrderResponse> response = shipperService.getOverdueOrders(lockerId);
+            @RequestParam(required = false) String lockerId,
+            java.security.Principal principal) {
+        List<OrderDTO.OrderResponse> response =
+                shipperService.getOverdueOrders(lockerId, principal.getName());
         return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách đơn hàng quá hạn thành công", response));
     }
 

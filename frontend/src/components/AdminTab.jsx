@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 // GĐ41 — bỏ `shipperApi` khỏi import: ADMIN không còn gọi API thu hồi (đã grep cả file, 0 chỗ dùng).
 import { authApi, lockerApi, adminApi, mqttApi } from '../services/api';
@@ -8,8 +9,8 @@ import { describeActor, actorBadgeClass } from '../utils/commandLogActor';
 import {
   Shield, BarChart3, Radio, AlertTriangle, Users, UserPlus,
   RefreshCw, CheckCircle2, AlertCircle, Key, Lock, Unlock,
-  DoorOpen, Activity, Calendar, Zap, Box, ArrowRight,
-  Check, Cpu, Sparkles, Layers, Search, ChevronRight
+  DoorOpen, Activity, Calendar, Zap, Box, Package, ArrowRight,
+  Check, Cpu, Sparkles, Layers, Search, ChevronRight, Wrench, Trash2
 } from 'lucide-react';
 
 const INITIAL_USERS = [
@@ -18,8 +19,9 @@ const INITIAL_USERS = [
   { id: 3, username: 'khachhang', fullName: 'Đoàn Viết Hoàng', phone: '0988123456', role: 'CUSTOMER' },
 ];
 
-export default function AdminTab() {
+export default function AdminTab({ currentUser }) {
   const [activeAdminSubTab, setActiveAdminSubTab] = useState('kpi'); // 'kpi', 'matrix', 'overdue', 'users', 'logs'
+  const [maintenanceResult, setMaintenanceResult] = useState(null);
 
   /**
    * GĐ7 — lịch sử mở tủ (`command_logs`) cho tab "Lịch sử mở tủ".
@@ -55,6 +57,21 @@ export default function AdminTab() {
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [userMsg, setUserMsg] = useState({ text: '', type: '' });
+  const [roleUpdatingId, setRoleUpdatingId] = useState(null);
+  const [pendingDeleteUser, setPendingDeleteUser] = useState(null);
+  const [deletingUserId, setDeletingUserId] = useState(null);
+  const [adminCustomers, setAdminCustomers] = useState([]);
+  const [adminShippers, setAdminShippers] = useState([]);
+  const [orderForm, setOrderForm] = useState({
+    customerUsername: '',
+    lockerId: '',
+    shipperUserId: '',
+    productName: '',
+    totalAmount: '',
+  });
+  const [orderBusy, setOrderBusy] = useState(false);
+  const [orderMessage, setOrderMessage] = useState(null);
+  const [assigningOrderId, setAssigningOrderId] = useState(null);
 
   // Cron Job state
   const [cronRunning, setCronRunning] = useState(false);
@@ -244,10 +261,12 @@ export default function AdminTab() {
 
   useEffect(() => {
     refreshAllData();
+    const refreshTimer = setInterval(refreshAllData, 10000);
     const handleUpdate = () => refreshAllData();
     window.addEventListener('smart_locker_store_updated', handleUpdate);
     window.addEventListener('smart_locker_lockers_updated', handleUpdate);
     return () => {
+      clearInterval(refreshTimer);
       window.removeEventListener('smart_locker_store_updated', handleUpdate);
       window.removeEventListener('smart_locker_lockers_updated', handleUpdate);
     };
@@ -256,6 +275,110 @@ export default function AdminTab() {
   useEffect(() => {
     fetchUsers();
   }, [filterRole]);
+
+  useEffect(() => {
+    if (activeAdminSubTab !== 'orders' && activeAdminSubTab !== 'overdue') return;
+    Promise.allSettled([adminApi.getCustomers(), adminApi.getShippers()])
+      .then(([customerResult, shipperResult]) => {
+        setAdminCustomers(customerResult.status === 'fulfilled'
+          ? (customerResult.value?.data?.data || []) : []);
+        setAdminShippers(shipperResult.status === 'fulfilled'
+          ? (shipperResult.value?.data?.data || []) : []);
+      });
+  }, [activeAdminSubTab]);
+
+  const handleCreateAdminOrder = async (event) => {
+    event.preventDefault();
+    setOrderMessage(null);
+    if (!orderForm.customerUsername || !orderForm.lockerId) {
+      setOrderMessage({ type: 'error', text: 'Chọn khách hàng và tủ đích.' });
+      return;
+    }
+    setOrderBusy(true);
+    try {
+      const res = await adminApi.createOrder({
+        customerUsername: orderForm.customerUsername,
+        lockerId: orderForm.lockerId,
+        shipperUserId: orderForm.shipperUserId ? Number(orderForm.shipperUserId) : null,
+        productName: orderForm.productName.trim(),
+        totalAmount: orderForm.totalAmount ? Number(orderForm.totalAmount) : 0,
+        paymentMethod: 'ONLINE_VIETQR',
+        paymentStatus: 'PAID',
+      });
+      if (!res?.data?.success) {
+        setOrderMessage({ type: 'error', text: res?.data?.message || 'Không thể tạo đơn.' });
+        return;
+      }
+      setOrderMessage({
+        type: 'success',
+        text: `Đã tạo ${res.data.data.orderId}${res.data.data.assignedShipperUsername
+          ? ` và phân công cho ${res.data.data.assignedShipperUsername}.`
+          : '. Đơn chưa được phân công.'}`,
+      });
+      setOrderForm((prev) => ({
+        ...prev,
+        productName: '',
+        totalAmount: '',
+      }));
+      refreshAllData();
+    } catch (err) {
+      setOrderMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không thể tạo đơn.',
+      });
+    } finally {
+      setOrderBusy(false);
+    }
+  };
+
+  const handleAssignShipper = async (orderId, shipperUserId) => {
+    if (!shipperUserId) return;
+    setAssigningOrderId(orderId);
+    setOrderMessage(null);
+    try {
+      const res = await adminApi.assignShipper(orderId, { shipperUserId: Number(shipperUserId) });
+      if (res?.data?.success) {
+        setOrderMessage({ type: 'success', text: `Đã phân công đơn ${orderId}.` });
+        refreshAllData();
+      } else {
+        setOrderMessage({ type: 'error', text: res?.data?.message || 'Không thể phân công.' });
+      }
+    } catch (err) {
+      setOrderMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không thể phân công đơn.',
+      });
+    } finally {
+      setAssigningOrderId(null);
+    }
+  };
+
+  const handleDeletePendingOrder = async (orderId) => {
+    setAssigningOrderId(orderId);
+    setOrderMessage(null);
+    try {
+      const res = await adminApi.deletePendingOrder(orderId);
+      if (res?.data?.success) {
+        setOrderMessage({ type: 'success', text: `Đã xoá đơn ${orderId}.` });
+        refreshAllData();
+      } else {
+        setOrderMessage({ type: 'error', text: res?.data?.message || 'Không thể xoá đơn.' });
+      }
+    } catch (err) {
+      setOrderMessage({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không thể xoá đơn.',
+      });
+    } finally {
+      setAssigningOrderId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!maintenanceResult) return undefined;
+    const timer = setTimeout(() => setMaintenanceResult(null), 5000);
+    return () => clearTimeout(timer);
+  }, [maintenanceResult]);
 
   const handleCreateAccount = async (e) => {
     e.preventDefault();
@@ -278,15 +401,69 @@ export default function AdminTab() {
         fetchUsers();
         return;
       }
-      setUserMsg({ text: res.data?.message || 'Không cấp được tài khoản. Vui lòng thử lại.', type: 'error' });
-    } catch (err) {
-      // GĐ75 (#1) — trước đây nhánh này tự chèn user giả vào danh sách và báo "thành công" dù
-      // backend từ chối (vd. trùng username). Nay báo đúng lỗi backend trả về, giữ nguyên form
-      // để admin sửa lại.
       setUserMsg({
-        text: err.response?.data?.message || 'Không kết nối được máy chủ, tài khoản CHƯA được tạo.',
+        text: res.data?.message || 'Máy chủ không tạo được tài khoản.',
         type: 'error',
       });
+    } catch (err) {
+      setUserMsg({
+        text: err?.response?.data?.message || err?.message || 'Không kết nối được máy chủ, tài khoản CHƯA được tạo.',
+        type: 'error',
+      });
+    }
+  };
+
+  const handleUpdateUserRole = async (user, role) => {
+    if (!user || role === user.role) return;
+    setUserMsg({ text: '', type: '' });
+    setRoleUpdatingId(user.id);
+    try {
+      const res = await authApi.updateUserRole(user.id, role);
+      if (!res.data?.success || !res.data?.data) {
+        setUserMsg({ text: res.data?.message || 'Máy chủ không cập nhật được vai trò.', type: 'error' });
+        return;
+      }
+
+      const updatedUser = { ...user, ...res.data.data };
+      setUsers((previous) => {
+        const updated = previous.map((item) => item.id === user.id ? updatedUser : item);
+        return filterRole && updatedUser.role !== filterRole
+          ? updated.filter((item) => item.id !== user.id)
+          : updated;
+      });
+      setUserMsg({ text: `Đã cập nhật vai trò tài khoản '${user.username}'.`, type: 'success' });
+    } catch (err) {
+      setUserMsg({
+        text: err?.response?.data?.message || err?.message || 'Không thể cập nhật vai trò.',
+        type: 'error',
+      });
+    } finally {
+      setRoleUpdatingId(null);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!pendingDeleteUser) return;
+    const user = pendingDeleteUser;
+    setUserMsg({ text: '', type: '' });
+    setDeletingUserId(user.id);
+    try {
+      const res = await authApi.deleteUser(user.id);
+      if (!res.data?.success) {
+        setUserMsg({ text: res.data?.message || 'Máy chủ không xóa được tài khoản.', type: 'error' });
+        return;
+      }
+
+      setUsers((previous) => previous.filter((item) => item.id !== user.id));
+      setPendingDeleteUser(null);
+      setUserMsg({ text: `Đã xóa tài khoản '${user.username}'. Lịch sử đơn hàng được giữ nguyên.`, type: 'success' });
+    } catch (err) {
+      setUserMsg({
+        text: err?.response?.data?.message || err?.message || 'Không thể xóa tài khoản.',
+        type: 'error',
+      });
+    } finally {
+      setDeletingUserId(null);
     }
   };
 
@@ -306,6 +483,7 @@ export default function AdminTab() {
   const [unlockTarget, setUnlockTarget] = useState(null); // { lockerId, compIndex }
   const [unlockResult, setUnlockResult] = useState(null); // { type: 'success'|'error', text }
   const [unlockBusyLocal, setUnlockBusyLocal] = useState(false);
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
 
   const handleForceUnlock = (lockerId, compIndex) => {
     // Bước 1: chỉ mở hộp xác nhận, KHÔNG gọi API (0 request).
@@ -331,6 +509,33 @@ export default function AdminTab() {
       });
     }
     setUnlockBusyLocal(false);
+  };
+
+  const requestMaintenance = async (lockerId, compIndex, lock) => {
+    setMaintenanceBusy(true);
+    setMaintenanceResult(null);
+    try {
+      const body = { lock, reasonCode: 'GIA_CO', note: null };
+      if (compIndex != null) {
+        await lockerApi.setCompartmentMaintenance(lockerId, compIndex, body);
+      } else {
+        await lockerApi.setLockerMaintenance(lockerId, body);
+      }
+      setMaintenanceResult({
+        type: 'success',
+        text: compIndex != null
+          ? `Đã ${lock ? 'khoá' : 'mở khoá'} ngăn #${compIndex} của ${lockerId}.`
+          : `Đã ${lock ? 'khoá' : 'mở khoá'} toàn tủ ${lockerId}.`,
+      });
+      await refreshAllData();
+    } catch (err) {
+      setMaintenanceResult({
+        type: 'error',
+        text: err?.response?.data?.message || 'Không thực hiện được bảo trì.',
+      });
+    } finally {
+      setMaintenanceBusy(false);
+    }
   };
 
   /**
@@ -441,6 +646,7 @@ export default function AdminTab() {
           { id: 'matrix', label: 'Sơ đồ ngăn', icon: Radio },
           { id: 'overdue', label: 'Quá hạn', icon: AlertTriangle },
           { id: 'users', label: 'Người dùng', icon: Users },
+          { id: 'orders', label: 'Đơn & phân công', icon: Package },
           // GĐ7 — xem lại lịch sử mở tủ: ai mở, tủ nào, ngăn nào, lúc nào.
           { id: 'logs', label: 'Lịch sử mở tủ', icon: Key },
         ].map((tab) => {
@@ -616,6 +822,164 @@ export default function AdminTab() {
         </div>
       )}
 
+      {/* TAB ĐƠN & PHÂN CÔNG */}
+      {activeAdminSubTab === 'orders' && (
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+          <form onSubmit={handleCreateAdminOrder} className="xl:col-span-4 liquid-glass-card rounded-2xl border border-white/90 p-5 shadow-md space-y-3">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Package className="w-4 h-4 text-blue-600" />
+              Tạo đơn & phân công
+            </h3>
+
+            {orderMessage && (
+              <div className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                orderMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}>
+                {orderMessage.text}
+              </div>
+            )}
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-bold text-slate-700">Khách hàng</span>
+              <select
+                value={orderForm.customerUsername}
+                onChange={(e) => setOrderForm((prev) => ({ ...prev, customerUsername: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+              >
+                <option value="">Chọn khách hàng</option>
+                {adminCustomers.map((customer) => (
+                  <option key={customer.userId} value={customer.username}>
+                    {customer.fullName} · {customer.phone}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-bold text-slate-700">Tủ đích</span>
+              <select
+                value={orderForm.lockerId}
+                onChange={(e) => setOrderForm((prev) => ({ ...prev, lockerId: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+              >
+                <option value="">Chọn tủ</option>
+                {lockers.map((locker) => (
+                  <option key={locker.lockerId} value={locker.lockerId}>
+                    {locker.name || locker.lockerId}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-bold text-slate-700">Shipper phụ trách</span>
+              <select
+                value={orderForm.shipperUserId}
+                onChange={(e) => setOrderForm((prev) => ({ ...prev, shipperUserId: e.target.value }))}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+              >
+                <option value="">Chưa phân công</option>
+                {adminShippers.map((shipper) => (
+                  <option key={shipper.userId} value={shipper.userId}>
+                    {shipper.fullName} · {shipper.username}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-bold text-slate-700">Tên bưu kiện</span>
+              <input
+                value={orderForm.productName}
+                onChange={(e) => setOrderForm((prev) => ({ ...prev, productName: e.target.value }))}
+                placeholder="VD: Pin sạc dự phòng"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+              />
+            </label>
+
+            <label className="block space-y-1">
+              <span className="text-[11px] font-bold text-slate-700">Tổng tiền</span>
+              <input
+                type="number"
+                min="0"
+                value={orderForm.totalAmount}
+                onChange={(e) => setOrderForm((prev) => ({ ...prev, totalAmount: e.target.value }))}
+                placeholder="0"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={orderBusy}
+              className="w-full rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {orderBusy ? 'Đang tạo…' : 'Tạo đơn'}
+            </button>
+          </form>
+
+          <div className="xl:col-span-8 liquid-glass-card rounded-2xl border border-white/90 p-5 shadow-md">
+            <h3 className="mb-3 text-sm font-bold text-slate-900">Đơn chờ giao & phân công</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-slate-200 text-[10px] uppercase text-slate-600">
+                  <tr>
+                    <th className="py-2 pr-3">Đơn</th>
+                    <th className="py-2 pr-3">Khách hàng</th>
+                    <th className="py-2 pr-3">Tủ</th>
+                    <th className="py-2 pr-3">Shipper</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.filter((order) => order.status === 'PENDING' || order.status === 'PENDING_OPENED').map((order) => (
+                    <tr key={order.orderId} className="border-b border-slate-100">
+                      <td className="py-3 pr-3 font-mono font-bold text-blue-700">{order.orderId}</td>
+                      <td className="py-3 pr-3">
+                        <div className="font-bold text-slate-900">{order.customerName}</div>
+                        <div className="font-mono text-slate-500">{order.customerPhone}</div>
+                      </td>
+                      <td className="py-3 pr-3">{order.lockerName || order.lockerId || 'Chưa gán tủ'}</td>
+                      <td className="py-3">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={order.assignedShipperUsername || ''}
+                            onChange={(e) => {
+                              const selected = adminShippers.find((shipper) => shipper.username === e.target.value);
+                              if (selected) handleAssignShipper(order.orderId, selected.userId);
+                            }}
+                            disabled={assigningOrderId === order.orderId}
+                            className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px]"
+                          >
+                            <option value="">Chưa phân công</option>
+                            {adminShippers.map((shipper) => (
+                              <option key={shipper.userId} value={shipper.username}>
+                                {shipper.fullName}
+                              </option>
+                            ))}
+                          </select>
+                          {(order.status === 'PENDING' || order.status === 'PENDING_OPENED') && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePendingOrder(order.orderId)}
+                              disabled={assigningOrderId === order.orderId}
+                              className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                            >
+                              Xoá
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TAB 2: LOCKER MATRIX (SƠ ĐỒ MA TRẬN TỦ) */}
       {activeAdminSubTab === 'matrix' && (
         <div className="space-y-5">
@@ -670,6 +1034,25 @@ export default function AdminTab() {
                     <span className="text-[10px] text-slate-600 font-mono">
                       {getLockerHealth(locker).rel}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => requestMaintenance(
+                        locker.lockerId,
+                        null,
+                        String(locker.connectionStatus || '').toUpperCase() !== 'MAINTENANCE'
+                      )}
+                      disabled={maintenanceBusy}
+                      className={`mt-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer disabled:opacity-60 flex items-center gap-1 ${
+                        String(locker.connectionStatus || '').toUpperCase() === 'MAINTENANCE'
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                          : 'border-slate-300 bg-white text-slate-700'
+                      }`}
+                    >
+                      <Wrench className="w-3 h-3" />
+                      {String(locker.connectionStatus || '').toUpperCase() === 'MAINTENANCE'
+                        ? 'Mở khoá toàn tủ'
+                        : 'Bảo trì toàn tủ'}
+                    </button>
                   </div>
                 </div>
 
@@ -764,6 +1147,25 @@ export default function AdminTab() {
                             <Unlock className="w-3 h-3 text-rose-500" /> Mở khẩn cấp
                           </button>
 
+                          <button
+                            type="button"
+                            onClick={() => requestMaintenance(
+                              locker.lockerId,
+                              comp.compIndex,
+                              comp.status !== 'OUT_OF_SERVICE'
+                            )}
+                            disabled={comp.status === 'OCCUPIED' || comp.status === 'OVERDUE' || maintenanceBusy}
+                            title={comp.status === 'OCCUPIED' || comp.status === 'OVERDUE'
+                              ? 'Thu hồi hoặc giải phóng ngăn trước khi bảo trì'
+                              : comp.status === 'OUT_OF_SERVICE'
+                                ? 'Mở khoá bảo trì ngăn này'
+                                : 'Khoá ngăn để bảo trì'}
+                            className="mt-1 w-full text-[10px] font-bold py-1.5 px-2 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+                          >
+                            <Wrench className="w-3 h-3" />
+                            {comp.status === 'OUT_OF_SERVICE' ? 'Mở lại ngăn' : 'Bảo trì ngăn'}
+                          </button>
+
                           {/* GĐ13 — xác nhận 2 bước NGAY TẠI NGĂN, thay `window.confirm`.
                               Bấm "Mở khẩn cấp" chỉ mở hộp này (0 request). */}
                           {unlockTarget && unlockTarget.lockerId === locker.lockerId
@@ -809,6 +1211,20 @@ export default function AdminTab() {
         </div>
       )}
 
+      {activeAdminSubTab === 'matrix' && maintenanceResult && typeof document !== 'undefined' && createPortal(
+        <div
+          role="status"
+          className={`fixed top-5 right-5 z-[100000] max-w-sm rounded-xl border px-4 py-3 text-xs font-semibold shadow-xl ${
+            maintenanceResult.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}
+        >
+          {maintenanceResult.text}
+        </div>,
+        document.body
+      )}
+
       {/* TAB 3: OVERDUE ORDERS MANAGEMENT */}
       {activeAdminSubTab === 'overdue' && (
         <div className="space-y-5">
@@ -818,7 +1234,7 @@ export default function AdminTab() {
                 <AlertTriangle className="w-4 h-4 text-rose-600" /> Quản Lý Đơn Quá Hạn (24h)
               </h3>
               <p className="text-xs text-slate-600">
-                Quét và điều phối thu hồi bưu kiện quá hạn lưu kho 24h.
+                Quét đơn quá hạn và phân công rõ shipper phụ trách từng bưu kiện.
               </p>
             </div>
 
@@ -839,7 +1255,15 @@ export default function AdminTab() {
             </div>
           )}
 
-          {/* GĐ41 — khối `recallMsg` đã xoá: ADMIN không còn thao tác thu hồi. */}
+          {orderMessage && (
+            <div className={`p-3.5 border text-xs rounded-2xl ${
+              orderMessage.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}>
+              {orderMessage.text}
+            </div>
+          )}
 
           {overdueList.length === 0 ? (
             <div className="liquid-glass-card rounded-3xl border border-white/90 p-12 text-center shadow-md">
@@ -874,14 +1298,35 @@ export default function AdminTab() {
                       </p>
                     </div>
 
-                    {/* GĐ41 — ADMIN CHỈ ĐỌC: thay nút thu hồi bằng nhãn giải thích.
-                        User chốt: "quyền thu hồi chỉ có tài khoản shipper". Backend cũng đã
-                        chặn (`SecurityConfig` → `hasRole("SHIPPER")`), nên để nút lại chỉ tạo
-                        nút chết ra 403. */}
-                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-3 py-2 rounded-xl whitespace-nowrap">
-                      <Lock className="w-3.5 h-3.5" />
-                      Chỉ tài khoản Shipper được thu hồi
-                    </span>
+                    <div className="flex flex-col items-start sm:items-end gap-1.5">
+                      <label className="text-[10px] font-semibold text-slate-600" htmlFor={`assign-overdue-${ord.orderId}`}>
+                        Shipper thu hồi
+                      </label>
+                      <select
+                        id={`assign-overdue-${ord.orderId}`}
+                        value={ord.assignedShipperUsername || ''}
+                        onChange={(e) => {
+                          const selected = adminShippers.find((shipper) => shipper.username === e.target.value);
+                          if (selected) handleAssignShipper(ord.orderId, selected.userId);
+                        }}
+                        disabled={assigningOrderId === ord.orderId || adminShippers.length === 0}
+                        className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
+                      >
+                        <option value="">Chưa phân công</option>
+                        {adminShippers.map((shipper) => (
+                          <option key={shipper.userId} value={shipper.username}>
+                            {shipper.fullName} · {shipper.username}
+                          </option>
+                        ))}
+                      </select>
+                      {ord.assignedShipperUsername ? (
+                        <span className="text-[10px] text-emerald-700">
+                          Chỉ shipper này nhận thông báo và xử lý đơn
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-amber-700">Chưa shipper nào được giao</span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -903,7 +1348,9 @@ export default function AdminTab() {
               <div className={`p-3.5 rounded-2xl text-xs flex items-center gap-2 ${
                 userMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
               }`}>
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                {userMsg.type === 'success'
+                  ? <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  : <AlertCircle className="w-4 h-4 shrink-0" />}
                 <span>{userMsg.text}</span>
               </div>
             )}
@@ -1012,18 +1459,79 @@ export default function AdminTab() {
                     <th className="py-3 px-4">Số điện thoại</th>
                     <th className="py-3 px-4">Tên đăng nhập</th>
                     <th className="py-3 px-4">Vai trò</th>
+                    <th className="py-3 px-4">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/50 transition">
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-600">#{u.id}</td>
-                      <td className="py-3.5 px-4 font-bold text-slate-900">{getDisplayName(u)}</td>
-                      <td className="py-3.5 px-4 font-mono text-slate-600">{u.phone}</td>
-                      <td className="py-3.5 px-4 font-mono text-slate-800">{u.username}</td>
-                      <td className="py-3.5 px-4">{getRoleBadge(u.role)}</td>
-                    </tr>
-                  ))}
+                  {users.map((u) => {
+                    const isCurrentUser = currentUser?.username?.toLowerCase() === u.username?.toLowerCase();
+                    const isProtectedAccount = u.username?.toLowerCase() === 'admin';
+                    const isPendingDelete = pendingDeleteUser?.id === u.id;
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-50/50 transition">
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-600">#{u.id}</td>
+                        <td className="py-3.5 px-4 font-bold text-slate-900">{getDisplayName(u)}</td>
+                        <td className="py-3.5 px-4 font-mono text-slate-600">{u.phone}</td>
+                        <td className="py-3.5 px-4 font-mono text-slate-800">{u.username}</td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-2">
+                            {getRoleBadge(u.role)}
+                            <select
+                              aria-label={`Đổi vai trò cho ${u.username}`}
+                              value={u.role}
+                              disabled={isCurrentUser || roleUpdatingId === u.id}
+                              onChange={(e) => handleUpdateUserRole(u, e.target.value)}
+                              title={isCurrentUser ? 'Không thể tự đổi vai trò tài khoản đang đăng nhập' : 'Đổi vai trò người dùng'}
+                              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <option value="CUSTOMER">Khách hàng</option>
+                              <option value="SHIPPER">Shipper</option>
+                              <option value="ADMIN">Quản trị viên</option>
+                            </select>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {isPendingDelete ? (
+                            <div className="flex items-center gap-1.5 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={handleDeleteUser}
+                                disabled={deletingUserId === u.id}
+                                className="rounded-lg bg-rose-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-rose-700 disabled:opacity-50"
+                              >
+                                {deletingUserId === u.id ? 'Đang xóa…' : 'Xác nhận xóa'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingDeleteUser(null)}
+                                disabled={deletingUserId === u.id}
+                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                Hủy
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteUser(u)}
+                              disabled={isCurrentUser || isProtectedAccount || deletingUserId != null}
+                              title={
+                                isCurrentUser
+                                  ? 'Không thể xóa tài khoản đang đăng nhập'
+                                  : isProtectedAccount
+                                  ? 'Không thể xóa tài khoản quản trị mặc định'
+                                  : 'Xóa tài khoản'
+                              }
+                              className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Xóa
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

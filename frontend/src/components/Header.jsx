@@ -84,6 +84,8 @@ export default function Header({
         return { category: 'Quản trị hệ thống', title: 'Bảng điều khiển KPI & Vận hành' };
       case 'gis-map':
         return { category: 'Mạng lưới bản đồ GIS', title: 'Bản đồ giám sát trạm tủ WGS84' };
+      case 'shipper-map':
+        return { category: 'Vận hành giao nhận', title: 'Bản đồ trạm tủ' };
       default:
         return { category: 'SmartLocker', title: 'Tổng quan' };
     }

@@ -53,7 +53,7 @@ public class AuthDTO {
         private String password;
         private String fullName;
         private String phone;
-        private String role; // 'SHIPPER' hoặc 'ADMIN'
+        private String role; // 'CUSTOMER', 'SHIPPER' hoặc 'ADMIN'
 
         public CreateAccountByAdminRequest() {
         }
@@ -65,6 +65,12 @@ public class AuthDTO {
             this.phone = phone;
             this.role = role;
         }
+    }
+
+    @Getter
+    @Setter
+    public static class UpdateUserRoleRequest {
+        private String role;
     }
 
     @Getter

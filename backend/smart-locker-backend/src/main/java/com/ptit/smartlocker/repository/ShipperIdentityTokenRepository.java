@@ -13,6 +13,9 @@ import java.util.Optional;
 @Repository
 public interface ShipperIdentityTokenRepository extends JpaRepository<ShipperIdentityToken, Long> {
 
+    /** Gộp ThanhChung — xoá token QR khi xoá tài khoản shipper (token khoá theo username). */
+    long deleteByShipperId(String shipperId);
+
     Optional<ShipperIdentityToken> findByDynamicToken(String dynamicToken);
 
     Optional<ShipperIdentityToken> findByDynamicTokenAndIsVerifiedTrue(String dynamicToken);

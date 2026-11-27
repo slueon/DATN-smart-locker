@@ -1,6 +1,8 @@
 package com.ptit.smartlocker;
 
 import com.ptit.smartlocker.entity.Notification;
+import com.ptit.smartlocker.entity.Order;
+import com.ptit.smartlocker.entity.User;
 import com.ptit.smartlocker.repository.LockerRepository;
 import com.ptit.smartlocker.repository.NotificationRepository;
 import com.ptit.smartlocker.repository.UserRepository;
@@ -8,6 +10,7 @@ import com.ptit.smartlocker.service.NotificationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -75,10 +78,43 @@ class NotificationServiceUnitTests {
     void helperKhongNem() {
         assertDoesNotThrow(() -> {
             service.depositSuccess(null, 1);
+            service.depositLeftEmpty(null, 1);
             service.pickupSuccess(null);
             service.overdue(null);
             service.recalled(null);
             service.kioskMethodChosen("LOCKER_HN_02", "qr", null);
         });
+    }
+
+    @Test
+    @DisplayName("Nạp thất bại: thông báo gửi riêng tới shipper được phân công")
+    void depositFailedTargetsAssignedShipper() {
+        User assignedShipper = User.builder().phone("0911000002").build();
+        Order order = Order.builder()
+                .orderId("ORD-DEPOSIT-FAILED")
+                .assignedShipper(assignedShipper)
+                .build();
+        ArgumentCaptor<Notification> notification = ArgumentCaptor.forClass(Notification.class);
+
+        service.depositLeftEmpty(order, 2);
+
+        verify(repo).save(notification.capture());
+        assertEquals("DEPOSIT_LEFT_EMPTY", notification.getValue().getType());
+        assertEquals("0911000002", notification.getValue().getRecipientPhone());
+        assertNull(notification.getValue().getRecipientRole());
+        assertEquals("ORD-DEPOSIT-FAILED", notification.getValue().getOrderId());
+    }
+
+    @Test
+    @DisplayName("Nạp thất bại khi chưa phân công: vẫn phát cho vai trò SHIPPER (không bỏ sót)")
+    void depositFailedWithoutAssignmentBroadcastsToShipperRole() {
+        ArgumentCaptor<Notification> notification = ArgumentCaptor.forClass(Notification.class);
+
+        service.depositLeftEmpty(Order.builder().orderId("ORD-UNASSIGNED").build(), 2);
+
+        verify(repo).save(notification.capture());
+        assertEquals("DEPOSIT_LEFT_EMPTY", notification.getValue().getType());
+        assertNull(notification.getValue().getRecipientPhone());
+        assertEquals("SHIPPER", notification.getValue().getRecipientRole());
     }
 }

@@ -91,9 +91,13 @@ CREATE TABLE IF NOT EXISTS orders (
     -- NULL = đơn cũ (trước GĐ21) → ReservationTimeoutService rơi về shipper_reserved_at + 120 phút.
     -- CỐ Ý cho phép NULL: thêm NOT NULL sẽ làm app không khởi động được trên DB đang có đơn.
     reserve_expires_at DATETIME DEFAULT NULL,
+    -- Shipper nhận đơn trên web; NULL = chưa có shipper nhận đơn.
+    assigned_shipper_id BIGINT DEFAULT NULL,
+    INDEX idx_orders_assigned_shipper_status (assigned_shipper_id, status),
     FOREIGN KEY (locker_id) REFERENCES lockers(locker_id) ON DELETE SET NULL,
     FOREIGN KEY (compartment_id) REFERENCES compartments(compartment_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
+-- Hibernate ánh xạ assigned_shipper_id tới users.id; bảng users được khai báo ở phần sau.
 
 -- 5. BẢNG MÃ NHẬN HÀNG CỦA KHÁCH (PICKUP_CREDENTIALS)
 CREATE TABLE IF NOT EXISTS pickup_credentials (

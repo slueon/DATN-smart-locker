@@ -97,6 +97,7 @@ export default function Sidebar({
           badge: overdueCount > 0 ? overdueCount : null,
           badgeColor: 'rose'
         },
+        { id: 'shipper-map', label: 'Bản đồ trạm tủ', icon: MapPin, desc: 'Tìm tủ, sức chứa & đường đi' },
         // GĐ6 — shipper có bản đồ RIÊNG (lộ trình giao hàng), khác bản đồ mạng lưới của Admin.
         // Label đổi để shipper hiểu đây là công cụ đi giao, không phải bản đồ quản trị.
         { id: 'gis-map', label: 'Lộ trình giao hàng', icon: Navigation, desc: 'Thứ tự tủ cần giao hôm nay' },

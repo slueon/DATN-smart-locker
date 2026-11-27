@@ -52,6 +52,7 @@ class HeartbeatDepositGuardTests {
     @Autowired private CompartmentRepository compartmentRepository;
     @Autowired private OrderRepository orderRepository;
     @Autowired private ShipperIdentityTokenRepository tokenRepository;
+    @org.springframework.beans.factory.annotation.Autowired private com.ptit.smartlocker.repository.UserRepository userRepositoryForAssign;
 
     /** Token đã xác thực tại tủ đang xét. */
     private void taoToken(String lockerId) {
@@ -77,6 +78,7 @@ class HeartbeatDepositGuardTests {
         return orderRepository.save(Order.builder()
                 .orderId(orderId)
                 .customerName("Khách Test GĐ30")
+                .assignedShipper(userRepositoryForAssign.findByUsername("shipper").orElseThrow()) // gộp ThanhChung: chỉ shipper được phân công mới nạp/thu hồi được
                 .customerPhone("0912345678")
                 .deliveryType("LOCKER")
                 .locker(locker)

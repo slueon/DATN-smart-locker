@@ -22,12 +22,7 @@ import {
  * nhưng không chia sẻ state/logic với nó.
  */
 
-const DEFAULT_START = {
-  // Toạ độ LOCKER_HN_01 (KTX A1 / trụ sở PTIT) — dùng làm điểm xuất phát dự phòng.
-  lat: 20.9808,
-  lng: 105.7876,
-  label: 'KTX A1 (Trụ sở PTIT)',
-};
+const DEFAULT_VIEW = { lat: 20.9808, lng: 105.7876 };
 
 /** Ngưỡng tuổi nhịp tim — giống `AdminTab.getLockerHealth` để hai màn hình nói cùng một ngôn ngữ. */
 const HEARTBEAT_FRESH_MS = 5 * 60 * 1000;
@@ -155,12 +150,46 @@ export default function ShipperRouteMap({ currentUser }) {
   const [routingError, setRoutingError] = useState(null);
   /** GĐ14 — số hiệu lượt tải; lượt cũ về muộn không được ghi đè lượt mới. */
   const loadRunIdRef = useRef(0);
-  const [start, setStart] = useState(DEFAULT_START);
+  const [start, setStart] = useState(null);
   const [usingMyLocation, setUsingMyLocation] = useState(false);
   const [geoStatus, setGeoStatus] = useState('idle'); // 'idle' | 'asking' | 'ok' | 'error'
   const [selectedLockerId, setSelectedLockerId] = useState(null);
   const [selectedCompartments, setSelectedCompartments] = useState([]);
   const [loadingCompartments, setLoadingCompartments] = useState(false);
+
+  // Theo dõi vị trí thật của shipper khi mở tab. Không coi KTX A1 là điểm xuất phát mặc định:
+  // trước khi định vị thành công, giữ lộ trình ở trạng thái chờ thay vì bịa vị trí giao hàng.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGeoStatus('error');
+      setErrorMsg('Trình duyệt không hỗ trợ định vị. Không thể cập nhật lộ trình theo vị trí thực tế.');
+      return undefined;
+    }
+
+    setGeoStatus('asking');
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setStart({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          label: 'Vị trí thực tế của bạn',
+        });
+        setUsingMyLocation(true);
+        setGeoStatus('ok');
+        setErrorMsg(null);
+      },
+      (err) => {
+        setGeoStatus('error');
+        setUsingMyLocation(false);
+        setErrorMsg(err?.code === 1
+          ? 'Bạn chưa cho phép truy cập vị trí. Hãy bật quyền định vị để lộ trình theo vị trí thực tế.'
+          : 'Không lấy được vị trí thực tế. Kiểm tra GPS và thử lại.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
 
   // GĐ6 — lưới an toàn cho nút "Tải lại": `loading` khởi tạo `true` (đang tải lúc mount) và nút
   // bị `disabled={loading}`. Nếu `loadRoute` không chạy tới `finally` (unmount giữa lúc await,
@@ -178,6 +207,10 @@ export default function ShipperRouteMap({ currentUser }) {
   /* ─────────────────────── 1. Tải dữ liệu ─────────────────────── */
 
   const loadRoute = async () => {
+    if (!start) {
+      setLoading(true);
+      return;
+    }
     setLoading(true);
     setErrorMsg(null);
     // GĐ14 — xoá lỗi OSRM của lần trước, nếu không nhãn vàng sẽ giữ lý do cũ dù lần này thành công.
@@ -326,6 +359,7 @@ export default function ShipperRouteMap({ currentUser }) {
    * lần render (không bọc `useCallback`) → thêm vào sẽ thành vòng lặp gọi API vô hạn.
    */
   useEffect(() => {
+    if (!start) return undefined;
     loadRoute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start]);
@@ -337,7 +371,7 @@ export default function ShipperRouteMap({ currentUser }) {
     if (!mapRef.current || mapObjRef.current) return undefined;
 
     const map = L.map(mapRef.current, {
-      center: [DEFAULT_START.lat, DEFAULT_START.lng],
+      center: [DEFAULT_VIEW.lat, DEFAULT_VIEW.lng],
       zoom: 13,
       zoomControl: true,
     });
@@ -386,6 +420,10 @@ export default function ShipperRouteMap({ currentUser }) {
   useEffect(() => {
     const map = mapObjRef.current;
     if (!map) return;
+    if (!start) {
+      map.setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], 13);
+      return;
+    }
 
     // Xoá lớp cũ trước khi vẽ lại, nếu không mỗi lần load sẽ chồng marker lên nhau.
     layersRef.current.forEach((l) => map.removeLayer(l));
@@ -498,8 +536,7 @@ export default function ShipperRouteMap({ currentUser }) {
   const useMyLocation = () => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setGeoStatus('error');
-      setErrorMsg('Trình duyệt không hỗ trợ định vị. Đang tính từ KTX A1.');
-      setStart(DEFAULT_START);
+      setErrorMsg('Trình duyệt không hỗ trợ định vị thực tế.');
       setUsingMyLocation(false);
       return;
     }
@@ -516,12 +553,10 @@ export default function ShipperRouteMap({ currentUser }) {
         setErrorMsg(null);
       },
       () => {
-        // Bị từ chối / không lấy được: quay về KTX A1 và nói rõ cho shipper biết.
-        // `timeout: 3000` bên dưới giới hạn thời gian chờ đúng như yêu cầu.
-        setStart(DEFAULT_START);
+        // Không dùng toạ độ mặc định: báo rõ lỗi và chờ người dùng cấp quyền GPS.
         setUsingMyLocation(false);
         setGeoStatus('error');
-        setErrorMsg('Không lấy được vị trí của bạn. Đang tính từ KTX A1.');
+        setErrorMsg('Không lấy được vị trí thực tế của bạn. Hãy bật định vị và thử lại.');
       },
       { enableHighAccuracy: true, timeout: 3000, maximumAge: 60000 }
     );
@@ -606,7 +641,7 @@ export default function ShipperRouteMap({ currentUser }) {
         {!usingMyLocation && (
           <p className="text-[11px] text-amber-700 mt-2 flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" />
-            Đang tính từ {DEFAULT_START.label} (chưa có vị trí của bạn)
+            Chưa có vị trí thực tế — đang chờ truy cập GPS
           </p>
         )}
         {usingMyLocation && (

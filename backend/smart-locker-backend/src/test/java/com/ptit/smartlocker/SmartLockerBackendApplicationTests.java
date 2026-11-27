@@ -56,6 +56,7 @@ class SmartLockerBackendApplicationTests {
 
     @Autowired
     private ShipperIdentityTokenRepository tokenRepository;
+    @org.springframework.beans.factory.annotation.Autowired private com.ptit.smartlocker.repository.UserRepository userRepositoryForAssign;
 
     @Autowired
     private CompartmentRepository compartmentRepository;
@@ -304,6 +305,7 @@ class SmartLockerBackendApplicationTests {
         Order order = Order.builder()
                 .orderId(testOrderId)
                 .customerName("Khách Hàng Nhận Đồ")
+                .assignedShipper(userRepositoryForAssign.findByUsername("shipper").orElseThrow()) // gộp ThanhChung: chỉ shipper được phân công mới nạp/thu hồi được
                 .customerPhone("0977665544")
                 .deliveryType("LOCKER")
                 .locker(locker)
@@ -338,7 +340,7 @@ class SmartLockerBackendApplicationTests {
         assertThrows(RuntimeException.class, () -> shipperService.depositPackage(noTokenReq));
 
         // 2. Gửi hàng kèm token chưa qua xác thực tại Kiosk: Phải bị từ chối
-        ShipperDTO.GenerateTokenResponse tokenResp = shipperService.generateDynamicToken("SHIPPER_001");
+        ShipperDTO.GenerateTokenResponse tokenResp = shipperService.generateDynamicToken("shipper"); // gộp ThanhChung: token phải trùng shipper được phân công
         String rawToken = tokenResp.getDynamicToken();
 
         ShipperDTO.DepositPackageRequest unverifiedReq = ShipperDTO.DepositPackageRequest.builder()

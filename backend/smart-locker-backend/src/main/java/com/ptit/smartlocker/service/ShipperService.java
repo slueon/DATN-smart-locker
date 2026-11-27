@@ -95,6 +95,22 @@ public class ShipperService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<ShipperDTO.ShipperOptionResponse> getShipperOptions() {
+        return userRepository.findByRole("SHIPPER").stream()
+                    .sorted(java.util.Comparator
+                            .comparing((User u) -> u.getFullName() == null ? "" : u.getFullName(),
+                                    java.util.Comparator.naturalOrder())
+                            .thenComparing(u -> u.getId() == null ? 0L : u.getId()))
+                    .map(u -> ShipperDTO.ShipperOptionResponse.builder()
+                            .userId(u.getId())
+                            .username(u.getUsername())
+                            .fullName(u.getFullName())
+                            .phone(u.getPhone())
+                            .build())
+                    .toList();
+    }
+
     /** GĐ11 — ngưỡng "tủ còn sống": nhịp tim cũ hơn 5 phút thì không cho shipper chọn. */
     private static final long HEARTBEAT_FRESH_MINUTES = 5L;
 
@@ -290,6 +306,11 @@ public class ShipperService {
         Order order = orderRepository.findById(request.getOrderId())
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + request.getOrderId()));
 
+        if (order.getAssignedShipper() == null
+                || !order.getAssignedShipper().getUsername().equalsIgnoreCase(token.getShipperId())) {
+            throw new RuntimeException("Đơn hàng này chưa được phân công cho tài khoản shipper này!");
+        }
+
         // GĐ31b — nhận cả `PENDING_OPENED`: đó là đơn đang trong phiên nạp (cửa đã mở) mà shipper
         // bấm xác nhận nạp trên web. Chặn ở đây sẽ khiến shipper không chốt được đúng lúc hàng
         // đã vào tủ.
@@ -466,7 +487,7 @@ public class ShipperService {
      * T3 — Danh sách đơn PENDING cho shipper chọn đặt trước trên web.
      *
      * <p>{@code trackingCode} trả về = {@code tracking_code} nếu đã đặt, ngược lại là
-     * {@code order_id} (user chốt Q1 = (c): mặc định lấy order_id, cho phép sửa).
+     * {@code order_id} (mặc định lấy order_id, cho phép sửa).
      *
      * <p><b>GĐ11:</b> nhánh "mọi tủ" phải dùng {@code findByStatusWithCompartment} — truy vấn
      * theo tủ cụ thể sẽ bỏ sót vĩnh viễn các đơn <b>chưa được gán tủ</b> ({@code locker_id IS NULL}),
@@ -477,15 +498,19 @@ public class ShipperService {
      * @param lockerId null/rỗng/"ALL" = mọi tủ
      */
     @Transactional(readOnly = true)
-    public List<OrderDTO.OrderResponse> getPendingOrders(String lockerId) {
+    public List<OrderDTO.OrderResponse> getPendingOrders(String lockerId, String shipperUsername) {
         List<Order> list;
         if (lockerId == null || lockerId.isBlank() || "ALL".equalsIgnoreCase(lockerId)) {
-            list = orderRepository.findByStatusWithCompartment("PENDING");
+            list = orderRepository.findByStatusWithCompartmentAndAssignedShipper(
+                    List.of("PENDING", "PENDING_OPENED"));
         } else {
-            list = orderRepository.findByLockerAndStatusFetchAll(lockerId, "PENDING");
+            list = orderRepository.findByLockerAndStatusFetchAllWithAssignedShipper(
+                    lockerId, List.of("PENDING", "PENDING_OPENED"));
         }
 
         return list.stream()
+                .filter(o -> o.getAssignedShipper() != null
+                        && o.getAssignedShipper().getUsername().equalsIgnoreCase(shipperUsername))
                 .map(o -> OrderDTO.OrderResponse.builder()
                         .orderId(o.getOrderId())
                         .customerName(o.getCustomerName())
@@ -507,23 +532,193 @@ public class ShipperService {
                         .trackingCode(o.getTrackingCode() != null && !o.getTrackingCode().isBlank()
                                 ? o.getTrackingCode()
                                 : o.getOrderId())
+                        .assignedShipperUsername(o.getAssignedShipper() != null
+                                ? o.getAssignedShipper().getUsername()
+                                : null)
                         .build())
                 .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void claimPendingOrder(String orderId, String shipperUsername) {
+        User shipper = userRepository.findByUsernameForUpdate(shipperUsername)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản shipper."));
+        if (!"SHIPPER".equals(shipper.getRole())) {
+            throw new IllegalArgumentException("Chỉ tài khoản shipper mới được nhận đơn.");
+        }
+
+        Order order = orderRepository.findByIdForShipperClaim(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng."));
+        if (!"PENDING".equals(order.getStatus()) && !"PENDING_OPENED".equals(order.getStatus())) {
+            throw new IllegalArgumentException("Đơn hàng không còn ở trạng thái chờ giao.");
+        }
+
+        User assignedShipper = order.getAssignedShipper();
+        if (assignedShipper != null && !assignedShipper.getId().equals(shipper.getId())) {
+            throw new IllegalArgumentException("Đơn hàng đã được shipper khác nhận.");
+        }
+        if (assignedShipper == null) {
+            throw new IllegalArgumentException(
+                    "Đơn chưa được Admin phân công. Shipper không thể tự nhận.");
+        }
+    }
+
+    @Transactional
+    public OrderDTO.OrderResponse createOrderByAdmin(ShipperDTO.CreateOrderByAdminRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Thiếu dữ liệu tạo đơn.");
+        }
+        // Gộp ThanhChung — áp cùng chốt GĐ75 (#3) như OrderService.createOrder: luồng admin tạo đơn
+        // không đi qua checkout nên trước đây nhận được đơn −5 đ.
+        if (request.getTotalAmount() != null && request.getTotalAmount().signum() < 0) {
+            throw new IllegalArgumentException("Giá trị đơn hàng không được là số âm!");
+        }
+        if (request.getCustomerUsername() == null || request.getCustomerUsername().isBlank()) {
+            throw new IllegalArgumentException("Vui lòng chọn khách hàng.");
+        }
+        if (request.getLockerId() == null || request.getLockerId().isBlank()) {
+            throw new IllegalArgumentException("Vui lòng chọn tủ giao hàng.");
+        }
+
+        User customer = userRepository.findByUsername(request.getCustomerUsername().trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản khách hàng."));
+        if (!"CUSTOMER".equalsIgnoreCase(customer.getRole())) {
+            throw new IllegalArgumentException("Tài khoản được chọn không có vai trò CUSTOMER.");
+        }
+        Locker locker = lockerRepository.findById(request.getLockerId().trim())
+                .orElseThrow(() -> new IllegalArgumentException("Tủ giao hàng không tồn tại."));
+        if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) {
+            throw new IllegalArgumentException("Tủ giao hàng đang bảo trì.");
+        }
+
+        User shipper = null;
+        if (request.getShipperUserId() != null) {
+            shipper = userRepository.findById(request.getShipperUserId())
+                    .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản shipper."));
+        } else if (request.getShipperUsername() != null && !request.getShipperUsername().isBlank()) {
+            shipper = userRepository.findByUsername(request.getShipperUsername().trim())
+                    .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản shipper."));
+        }
+        if (shipper != null && !"SHIPPER".equalsIgnoreCase(shipper.getRole())) {
+            throw new IllegalArgumentException("Tài khoản được chọn không có vai trò SHIPPER.");
+        }
+
+        String orderId = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String productName = request.getProductName() == null || request.getProductName().isBlank()
+                ? "Bưu kiện Smart Locker" : request.getProductName().trim();
+        String paymentMethod = request.getPaymentMethod() == null || request.getPaymentMethod().isBlank()
+                ? "ONLINE_VIETQR" : request.getPaymentMethod().trim();
+        String paymentStatus = request.getPaymentStatus() == null || request.getPaymentStatus().isBlank()
+                ? ("COD".equalsIgnoreCase(paymentMethod) ? "UNPAID" : "PAID")
+                : request.getPaymentStatus().trim();
+
+        Order order = Order.builder()
+                .orderId(orderId)
+                .customerName(customer.getFullName())
+                .customerPhone(customer.getPhone())
+                .deliveryType("LOCKER")
+                .locker(locker)
+                .expectedDate(java.time.LocalDate.now())
+                .status("PENDING")
+                .totalAmount(request.getTotalAmount() != null
+                        ? request.getTotalAmount() : java.math.BigDecimal.ZERO)
+                .paymentMethod(paymentMethod)
+                .paymentStatus(paymentStatus)
+                .productName(productName)
+                .trackingCode(orderId)
+                .assignedShipper(shipper)
+                .build();
+        orderRepository.save(order);
+
+        String qrToken = "PKUP-" + UUID.randomUUID();
+        credentialRepository.save(com.ptit.smartlocker.entity.PickupCredential.builder()
+                .order(order)
+                .otpCode("")
+                .qrToken(qrToken)
+                .isUsed(false)
+                .failedAttempts(0)
+                .expiredAt(java.time.LocalDateTime.now().plusDays(2))
+                .build());
+        return mapPendingOrderResponse(order);
+    }
+
+    @Transactional
+    public OrderDTO.OrderResponse assignShipperByAdmin(String orderId, Long shipperUserId,
+                                                        String shipperUsername) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã đơn hàng cần phân công!");
+        }
+        if (shipperUserId == null && (shipperUsername == null || shipperUsername.isBlank())) {
+            throw new IllegalArgumentException("Vui lòng chọn shipper phụ trách!");
+        }
+
+        Order order = orderRepository.findByIdForShipperClaim(orderId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng."));
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())
+                && !"PENDING_OPENED".equalsIgnoreCase(order.getStatus())
+                && !"OVERDUE".equalsIgnoreCase(order.getStatus())) {
+            throw new IllegalArgumentException("Chỉ phân công đơn chờ giao hoặc đơn quá hạn.");
+        }
+
+        User shipper = shipperUserId != null
+                ? userRepository.findByIdForUpdate(shipperUserId)
+                        .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản shipper."))
+                : userRepository.findByUsernameForUpdate(shipperUsername.trim())
+                        .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản shipper."));
+        if (!"SHIPPER".equalsIgnoreCase(shipper.getRole())) {
+            throw new IllegalArgumentException("Tài khoản được chọn không có vai trò SHIPPER.");
+        }
+
+        order.setAssignedShipper(shipper);
+        order = orderRepository.save(order);
+        if ("OVERDUE".equalsIgnoreCase(order.getStatus()) && notificationService != null) {
+            notificationService.overdueAssigned(order);
+        }
+        return mapPendingOrderResponse(order);
+    }
+
+    private OrderDTO.OrderResponse mapPendingOrderResponse(Order order) {
+        return OrderDTO.OrderResponse.builder()
+                .orderId(order.getOrderId())
+                .customerName(order.getCustomerName())
+                .customerPhone(order.getCustomerPhone())
+                .deliveryType(order.getDeliveryType())
+                .lockerId(order.getLocker() != null ? order.getLocker().getLockerId() : null)
+                .lockerName(order.getLocker() != null ? order.getLocker().getName() : null)
+                .lockerAddress(order.getLocker() != null ? order.getLocker().getAddress() : null)
+                .compartmentIndex(order.getCompartment() != null ? order.getCompartment().getCompIndex() : null)
+                .expectedDate(order.getExpectedDate())
+                .status(order.getStatus())
+                .productName(order.getProductName())
+                .totalAmount(order.getTotalAmount())
+                .paymentMethod(order.getPaymentMethod())
+                .paymentStatus(order.getPaymentStatus())
+                .createdAt(order.getCreatedAt())
+                .trackingCode(order.getTrackingCode() != null && !order.getTrackingCode().isBlank()
+                        ? order.getTrackingCode() : order.getOrderId())
+                .assignedShipperUsername(order.getAssignedShipper() != null
+                        ? order.getAssignedShipper().getUsername() : null)
+                .build();
     }
 
     /**
      * T3 — Shipper đặt trước một ngăn cụ thể cho đơn PENDING.
      *
-     * <p><b>R2:</b> hàm này KHÔNG đụng {@code available_slots}. {@code createOrder} đã trừ slot
-     * lúc khách đặt; trừ lần nữa là một đơn ăn hai slot. Chỉ {@link #cancelReserve} mới cộng lại,
-     * và chỉ khi ngăn thật sự về {@code EMPTY}.
+     * <p>Đặt trước chỉ giữ ngăn vật lý; tạo đơn và gán tủ không giữ suất trong lịch giao hàng.
      *
-     * <p>Dùng {@code findWithLockByLockerIdAndStatus} để giữ khoá bi quan trên các ngăn EMPTY của
-     * tủ: hai shipper bấm cùng lúc thì chỉ một người giành được ngăn, người kia nhận lỗi.
+     * <p>Khoá đơn và ngăn được chọn bằng khoá bi quan: hai shipper bấm cùng lúc thì chỉ một người
+     * giành được ngăn, người kia nhận lỗi.
      */
     @Transactional
     public OrderDTO.OrderResponse reserveCompartment(String orderId, String trackingCode,
                                                      Integer compartmentIndex, Integer reserveHours) {
+        return reserveCompartment(orderId, trackingCode, compartmentIndex, reserveHours, null);
+    }
+
+    @Transactional
+    public OrderDTO.OrderResponse reserveCompartment(String orderId, String trackingCode,
+                                                     Integer compartmentIndex, Integer reserveHours,
+                                                     String shipperUsername) {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("Thiếu mã đơn hàng cần đặt trước!");
         }
@@ -541,8 +736,13 @@ public class ShipperService {
                     "Thời hạn đặt trước chỉ nhận 1 hoặc 2 giờ (nhận được: " + reserveHours + ").");
         }
 
-        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+        Order order = orderRepository.findByIdForShipperClaim(orderId.trim())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+
+        if (shipperUsername != null && (order.getAssignedShipper() == null
+                || !order.getAssignedShipper().getUsername().equalsIgnoreCase(shipperUsername))) {
+            throw new IllegalArgumentException("Đơn hàng không thuộc phụ trách của tài khoản shipper này.");
+        }
 
         if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
             throw new IllegalArgumentException(
@@ -550,9 +750,7 @@ public class ShipperService {
                             + order.getStatus() + ".");
         }
 
-        // Q4 (08:40): shipper ĐƯỢC ĐỔI NGĂN kể cả khi khách đã chọn ngăn lúc checkout —
-        // nên KHÔNG chặn theo `order.getCompartment() != null` nữa. Chỉ chặn khi đơn
-        // ĐÃ được shipper đặt trước rồi (cột `shipper_reserved_at` khác NULL).
+        // Ngăn chỉ được gán ở luồng đặt trước; đơn chưa đặt trước không có ngăn để chuyển.
         if (order.getShipperReservedAt() != null) {
             throw new IllegalArgumentException(
                     "Đơn " + orderId + " đã được đặt trước. Huỷ đặt trước trước khi đổi ngăn.");
@@ -584,8 +782,23 @@ public class ShipperService {
         Compartment target;
 
         if (old != null && old.getCompIndex().equals(compartmentIndex)) {
-            // Shipper xác nhận đặt trước chính ngăn hiện tại mà đơn đang được chỉ định
-            target = old;
+            target = compartmentRepository.findWithLockByLockerIdAndCompIndex(lockerId, compartmentIndex)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Không tìm thấy ngăn " + compartmentIndex + " của tủ " + lockerId + "."));
+            if ("RESERVED".equalsIgnoreCase(target.getStatus())
+                    && orderRepository.countOtherActiveOrdersForCompartment(
+                            target.getCompartmentId(), order.getOrderId(),
+                            List.of("PENDING", "PENDING_OPENED", "DEPOSITED", "PICKUP_OPENED", "OVERDUE")) > 0) {
+                throw new IllegalArgumentException(
+                        "Ngăn " + compartmentIndex + " của tủ " + lockerId
+                                + " đã có đơn khác giữ chỗ. Vui lòng chọn ngăn khác.");
+            }
+            if (!"EMPTY".equalsIgnoreCase(target.getStatus())
+                    && !"RESERVED".equalsIgnoreCase(target.getStatus())) {
+                throw new IllegalArgumentException(
+                        "Ngăn " + compartmentIndex + " của tủ " + lockerId
+                                + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác.");
+            }
         } else {
             // Đổi ngăn: nhả ngăn CŨ trước — nhưng CHỈ khi ngăn cũ đang RESERVED (ngăn do checkout
             // gán giữ chỗ). Nếu ngăn cũ đang OCCUPIED thì có hàng thật trong đó: KHÔNG được đá
@@ -603,15 +816,16 @@ public class ShipperService {
                 }
             }
 
-            // Khoá bi quan toàn bộ ngăn EMPTY của tủ → chống 2 shipper giành cùng ngăn.
-            List<Compartment> empties = compartmentRepository
-                    .findWithLockByLockerIdAndStatus(lockerId, "EMPTY");
-            target = empties.stream()
-                    .filter(c -> compartmentIndex.equals(c.getCompIndex()))
-                    .findFirst()
+            // Khoá chính ngăn được chọn rồi kiểm tra trạng thái mới nhất để chống đặt trùng.
+            target = compartmentRepository
+                    .findWithLockByLockerIdAndCompIndex(lockerId, compartmentIndex)
                     .orElseThrow(() -> new IllegalArgumentException(
-                            "Ngăn " + compartmentIndex + " của tủ " + lockerId
-                                    + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác."));
+                            "Không tìm thấy ngăn " + compartmentIndex + " của tủ " + lockerId + "."));
+            if (!"EMPTY".equalsIgnoreCase(target.getStatus())) {
+                throw new IllegalArgumentException(
+                        "Ngăn " + compartmentIndex + " của tủ " + lockerId
+                                + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác.");
+            }
         }
 
         target.setStatus("RESERVED");
@@ -745,19 +959,105 @@ public class ShipperService {
     }
 
     /**
-     * T3 — Huỷ đặt trước: ngăn về {@code EMPTY}, đơn bỏ ngăn, hoàn 1 slot.
+     * Xoá một đơn PENDING do shipper/admin thêm nhầm.
      *
-     * <p>Chỉ cộng {@code available_slots} khi ngăn THẬT SỰ về {@code EMPTY} — nếu ngăn đang
-     * chứa hàng (OCCUPIED) thì trả lại slot sẽ làm lịch biểu sai.
+     * <p>Chỉ cho phép xoá đơn chưa nạp. Nhả ngăn đang giữ và xoá mã nhận hàng
+     * đi kèm để dữ liệu không còn đơn mồ côi.
      */
     @Transactional
-    public void cancelReserve(String orderId) {
+    public void deletePendingOrder(String orderId, String shipperUsername) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã đơn hàng cần xoá!");
+        }
+
+        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+
+        if (order.getAssignedShipper() == null
+                || !order.getAssignedShipper().getUsername().equalsIgnoreCase(shipperUsername)) {
+            throw new IllegalArgumentException("Shipper không có quyền xoá đơn chưa thuộc phụ trách.");
+        }
+
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Chỉ xoá được đơn đang chờ nạp. Đơn " + orderId
+                            + " hiện ở trạng thái " + order.getStatus() + ".");
+        }
+
+        Compartment compartment = order.getCompartment();
+
+        if (compartment != null) {
+            String compartmentStatus = compartment.getStatus();
+            if ("OCCUPIED".equalsIgnoreCase(compartmentStatus)
+                    || "OVERDUE".equalsIgnoreCase(compartmentStatus)) {
+                throw new IllegalArgumentException(
+                        "Không xoá được đơn " + orderId
+                                + " vì ngăn đang có hàng hoặc hàng quá hạn.");
+            }
+            compartment.setStatus("EMPTY");
+            compartmentRepository.save(compartment);
+        }
+
+        credentialRepository.findByOrder_OrderId(orderId.trim())
+                .ifPresent(credentialRepository::delete);
+
+        orderRepository.delete(order);
+    }
+
+    @Transactional
+    public void deletePendingOrderByAdmin(String orderId) {
+        deletePendingOrderCore(orderId);
+    }
+
+    @Transactional
+    public void deletePendingOrder(String orderId) {
+        deletePendingOrderCore(orderId);
+    }
+
+    private void deletePendingOrderCore(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu mã đơn hàng cần xoá!");
+        }
+        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Chỉ xoá được đơn đang chờ nạp. Đơn " + orderId
+                            + " hiện ở trạng thái " + order.getStatus() + ".");
+        }
+        Compartment compartment = order.getCompartment();
+        if (compartment != null) {
+            if ("OCCUPIED".equalsIgnoreCase(compartment.getStatus())
+                    || "OVERDUE".equalsIgnoreCase(compartment.getStatus())) {
+                throw new IllegalArgumentException(
+                        "Không xoá được đơn " + orderId + " vì ngăn đang có hàng hoặc hàng quá hạn.");
+            }
+            compartment.setStatus("EMPTY");
+            compartmentRepository.save(compartment);
+        }
+        credentialRepository.findByOrder_OrderId(orderId.trim())
+                .ifPresent(credentialRepository::delete);
+        orderRepository.delete(order);
+    }
+
+    /**
+     * T3 — Huỷ đặt trước: ngăn về {@code EMPTY}, đơn bỏ ngăn.
+     *
+     * <p>Đặt trước chỉ giữ ngăn vật lý, không giữ suất trong lịch giao hàng.
+     */
+    @Transactional
+    public void cancelReserve(String orderId, String shipperUsername) {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("Thiếu mã đơn hàng cần huỷ đặt trước!");
         }
 
         Order order = orderRepository.findByIdWithCompartment(orderId.trim())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
+
+        if (order.getAssignedShipper() == null
+                || !order.getAssignedShipper().getUsername().equalsIgnoreCase(shipperUsername)) {
+            throw new IllegalArgumentException("Đơn hàng không thuộc phụ trách của tài khoản shipper này.");
+        }
 
         if (order.getCompartment() == null) {
             throw new IllegalArgumentException("Đơn " + orderId + " hiện không giữ ngăn nào để huỷ.");
@@ -766,8 +1066,7 @@ public class ShipperService {
         // (`shipper_reserved_at = NULL`) không phải "đặt trước" nên không có gì để huỷ.
         if (order.getShipperReservedAt() == null) {
             throw new IllegalArgumentException(
-                    "Đơn " + orderId + " chưa được đặt trước nên không có gì để huỷ. "
-                            + "Ngăn hiện tại là do hệ thống gán lúc khách đặt hàng.");
+                    "Đơn " + orderId + " chưa được đặt trước nên không có gì để huỷ.");
         }
         if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
             throw new IllegalArgumentException(
@@ -775,7 +1074,6 @@ public class ShipperService {
         }
 
         Compartment compartment = order.getCompartment();
-        String lockerId = order.getLocker() != null ? order.getLocker().getLockerId() : null;
 
         // Chỉ nhả khi ngăn chưa bị dùng: EMPTY (bình thường) hoặc vẫn đang RESERVED (đúng ca này).
         boolean canRelease = "RESERVED".equalsIgnoreCase(compartment.getStatus())
@@ -786,7 +1084,6 @@ public class ShipperService {
                             + " nên không thể huỷ đặt trước.");
         }
 
-        boolean becameEmpty = !"EMPTY".equalsIgnoreCase(compartment.getStatus());
         compartment.setStatus("EMPTY");
         compartmentRepository.save(compartment);
 
@@ -798,20 +1095,6 @@ public class ShipperService {
         // dữ liệu giữa hai lần đó là mâu thuẫn: có hạn mà không có dấu đặt trước.
         order.setReserveExpiresAt(null);
         orderRepository.save(order);
-
-        // R2: chỉ cộng slot khi ngăn thật sự chuyển về EMPTY ở lần huỷ này.
-        if (becameEmpty && lockerId != null) {
-            LocalDate today = LocalDate.now();
-            slotScheduleRepository.findByLocker_LockerIdAndScheduleDate(lockerId, today)
-                    .ifPresent(schedule -> {
-                        Integer total = order.getLocker() != null ? order.getLocker().getTotalCompartments() : null;
-                        int currentAvail = schedule.getAvailableSlots() != null ? schedule.getAvailableSlots() : 0;
-                        if (total == null || currentAvail < total) {
-                            schedule.setAvailableSlots(currentAvail + 1);
-                            slotScheduleRepository.save(schedule);
-                        }
-                    });
-        }
 
         DeviceEvent event = DeviceEvent.builder()
                 .locker(order.getLocker())
@@ -926,41 +1209,15 @@ public class ShipperService {
         return result;
     }
 
-    /**
-     * GĐ11 — shipper chốt tủ (và ngăn) cho một đơn PENDING.
-     *
-     * <p><b>Ràng buộc sống còn:</b> việc NHẢ ngăn cũ và GIỮ ngăn mới nằm trong CÙNG một
-     * {@code @Transactional}, và thứ tự là <i>giữ ngăn mới trước, nhả ngăn cũ sau</i>. Nhờ vậy
-     * khi tủ đích hết ngăn, ta ném lỗi 409 lúc ngăn cũ CHƯA bị đụng tới — đơn không bao giờ rơi
-     * vào trạng thái "mất ngăn cũ mà không có ngăn mới". Nếu chỉ dựa vào rollback thì vẫn đúng,
-     * nhưng phụ thuộc vào việc transaction thật sự rollback; đặt đúng thứ tự là an toàn kép.
-     *
-     * <p><b>Ngăn {@code OCCUPIED} tuyệt đối không bị đá:</b> đó là hàng thật của khách. Gặp ngăn
-     * cũ đang OCCUPIED thì từ chối 409 và không đổi gì.
-     *
-     * <p>Không đụng {@code available_slots} của tủ mới — giống {@code reserveCompartment} (R2):
-     * shipper chốt một ngăn vật lý đã có sẵn, không phải một suất mới trên lịch biểu.
-     */
+    /** Gán tủ giao hàng cho đơn mà không giữ ngăn; giữ ngăn là thao tác riêng. */
     @Transactional
-    public OrderDTO.OrderResponse assignLocker(String orderId, String lockerId, Integer compartmentIndex,
-                                              Integer reserveHours) {
+    public OrderDTO.OrderResponse assignLocker(String orderId, String lockerId) {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("Thiếu mã đơn hàng cần chọn tủ!");
         }
         if (lockerId == null || lockerId.isBlank()) {
             throw new IllegalArgumentException("Vui lòng chọn tủ cần giao!");
         }
-        // GĐ23 — thời hạn giữ chỗ: validate GIỐNG HỆT `reserveCompartment` để hai luồng không lệch
-        // luật. Chỉ {1,2}, thiếu thì mặc định 2 (giữ hành vi 120 phút cũ). Giá trị khác bị TỪ CHỐI
-        // rõ ràng, không âm thầm kẹp — kẹp im lặng làm shipper tưởng đã giữ 5 giờ.
-        if (reserveHours == null) {
-            reserveHours = 2;
-        }
-        if (reserveHours != 1 && reserveHours != 2) {
-            throw new IllegalArgumentException(
-                    "Thời hạn đặt trước chỉ nhận 1 hoặc 2 giờ (nhận được: " + reserveHours + ").");
-        }
-
         // Khoá bi quan dòng đơn: đổi tủ chạy song song với tác vụ tự nhả ngăn quá hạn.
         Order order = orderRepository.findByIdForReleaseWithLock(orderId.trim())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
@@ -999,67 +1256,23 @@ public class ShipperService {
                             + "đổi tủ. Vui lòng liên hệ admin.");
         }
 
-        // BƯỚC 1 — GIỮ NGĂN MỚI TRƯỚC (khoá bi quan toàn bộ ngăn EMPTY của tủ đích).
-        List<Compartment> empties = compartmentRepository
-                .findWithLockByLockerIdAndStatus(targetLocker.getLockerId(), "EMPTY");
-
-        // GĐ54-L2: đơn đã giữ ngăn RESERVED ở chính tủ đích và không đòi ngăn khác ⇒ giữ nguyên
-        // ngăn đó (nó không nằm trong `empties` nên nếu không xử lý sẽ 409 oan khi tủ hết ngăn trống).
-        boolean giuNguyenNganCu = old != null
-                && "RESERVED".equalsIgnoreCase(old.getStatus())
-                && old.getLocker() != null
-                && targetLocker.getLockerId().equals(old.getLocker().getLockerId())
-                && (compartmentIndex == null || compartmentIndex.equals(old.getCompIndex()));
-
-        Compartment target;
-        if (giuNguyenNganCu) {
-            target = old;
-        } else if (compartmentIndex != null) {
-            if (compartmentIndex < 1) {
-                throw new IllegalArgumentException("Chỉ số ngăn không hợp lệ (phải từ 1 trở lên)!");
-            }
-            target = empties.stream()
-                    .filter(c -> compartmentIndex.equals(c.getCompIndex()))
-                    .findFirst()
-                    .orElseThrow(() -> new com.ptit.smartlocker.exception.BusinessException(
-                            "Ngăn " + compartmentIndex + " của tủ " + targetLocker.getLockerId()
-                                    + " không trống (đã có người giữ hoặc đang chứa hàng). Vui lòng chọn ngăn khác."));
-        } else {
-            // GĐ18 — không chọn theo size: lấy ngăn EMPTY ĐẦU TIÊN (đã sắp theo compIndex).
-            // Message lỗi cũng không nhắc "kích thước" nữa — mọi ngăn đều dùng được, nên lý do
-            // duy nhất là tủ đã hết ngăn trống.
-            target = empties.stream()
-                    .findFirst()
-                    .orElseThrow(() -> new com.ptit.smartlocker.exception.BusinessException(
-                            targetLocker.getName() + " đã hết ngăn trống. Vui lòng chọn tủ khác."));
-        }
-
-        target.setStatus("RESERVED");
-        compartmentRepository.save(target);
-
-        // BƯỚC 2 — NHẢ NGĂN CŨ, chỉ khi ngăn cũ đang RESERVED. Tủ cũ giữ nguyên (nếu không cùng tủ).
-        if (old != null && !old.getCompartmentId().equals(target.getCompartmentId())
-                && "RESERVED".equalsIgnoreCase(old.getStatus())) {
+        if (old != null && "RESERVED".equalsIgnoreCase(old.getStatus())) {
             old.setStatus("EMPTY");
             compartmentRepository.save(old);
         }
 
         order.setLocker(targetLocker);
-        order.setCompartment(target);
-        // Dấu hiệu "shipper đã chốt tuyến", phân biệt với tủ do hệ thống đề xuất lúc tạo đơn.
-        order.setShipperReservedAt(now);
-        // GĐ23 — ghi hạn RIÊNG của lần chọn tủ này. Thiếu dòng này thì mọi đơn chọn tủ bị khoá
-        // cứng theo hằng số toàn cục 120 phút, shipper không chọn được 1 giờ (đúng lỗi thẻ này vá).
-        order.setReserveExpiresAt(now.plusHours(reserveHours));
+        order.setCompartment(null);
+        order.setShipperReservedAt(null);
+        order.setReserveExpiresAt(null);
         orderRepository.save(order);
 
         DeviceEvent event = DeviceEvent.builder()
                 .locker(targetLocker)
-                .compartmentId(target.getCompartmentId())
+                .compartmentId(null)
                 .eventType("ASSIGN_LOCKER")
                 .eventPayload("Order " + order.getOrderId() + " assigned to " + targetLocker.getLockerId()
-                        + " compartment " + target.getCompIndex()
-                        + (old != null ? " (from compartment " + old.getCompIndex() + ")" : " (no previous compartment)"))
+                        + " without reserving a compartment")
                 .build();
         deviceEventRepository.save(event);
 
@@ -1073,11 +1286,10 @@ public class ShipperService {
                 .deliveryType(order.getDeliveryType())
                 .lockerId(targetLocker.getLockerId())
                 .lockerName(targetLocker.getName())
-                .compartmentIndex(target.getCompIndex())
-                .compartmentSize(target.getSize())
-                .isShipperReserved(true)
-                // GĐ23 — trả hạn giữ chỗ để web hiện "giữ đến HH:mm" mà không tự cộng giờ ở client.
-                .reserveExpiresAt(order.getReserveExpiresAt())
+                .compartmentIndex(null)
+                .compartmentSize(null)
+                .isShipperReserved(false)
+                .reserveExpiresAt(null)
                 .expectedDate(order.getExpectedDate())
                 .status(order.getStatus())
                 .productName(order.getProductName())
@@ -1109,13 +1321,15 @@ public class ShipperService {
      * 4. Lấy danh sách bưu kiện quá hạn lưu kho để Shipper chủ động thu hồi
      */
     @Transactional(readOnly = true)
-    public List<OrderDTO.OrderResponse> getOverdueOrders(String lockerId) {
-        List<Order> list;
-        if (lockerId != null && !lockerId.isBlank() && !"ALL".equalsIgnoreCase(lockerId)) {
-            list = orderRepository.findByLocker_LockerIdAndStatus(lockerId, "OVERDUE");
-        } else {
-            list = orderRepository.findByStatus("OVERDUE");
-        }
+    public List<OrderDTO.OrderResponse> getOverdueOrders(String lockerId, String shipperUsername) {
+        String lockerFilter = lockerId == null || lockerId.isBlank() || "ALL".equalsIgnoreCase(lockerId)
+                ? null : lockerId.trim();
+        User requester = userRepository.findByUsername(shipperUsername)
+                .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
+                        "Không tìm thấy người dùng."));
+        List<Order> list = "ADMIN".equalsIgnoreCase(requester.getRole())
+                ? orderRepository.findOverdueForAdmin(lockerFilter)
+                : orderRepository.findOverdueAssignedToShipper(shipperUsername, lockerFilter);
 
         return list.stream()
                 .map(o -> OrderDTO.OrderResponse.builder()
@@ -1136,6 +1350,8 @@ public class ShipperService {
                         .paymentMethod(o.getPaymentMethod())
                         .paymentStatus(o.getPaymentStatus())
                         .createdAt(o.getCreatedAt())
+                        .assignedShipperUsername(o.getAssignedShipper() != null
+                                ? o.getAssignedShipper().getUsername() : null)
                         .build())
                 .collect(Collectors.toList());
     }
@@ -1314,6 +1530,13 @@ public class ShipperService {
                 .paymentStatus("PAID")
                 .productName("Đơn quá hạn (tạo thử)")
                 .build();
+        // Gộp ThanhChung (review #6) — danh sách quá hạn và guard thu hồi chỉ cho shipper được phân
+        // công; đơn thử do shipper tạo mà để trống thì chính người tạo không thấy/không thu hồi được.
+        if (createdBy != null && !createdBy.isBlank()) {
+            userRepository.findByUsername(createdBy.trim())
+                    .filter(u -> "SHIPPER".equalsIgnoreCase(u.getRole()))
+                    .ifPresent(don::setAssignedShipper);
+        }
         orderRepository.save(don);
 
         // Cấp mã nhận hàng như mọi đơn đã nạp: KHÔNG dùng lại `OrderService.generateRandomQrToken`
@@ -1484,6 +1707,13 @@ public class ShipperService {
             throw new com.ptit.smartlocker.exception.BusinessException(
                     "Đơn " + orderId + " không ở trạng thái quá hạn lưu kho (hiện tại: "
                             + order.getStatus() + "), không thể thu hồi.");
+        }
+
+        User assignedShipper = order.getAssignedShipper();
+        if (assignedShipper == null || currentUsername == null
+                || !currentUsername.equalsIgnoreCase(assignedShipper.getUsername())) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Đơn hàng này chưa được phân công cho tài khoản shipper đang đăng nhập.");
         }
 
         return order;

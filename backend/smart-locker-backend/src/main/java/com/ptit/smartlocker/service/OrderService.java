@@ -30,18 +30,21 @@ public class OrderService {
     private final CompartmentRepository compartmentRepository;
     private final LockerSlotScheduleRepository slotScheduleRepository;
     private final PickupCredentialRepository pickupCredentialRepository;
+    private final UserRepository userRepository;
 
     public OrderService(
             OrderRepository orderRepository,
             LockerRepository lockerRepository,
             CompartmentRepository compartmentRepository,
             LockerSlotScheduleRepository slotScheduleRepository,
-            PickupCredentialRepository pickupCredentialRepository) {
+            PickupCredentialRepository pickupCredentialRepository,
+            UserRepository userRepository) {
         this.orderRepository = orderRepository;
         this.lockerRepository = lockerRepository;
         this.compartmentRepository = compartmentRepository;
         this.slotScheduleRepository = slotScheduleRepository;
         this.pickupCredentialRepository = pickupCredentialRepository;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -69,6 +72,19 @@ public class OrderService {
      */
     @Transactional
     public OrderDTO.OrderResponse createOrder(OrderDTO.CheckoutRequest request) {
+        return createOrder(request, null);
+    }
+
+    /**
+     * Gộp ThanhChung (Q1) — giữ cả hai luồng tạo đơn. Đơn do admin tạo đi qua
+     * {@code ShipperService.createOrderByAdmin} và đã có shipper phụ trách. Đơn do SHIPPER tự
+     * tạo (nút "Thêm đơn") đi qua đây: gán luôn {@code assignedShipper} = người tạo, vì danh
+     * sách chờ nạp của shipper chỉ hiện đơn được giao cho chính họ — thiếu bước này đơn vừa tạo
+     * sẽ biến mất khỏi màn hình của người tạo ra nó. ADMIN tạo qua checkout ⇒ để trống, phân
+     * công sau ở tab "Đơn & phân công".
+     */
+    @Transactional
+    public OrderDTO.OrderResponse createOrder(OrderDTO.CheckoutRequest request, String creatorUsername) {
         String orderId = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         BigDecimal totalAmount = request.getTotalAmount() != null ? request.getTotalAmount() : BigDecimal.ZERO;
@@ -180,6 +196,12 @@ public class OrderService {
             // <p><b>Hệ quả cần nhớ:</b> `available_slots` KHÔNG còn là chốt chặn "hết ngăn" cho
             // đơn hôm nay, vì việc giữ/không giữ ngăn do thao tác của shipper quyết định, không
             // do số slot. Khối đồng bộ `availableSlots = số ngăn EMPTY` phía trên giữ nguyên.
+        }
+
+        if (creatorUsername != null && !creatorUsername.isBlank()) {
+            userRepository.findByUsername(creatorUsername.trim())
+                    .filter(u -> "SHIPPER".equalsIgnoreCase(u.getRole()))
+                    .ifPresent(order::setAssignedShipper);
         }
 
         orderRepository.save(order);
@@ -339,6 +361,11 @@ public class OrderService {
                 .otpCode(otpCode)
                 .otpExpiresAt(otpExpiresAt)
                 .createdAt(order.getCreatedAt())
+                .isShipperReserved(order.getShipperReservedAt() != null)
+                .trackingCode(order.getTrackingCode() != null && !order.getTrackingCode().isBlank()
+                        ? order.getTrackingCode() : order.getOrderId())
+                .assignedShipperUsername(order.getAssignedShipper() != null
+                        ? order.getAssignedShipper().getUsername() : null)
                 .build();
     }
 

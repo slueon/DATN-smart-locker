@@ -7,7 +7,9 @@ import com.ptit.smartlocker.repository.CompartmentRepository;
 import com.ptit.smartlocker.repository.LockerRepository;
 import com.ptit.smartlocker.repository.OrderRepository;
 import com.ptit.smartlocker.service.KioskEventService;
+import com.ptit.smartlocker.service.MqttService;
 import com.ptit.smartlocker.service.ShipperService;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -39,11 +42,13 @@ class KioskEventOnClosureTests {
     private static final String LOCKER = "LOCKER_HN_01";
 
     @Autowired private ShipperService shipperService;
+    @Autowired private MqttService mqttService;
     @Autowired private KioskEventService kioskEventService;
     @Autowired private LockerRepository lockerRepository;
     @Autowired private CompartmentRepository compartmentRepository;
     @Autowired private OrderRepository orderRepository;
     @Autowired private com.ptit.smartlocker.repository.ShipperIdentityTokenRepository tokenRepository;
+    @org.springframework.beans.factory.annotation.Autowired private com.ptit.smartlocker.repository.UserRepository userRepositoryForAssign;
 
     private Order order;
     private Compartment compartment;
@@ -110,6 +115,23 @@ class KioskEventOnClosureTests {
     }
 
     @Test
+    @DisplayName("Firmware báo deposit_cancelled → chốt thất bại và báo shipper ngay")
+    void firmwareDepositCancelledThiChotThatBai() {
+        long truoc = moc();
+
+        String payload = "{\"locker_id\":\"Tu_1\",\"status\":\"deposit_cancelled\",\"compartment\":1}";
+        mqttService.messageArrived("ptit/Tu_1/compartment/1/event",
+                new MqttMessage(payload.getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals("PENDING", orderRepository.findById("ORD-V42-KIOSK").orElseThrow().getStatus());
+        assertEquals("EMPTY",
+                compartmentRepository.findByLocker_LockerIdAndCompIndex(LOCKER, 1).orElseThrow().getStatus());
+        assertTrue(suKienSau(truoc).stream()
+                        .anyMatch(e -> KioskEventService.DEPOSIT_LEFT_EMPTY.equals(e.getType())),
+                "deposit_cancelled của firmware phải được chuyển thành failure event cho web shipper");
+    }
+
+    @Test
     @DisplayName("GĐ42 (2): đóng cửa CÓ hàng → DEPOSITED, KHÔNG bắn DEPOSIT_LEFT_EMPTY (không báo nhầm thất bại)")
     void coHangThiKhongBanSuKienThatBai() {
         long truoc = moc();
@@ -168,6 +190,7 @@ class KioskEventOnClosureTests {
         // đơn PENDING đã đặt trước ở ngăn 1 (đường `depositPackage`, không phải Kiosk)
         Order don = orderRepository.save(Order.builder()
                 .orderId("ORD-V42-API")
+                .assignedShipper(userRepositoryForAssign.findByUsername("shipper").orElseThrow()) // gộp ThanhChung: chỉ shipper được phân công mới nạp/thu hồi được
                 .customerName("Khách Test GĐ42")
                 .customerPhone("0912345678")
                 .deliveryType("LOCKER")

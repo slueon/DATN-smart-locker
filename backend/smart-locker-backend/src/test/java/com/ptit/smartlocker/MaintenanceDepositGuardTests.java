@@ -57,6 +57,7 @@ class MaintenanceDepositGuardTests {
     @Autowired private CompartmentRepository compartmentRepository;
     @Autowired private OrderRepository orderRepository;
     @Autowired private ShipperIdentityTokenRepository tokenRepository;
+    @org.springframework.beans.factory.annotation.Autowired private com.ptit.smartlocker.repository.UserRepository userRepositoryForAssign;
 
     private Locker locker;
 
@@ -92,6 +93,7 @@ class MaintenanceDepositGuardTests {
         return orderRepository.save(Order.builder()
                 .orderId(orderId)
                 .customerName("Khách Test GĐ28")
+                .assignedShipper(userRepositoryForAssign.findByUsername("shipper").orElseThrow()) // gộp ThanhChung: chỉ shipper được phân công mới nạp/thu hồi được
                 .customerPhone("0912345678")
                 .deliveryType("LOCKER")
                 .locker(locker)
