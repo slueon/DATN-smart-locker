@@ -79,7 +79,7 @@ Tài khoản mẫu: `admin/admin123` · `shipper/shipper123` · `khachhang/12345
 - Bảng `orders` không lưu shipper nào giao.
 - Broker công cộng `broker.emqx.io`, không xác thực (đã có TLS từ GĐ16).
 - `docker/emqx/acl.conf` dùng prefix `ptit/smartlocker/#`, không khớp base thật `ptit`.
-- Secret còn nằm trong file trong git: mật khẩu MySQL ở `MAP.md` và `src/test/resources/application.properties`; giá trị mặc định `mqtt.security.secret-token` ở `application.properties`.
+- Secret còn nằm trong file trong git: mật khẩu MySQL ở `MAP.md` và `src/test/resources/application.properties`. (Đã gỡ khoá `mqtt.security.secret-token` có mặc định cứng — không code nào đọc.)
 - Đồ án chưa có Dockerfile, docker-compose hay CI; máy chưa cài Docker. Frontend **đã có** `.env.example` (`VITE_API_URL`); backend chưa có file cấu hình mẫu.
 - `test-all.bat` chỉ chạy `npm test` của frontend, **không** chạy test backend.
 - `schema.sql` chỉ tạo `smart_locker_db`; DB test `smart_locker_tester` phải tạo tay, và mật khẩu DB test đang gán sẵn trong file test.

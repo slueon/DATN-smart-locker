@@ -189,18 +189,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [reservedOrderIds, setReservedOrderIds] = useState({});
   const [usingMockData, setUsingMockData] = useState(false);
 
-  // GĐ11 — SHIPPER CHỌN TỦ GIAO HÀNG.
-  //
-  // Mô hình mới: khách chỉ nhận hàng, đơn có thể ra đời mà chưa gán tủ (`lockerId = null`).
-  // Shipper tự chọn tủ; việc chọn tủ không tự giữ ngăn. Đặt trước ngăn là thao tác riêng.
-  const [suggestLockers, setSuggestLockers] = useState([]);
-  const [isLoadingSuggest, setIsLoadingSuggest] = useState(false);
-  const [showSuggestPanel, setShowSuggestPanel] = useState(false);
-  // Bấm thẻ tủ lần 1 chỉ mở hộp xác nhận (0 request); bấm "Xác nhận" mới gọi API.
-  const [pendingAssignLocker, setPendingAssignLocker] = useState(null);
-  const [isAssigning, setIsAssigning] = useState(false);
-  const [assignMessage, setAssignMessage] = useState(null);
-
   // GĐ5-A — CẢM BIẾN THẬT của ngăn đang thao tác.
   //
   // Nguồn dữ liệu: `GET /api/lockers/{id}/compartments` → `currentWeight`, `isDoorClosed`.
@@ -705,74 +693,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       return null;
     }
   };
-
-  /**
-   * GĐ11 — tải danh sách tủ gợi ý cho đơn đang chọn.
-   *
-   * <p>Chỉ gọi khi người dùng bấm "Đổi tủ / Chọn tủ" (không tự gọi khi mở tab) để không đốt
-   * request cho mọi đơn, và để mỗi lần mở là một lần lấy trạng thái tủ mới nhất.
-   */
-  const loadSuggestLockers = async (orderId) => {
-    if (!orderId) return;
-    setIsLoadingSuggest(true);
-    setAssignMessage(null);
-    try {
-      const res = await shipperApi.getSuggestLockers(orderId);
-      setSuggestLockers(res?.data?.data || []);
-    } catch (err) {
-      setSuggestLockers([]);
-      setAssignMessage({
-        type: 'error',
-        text: err?.response?.data?.message || 'Không tải được danh sách tủ gợi ý.',
-      });
-    } finally {
-      setIsLoadingSuggest(false);
-    }
-  };
-
-  const handleOpenSuggestPanel = async () => {
-    if (!activeOrder) return;
-    setShowSuggestPanel(true);
-    setPendingAssignLocker(null);
-    await loadSuggestLockers(activeOrder.orderId);
-  };
-
-  /**
-   * Gán tủ giao hàng cho đơn mà không giữ ngăn.
-   *
-   * <p>Hai bước: bấm thẻ tủ chỉ đặt `pendingAssignLocker` (KHÔNG gọi API), bấm "Xác nhận" trong
-   * hộp thoại mới thật sự gọi `assignLocker`. Việc giữ ngăn được thực hiện riêng ở bảng đặt trước.
-   */
-  const handleConfirmAssignLocker = async () => {
-    if (!activeOrder || !pendingAssignLocker) return;
-    setIsAssigning(true);
-    setAssignMessage(null);
-    try {
-      const res = await shipperApi.assignLocker(activeOrder.orderId, {
-        lockerId: pendingAssignLocker.lockerId,
-      });
-      const data = res?.data?.data;
-      setAssignMessage({
-        type: 'success',
-        text: `Đã gán tủ: ${data?.lockerName || pendingAssignLocker.name} · Chưa đặt trước ngăn`,
-      });
-      setPendingAssignLocker(null);
-      setShowSuggestPanel(false);
-      await loadOrders();
-      await loadReserveCompartments(data?.lockerId || pendingAssignLocker.lockerId, null);
-    } catch (err) {
-      // 409 = tủ đích đang bảo trì hoặc mất nhịp tim.
-      setAssignMessage({
-        type: 'error',
-        text: err?.response?.data?.message || 'Không chốt được tủ này. Vui lòng chọn tủ khác.',
-      });
-      setPendingAssignLocker(null);
-      await loadSuggestLockers(activeOrder.orderId);
-    } finally {
-      setIsAssigning(false);
-    }
-  };
-
   /** T3 — đặt trước ngăn cho đơn đang chọn. */
   const handleReserve = async () => {
     if (!activeOrder) return;

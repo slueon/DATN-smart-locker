@@ -337,7 +337,7 @@ class SmartLockerBackendApplicationTests {
                 .isDoorClosed(true)
                 .weightGrams(0.5)
                 .build();
-        assertThrows(RuntimeException.class, () -> shipperService.depositPackage(noTokenReq));
+        assertThrows(RuntimeException.class, () -> shipperService.depositPackage(noTokenReq, "shipper"));
 
         // 2. Gửi hàng kèm token chưa qua xác thực tại Kiosk: Phải bị từ chối
         ShipperDTO.GenerateTokenResponse tokenResp = shipperService.generateDynamicToken("shipper"); // gộp ThanhChung: token phải trùng shipper được phân công
@@ -350,7 +350,7 @@ class SmartLockerBackendApplicationTests {
                 .isDoorClosed(true)
                 .weightGrams(0.5)
                 .build();
-        assertThrows(RuntimeException.class, () -> shipperService.depositPackage(unverifiedReq));
+        assertThrows(RuntimeException.class, () -> shipperService.depositPackage(unverifiedReq, "shipper"));
 
         // 3. Quét xác thực token tại trạm thành công: Sau đó mới được phép nạp hàng
         boolean verified = shipperService.verifyDynamicToken(locker.getLockerId(), rawToken);
@@ -363,7 +363,7 @@ class SmartLockerBackendApplicationTests {
                 .isDoorClosed(true)
                 .weightGrams(0.5)
                 .build();
-        ShipperDTO.DepositResponse depositResp = shipperService.depositPackage(validReq);
+        ShipperDTO.DepositResponse depositResp = shipperService.depositPackage(validReq, "shipper");
         assertTrue(depositResp.isSuccess(), "Nạp hàng phải thành công khi token đã được xác thực");
 
         Order updatedOrder = orderRepository.findById(testOrderId).orElseThrow();

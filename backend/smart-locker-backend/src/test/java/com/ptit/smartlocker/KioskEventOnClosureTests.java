@@ -213,7 +213,7 @@ class KioskEventOnClosureTests {
                 .isDoorClosed(true)
                 .build();
 
-        var resp = shipperService.depositPackage(req);
+        var resp = shipperService.depositPackage(req, "shipper");
         assertTrue(resp.isSuccess(), "Nạp qua API phải thành công");
 
         var loai = suKienSau(truoc).stream()
@@ -245,7 +245,7 @@ class KioskEventOnClosureTests {
                 .isDoorClosed(true)
                 .build();
 
-        assertThrows(RuntimeException.class, () -> shipperService.depositPackage(req),
+        assertThrows(RuntimeException.class, () -> shipperService.depositPackage(req, "shipper"),
                 "Đơn không tồn tại thì phải ném lỗi");
 
         var loai = suKienSau(truoc).stream()

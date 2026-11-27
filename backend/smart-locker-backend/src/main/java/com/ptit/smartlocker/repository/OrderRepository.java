@@ -50,6 +50,19 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     @Query("SELECT o FROM Order o WHERE o.orderId = :orderId")
     Optional<Order> findByIdForShipperClaim(@Param("orderId") String orderId);
 
+    /**
+     * Khoá bi quan CHỈ dòng {@code orders} ({@code SELECT ... FOR UPDATE}), không JOIN FETCH.
+     *
+     * <p>Review bảo mật #7: {@code ShipperService.depositPackage}, {@code deletePendingOrder} và
+     * phần kiểm chung của thu hồi đọc đơn rồi ghi; nếu không khoá thì admin chuyển phân công giữa
+     * chừng, hoặc hai lần thu hồi cùng lúc, đều lọt qua kiểm tra. Không fetch ngăn/tủ để khoá không
+     * lan sang các bảng đó (giảm nguy cơ deadlock với luồng khoá ngăn); các quan hệ lazy vẫn nạp
+     * được vì mọi nơi gọi đều nằm trong {@code @Transactional}.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.orderId = :orderId")
+    Optional<Order> findByIdForUpdate(@Param("orderId") String orderId);
+
     @Query("SELECT COUNT(o) FROM Order o WHERE o.compartment.compartmentId = :compartmentId "
             + "AND o.orderId <> :orderId AND o.status IN :statuses")
     long countOtherActiveOrdersForCompartment(@Param("compartmentId") Integer compartmentId,

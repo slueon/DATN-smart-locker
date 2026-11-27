@@ -121,7 +121,7 @@ class HeartbeatDepositGuardTests {
         Order order = taoDonPending("ORD-GD30-OLD", locker);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> shipperService.depositPackage(yeuCauNap("ORD-GD30-OLD", REAL_LOCKER)),
+                () -> shipperService.depositPackage(yeuCauNap("ORD-GD30-OLD", REAL_LOCKER), "shipper"),
                 "Tủ thật mất nhịp 60 phút mà vẫn nạp được là lỗ GĐ30 — phải 409");
 
         String msg = ex.getMessage().toUpperCase();
@@ -147,7 +147,7 @@ class HeartbeatDepositGuardTests {
         taoDonPending("ORD-GD30-MSG", locker);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> shipperService.depositPackage(yeuCauNap("ORD-GD30-MSG", REAL_LOCKER)));
+                () -> shipperService.depositPackage(yeuCauNap("ORD-GD30-MSG", REAL_LOCKER), "shipper"));
 
         assertTrue(ex.getMessage().contains(locker.getName()),
                 "Message phải nêu tên tủ: " + ex.getMessage());
@@ -169,7 +169,7 @@ class HeartbeatDepositGuardTests {
         taoDonPending("ORD-GD30-FRESH", locker);
 
         ShipperDTO.DepositResponse res =
-                shipperService.depositPackage(yeuCauNap("ORD-GD30-FRESH", REAL_LOCKER));
+                shipperService.depositPackage(yeuCauNap("ORD-GD30-FRESH", REAL_LOCKER), "shipper");
 
         assertTrue(res.isSuccess(), "Tủ thật còn sống thì phải nạp được");
         assertEquals("DEPOSITED",
@@ -190,7 +190,7 @@ class HeartbeatDepositGuardTests {
         taoDonPending("ORD-GD30-VIRT", ao);
 
         ShipperDTO.DepositResponse res =
-                shipperService.depositPackage(yeuCauNap("ORD-GD30-VIRT", VIRTUAL_LOCKER));
+                shipperService.depositPackage(yeuCauNap("ORD-GD30-VIRT", VIRTUAL_LOCKER), "shipper");
 
         assertTrue(res.isSuccess(),
                 "Tủ ảo không bao giờ gửi nhịp tim — chặn là mất 9/10 tủ (điều cấm #1)");
@@ -211,7 +211,7 @@ class HeartbeatDepositGuardTests {
         taoDonPending("ORD-GD30-NULL", locker);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> shipperService.depositPackage(yeuCauNap("ORD-GD30-NULL", REAL_LOCKER)),
+                () -> shipperService.depositPackage(yeuCauNap("ORD-GD30-NULL", REAL_LOCKER), "shipper"),
                 "Tủ thật chưa từng gửi nhịp tim thì không được coi là đang sống");
 
         assertTrue(ex.getMessage().toUpperCase().contains("NHỊP TIM"),
@@ -232,7 +232,7 @@ class HeartbeatDepositGuardTests {
         taoDonPending("ORD-GD30-4MIN", locker);
 
         ShipperDTO.DepositResponse res =
-                shipperService.depositPackage(yeuCauNap("ORD-GD30-4MIN", REAL_LOCKER));
+                shipperService.depositPackage(yeuCauNap("ORD-GD30-4MIN", REAL_LOCKER), "shipper");
 
         assertTrue(res.isSuccess(), "4 phút < ngưỡng 5 phút nên KHÔNG được chặn");
     }

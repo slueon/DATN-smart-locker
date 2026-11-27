@@ -210,12 +210,6 @@ export const shipperApi = {
   cancelReserve: (orderId) =>
     api.delete('/shipper/orders/' + encodeURIComponent(orderId) + '/reserve'),
 
-  // GĐ11 — shipper toàn quyền chọn tủ giao hàng.
-  getSuggestLockers: (orderId) =>
-    api.get('/shipper/suggest-lockers?orderId=' + encodeURIComponent(orderId)),
-  assignLocker: (orderId, body) =>
-    api.post('/shipper/orders/' + encodeURIComponent(orderId) + '/assign-locker', body),
-
   /**
    * GĐ17 — sự kiện Kiosk của tủ thật, nguồn của popup "theo dõi tủ".
    *

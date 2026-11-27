@@ -290,7 +290,8 @@ public class ShipperService {
      * Kiểm tra cảm biến kép: Cảm biến trọng lượng HX711 + Cảm biến đóng cửa MC-38
      */
     @Transactional
-    public ShipperDTO.DepositResponse depositPackage(ShipperDTO.DepositPackageRequest request) {
+    public ShipperDTO.DepositResponse depositPackage(ShipperDTO.DepositPackageRequest request,
+                                                     String currentUsername) {
         // Kiểm tra danh tính Shipper (Quy trình bảo mật 2 bước tại Kiosk)
         if (request.getDynamicToken() == null || request.getDynamicToken().isBlank()) {
             throw new RuntimeException("Vui lòng quét mã QR xác thực danh tính Shipper trước khi gửi hàng!");
@@ -303,7 +304,18 @@ public class ShipperService {
             throw new RuntimeException("Mã QR Shipper chưa được quét xác thực tại trạm tủ!");
         }
 
-        Order order = orderRepository.findById(request.getOrderId())
+        // Review bảo mật #8 — token phải thuộc CHÍNH người đang đăng nhập, giống điều kiện (4) của
+        // luồng thu hồi (`xacThucVaTimDonThuHoi`). Thiếu bước này, shipper A cầm token đã xác thực
+        // của shipper B nạp được đơn giao cho B. 403 vì là lỗi quyền.
+        if (currentUsername == null || token.getShipperId() == null
+                || !token.getShipperId().equalsIgnoreCase(currentUsername)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Mã QR này không thuộc tài khoản đang đăng nhập!");
+        }
+
+        // Review bảo mật #7 — khoá dòng đơn (SELECT ... FOR UPDATE) như assign/reserve/claim, để
+        // admin chuyển phân công hoặc tác vụ nhả ngăn chạy cùng lúc phải chờ, không ghi đè nhau.
+        Order order = orderRepository.findByIdForUpdate(request.getOrderId())
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + request.getOrderId()));
 
         if (order.getAssignedShipper() == null
@@ -970,7 +982,8 @@ public class ShipperService {
             throw new IllegalArgumentException("Thiếu mã đơn hàng cần xoá!");
         }
 
-        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+        // Review bảo mật #7 — khoá dòng đơn để không xoá đè lúc admin đang chuyển phân công.
+        Order order = orderRepository.findByIdForUpdate(orderId.trim())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
 
         if (order.getAssignedShipper() == null
@@ -1018,7 +1031,7 @@ public class ShipperService {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("Thiếu mã đơn hàng cần xoá!");
         }
-        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
+        Order order = orderRepository.findByIdForUpdate(orderId.trim())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
         if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
             throw new IllegalArgumentException(
@@ -1104,109 +1117,6 @@ public class ShipperService {
                         + compartment.getCompIndex())
                 .build();
         deviceEventRepository.save(event);
-    }
-
-    /**
-     * GĐ11 — danh sách tủ shipper CÓ THỂ chọn để giao đơn này.
-     *
-     * <p>Lọc cứng 4 điều kiện, theo đúng thứ tự:
-     * <ol>
-     *   <li>Có ít nhất một ngăn {@code EMPTY} đủ cỡ cho kiện.</li>
-     *   <li>{@code connection_status} khác {@code MAINTENANCE} — tủ đang bảo trì thì không nhận hàng.</li>
-     *   <li>{@code last_heartbeat} trong 5 phút gần nhất; <b>NULL thì loại luôn</b> (chưa từng gửi
-     *       nhịp tim = không tin được). Không đọc {@code connection_status} để suy ra sức khoẻ:
-     *       DB ghi {@code ONLINE} cho cả 10 tủ kể cả tủ im lặng nhiều ngày.</li>
-     *   <li>Tỷ lệ lấp đầy {@code (total - available) / total < 0.8}.</li>
-     * </ol>
-     *
-     * <p><b>GIỚI HẠN — phải nói rõ khi bảo vệ:</b> danh sách KHÔNG xếp theo khoảng cách tới khách
-     * vì bảng {@code orders} không lưu toạ độ khách. Đây là hạng mục phát triển tiếp theo; đừng
-     * trình bày là đã có.
-     *
-     * <p><b>Cỡ kiện — GĐ18: KHÔNG còn dùng để lọc gì.</b> Hệ thống bỏ phân biệt size: mọi ngăn
-     * {@code EMPTY} đều nhận được mọi kiện, nên {@code availableCompartments} đếm <b>tất cả</b> ngăn
-     * trống chứ không chỉ ngăn "vừa cỡ". Cột {@code compartments.size} vẫn còn trong DB nhưng chỉ
-     * để đọc/hiển thị, không tham gia quyết định.
-     *
-     * <p><b>N+1:</b> chỉ 2 câu query — {@link CompartmentRepository#findAllWithLocker()} nạp toàn
-     * bộ ngăn kèm tủ, và {@code lockerRepository.findAll()}. Không truy vấn trong vòng lặp.
-     */
-    @Transactional(readOnly = true)
-    public List<ShipperDTO.SuggestLockerResponse> suggestLockers(String orderId) {
-        if (orderId == null || orderId.isBlank()) {
-            throw new IllegalArgumentException("Thiếu mã đơn hàng cần gợi ý tủ!");
-        }
-        Order order = orderRepository.findByIdWithCompartment(orderId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
-
-        String currentLockerId = order.getLocker() != null ? order.getLocker().getLockerId() : null;
-
-        // 1 câu query cho toàn bộ ngăn của mọi tủ (JOIN FETCH locker) rồi gom theo lockerId.
-        java.util.Map<String, List<Compartment>> compsByLocker = new java.util.HashMap<>();
-        for (Compartment c : compartmentRepository.findAllWithLocker()) {
-            if (c.getLocker() == null || c.getLocker().getLockerId() == null) continue;
-            compsByLocker.computeIfAbsent(c.getLocker().getLockerId(), k -> new java.util.ArrayList<>()).add(c);
-        }
-
-        LocalDateTime now = LocalDateTime.now();
-        List<ShipperDTO.SuggestLockerResponse> result = new java.util.ArrayList<>();
-
-        for (Locker locker : lockerRepository.findAll()) {
-            if ("MAINTENANCE".equalsIgnoreCase(locker.getConnectionStatus())) continue;
-
-            // GĐ12 — TÁCH TỦ THẬT / TỦ ẢO.
-            //
-            //   • Tủ ảo (`isVirtual = true`): khai báo CSDL, không có thiết bị nên không bao giờ
-            //     có nhịp tim → BỎ QUA kiểm nhịp tim. Nếu vẫn kiểm thì 9 tủ ảo luôn bị loại và
-            //     shipper chỉ còn đúng 1 tủ thật để chọn, đúng hiện tượng user báo.
-            //   • Tủ thật (`LOCKER_HN_01`): BẮT BUỘC nhịp tim trong HEARTBEAT_FRESH_MINUTES.
-            //     Đây là điểm user yêu cầu rõ — tủ thật phải theo dõi được có đang kết nối hay không.
-            if (!Boolean.TRUE.equals(locker.getIsVirtual())) {
-                if (locker.getLastHeartbeat() == null) continue;
-                if (locker.getLastHeartbeat().isBefore(now.minusMinutes(HEARTBEAT_FRESH_MINUTES))) continue;
-            }
-
-            List<Compartment> comps = compsByLocker.getOrDefault(locker.getLockerId(), List.of());
-            if (comps.isEmpty()) continue;
-
-            // GĐ18 — KHÔNG lọc theo size nữa: mọi ngăn EMPTY đều dùng được.
-            //
-            // Trước đây dòng này còn `&& sizeFits(requiredSize, c.getSize())`, nên một tủ còn 2
-            // ngăn trống cỡ S vẫn bị coi là "0 ngăn trống" cho đơn cỡ L → shipper bị chặn giao dù
-            // tủ còn chỗ. Cột `compartments.size` vẫn giữ trong DB, chỉ không còn là tiêu chí.
-            int available = 0;
-            for (Compartment c : comps) {
-                if ("EMPTY".equalsIgnoreCase(c.getStatus())) {
-                    available++;
-                }
-            }
-            if (available == 0) continue;
-
-            int total = comps.size();
-            double occupancy = (double) (total - available) / total;
-            if (occupancy >= MAX_OCCUPANCY_RATIO) continue;
-
-            result.add(ShipperDTO.SuggestLockerResponse.builder()
-                    .lockerId(locker.getLockerId())
-                    .name(locker.getName())
-                    .address(locker.getAddress())
-                    .latitude(locker.getLatitude())
-                    .longitude(locker.getLongitude())
-                    .availableCompartments(available)
-                    .totalCompartments(total)
-                    .connectionStatus(locker.getConnectionStatus())
-                    .healthLabel(healthLabel(locker.getLastHeartbeat(), now, Boolean.TRUE.equals(locker.getIsVirtual())))
-                    .isSuggestedByOrder(currentLockerId != null && currentLockerId.equals(locker.getLockerId()))
-                    .build());
-        }
-
-        // Tủ đang gán trong đơn lên đầu; còn lại nhiều ngăn trống hơn đứng trước; cuối cùng theo mã.
-        result.sort(java.util.Comparator
-                .comparing((ShipperDTO.SuggestLockerResponse r) -> !Boolean.TRUE.equals(r.getIsSuggestedByOrder()))
-                .thenComparing(ShipperDTO.SuggestLockerResponse::getAvailableCompartments,
-                        java.util.Comparator.reverseOrder())
-                .thenComparing(ShipperDTO.SuggestLockerResponse::getLockerId));
-        return result;
     }
 
     /** Gán tủ giao hàng cho đơn mà không giữ ngăn; giữ ngăn là thao tác riêng. */
@@ -1694,7 +1604,9 @@ public class ShipperService {
                     "Mã QR này không thuộc tài khoản đang đăng nhập!");
         }
 
-        Order order = orderRepository.findById(orderId)
+        // Review bảo mật #7 — khoá dòng đơn: hai lần thu hồi đồng thời thì lần sau chờ lần trước
+        // commit rồi mới đọc trạng thái (đã COMPLETED → 409), không cùng lọt qua kiểm OVERDUE.
+        Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
                         "Không tìm thấy đơn hàng: " + orderId));
 

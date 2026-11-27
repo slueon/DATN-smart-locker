@@ -72,8 +72,11 @@ public class ShipperController {
      */
     @PostMapping("/deposit")
     public ResponseEntity<ApiResponse<ShipperDTO.DepositResponse>> depositPackage(
-            @RequestBody ShipperDTO.DepositPackageRequest request) {
-        ShipperDTO.DepositResponse response = shipperService.depositPackage(request);
+            @RequestBody ShipperDTO.DepositPackageRequest request,
+            java.security.Principal principal) {
+        // Review bảo mật #8 — danh tính lấy từ phiên đăng nhập, không nhận từ client.
+        ShipperDTO.DepositResponse response = shipperService.depositPackage(
+                request, principal == null ? null : principal.getName());
         return ResponseEntity.ok(ApiResponse.ok(response.getMessage(), response));
     }
 
@@ -136,20 +139,6 @@ public class ShipperController {
         }
     }
 
-    /**
-     * GĐ11 — gợi ý tủ cho một đơn PENDING: backend lọc sẵn tủ còn ngăn trống đúng cỡ, không bảo
-     * trì, còn nhịp tim và chưa kín. Shipper vẫn toàn quyền chọn tủ khác.
-     */
-    @GetMapping("/suggest-lockers")
-    public ResponseEntity<ApiResponse<List<ShipperDTO.SuggestLockerResponse>>> suggestLockers(
-            @RequestParam String orderId) {
-        List<ShipperDTO.SuggestLockerResponse> response = shipperService.suggestLockers(orderId);
-        return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách tủ gợi ý thành công", response));
-    }
-
-    /**
-     * Gán tủ giao hàng cho đơn mà không giữ ngăn. Shipper đặt trước ngăn qua endpoint riêng.
-     */
     /**
      * T3 — Đặt trước một ngăn cụ thể cho đơn PENDING (shipper chọn trên WEB, Q2).
      *

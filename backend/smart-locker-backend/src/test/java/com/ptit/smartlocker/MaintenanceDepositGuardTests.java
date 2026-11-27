@@ -192,7 +192,7 @@ class MaintenanceDepositGuardTests {
         datLockerMaint();
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> shipperService.depositPackage(yeuCauNap("ORD-GD28-MAINT")),
+                () -> shipperService.depositPackage(yeuCauNap("ORD-GD28-MAINT"), "shipper"),
                 "Nạp được hàng vào tủ đang bảo trì nghĩa là hàng có thể mất — phải ném 409");
 
         assertTrue(ex.getMessage().toUpperCase().contains("BẢO TRÌ"),
@@ -217,7 +217,7 @@ class MaintenanceDepositGuardTests {
         lockerRepository.save(locker);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> shipperService.depositPackage(yeuCauNap("ORD-GD28-COMP")),
+                () -> shipperService.depositPackage(yeuCauNap("ORD-GD28-COMP"), "shipper"),
                 "Ngăn đang bảo trì không được đặt hàng vào");
 
         assertTrue(ex.getMessage().toUpperCase().contains("BẢO TRÌ"),
@@ -235,14 +235,14 @@ class MaintenanceDepositGuardTests {
         taoDonPending("ORD-GD28-OK", 1);
         datLockerMaint();
         assertThrows(BusinessException.class,
-                () -> shipperService.depositPackage(yeuCauNap("ORD-GD28-OK")),
+                () -> shipperService.depositPackage(yeuCauNap("ORD-GD28-OK"), "shipper"),
                 "Đang bảo trì thì phải chặn trước đã");
 
         // Mở khoá = đúng việc setLockerMaintenance(lock=false) làm.
         locker.setConnectionStatus("ONLINE");
         lockerRepository.save(locker);
 
-        ShipperDTO.DepositResponse res = shipperService.depositPackage(yeuCauNap("ORD-GD28-OK"));
+        ShipperDTO.DepositResponse res = shipperService.depositPackage(yeuCauNap("ORD-GD28-OK"), "shipper");
         assertTrue(res.isSuccess(), "Mở khoá xong phải nạp được");
         assertEquals("DEPOSITED",
                 orderRepository.findById("ORD-GD28-OK").orElseThrow().getStatus(),

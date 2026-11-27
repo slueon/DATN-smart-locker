@@ -39,6 +39,21 @@ public class AuthService {
      */
     static final List<String> SHIPPER_ACTIVE_STATUSES = List.of("PENDING", "PENDING_OPENED", "OVERDUE");
 
+    /** Review bảo mật #11 — một câu chung cho "không có tài khoản" và "sai mật khẩu". */
+    static final String INVALID_CREDENTIALS_MESSAGE = "Tên đăng nhập hoặc mật khẩu không chính xác!";
+
+    /** Hash BCrypt giả, tạo một lần, để nhánh "không có tài khoản" tốn thời gian như nhánh sai mật khẩu. */
+    private volatile String dummyPasswordHash;
+
+    private String dummyPasswordHash() {
+        String hash = dummyPasswordHash;
+        if (hash == null) {
+            hash = passwordEncoder.encode("smart-locker-dummy-password");
+            dummyPasswordHash = hash;
+        }
+        return hash;
+    }
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthSessionRepository authSessionRepository;
@@ -163,7 +178,13 @@ public class AuthService {
         String loginKey = request.getUsername().trim();
         User user = userRepository.findByUsernameForUpdate(loginKey)
                 .or(() -> userRepository.findByPhoneForUpdate(loginKey))
-                .orElseThrow(() -> new RuntimeException("Tài khoản hoặc số điện thoại không tồn tại!"));
+                .orElse(null);
+        if (user == null) {
+            // Review bảo mật #11 — cùng một câu với "sai mật khẩu" để không dò được tài khoản nào
+            // tồn tại. Vẫn chạy một lần BCrypt giả để thời gian phản hồi không lộ điều đó.
+            passwordEncoder.matches(request.getPassword(), dummyPasswordHash());
+            throw new RuntimeException(INVALID_CREDENTIALS_MESSAGE);
+        }
 
         String rawPassword = request.getPassword();
         String storedPassword = user.getPassword();
@@ -182,8 +203,10 @@ public class AuthService {
             }
         }
 
+        // Kiểm mật khẩu TRƯỚC khi kiểm phiên đang mở: người không biết mật khẩu không được biết
+        // tài khoản đang đăng nhập ở nơi khác.
         if (!matches) {
-            throw new RuntimeException("Mật khẩu không chính xác!");
+            throw new RuntimeException(INVALID_CREDENTIALS_MESSAGE);
         }
 
         boolean hasActiveSession = authSessionRepository.existsByUser_IdAndRevokedFalseAndExpiresAtAfter(
