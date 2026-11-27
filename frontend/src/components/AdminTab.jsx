@@ -656,7 +656,10 @@ export default function AdminTab({ currentUser }) {
             <button
               key={tab.id}
               onClick={() => setActiveAdminSubTab(tab.id)}
-              className={`flex-1 min-w-0 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
+              // Màn hẹp: nút giữ đúng bề rộng chữ (`shrink-0`) để tray cuộn ngang — trước đây
+              // `flex-1 min-w-0` ép nút nhỏ hơn chữ `nowrap` nên nhãn tràn đè lên nhau (lỗi mobile).
+              // Từ `md` trở lên mới chia đều hết hàng như cũ.
+              className={`shrink-0 md:flex-1 md:min-w-0 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
                 isActive
                   ? 'bg-white text-slate-900 shadow-sm border border-black/[0.04]'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'

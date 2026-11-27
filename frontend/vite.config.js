@@ -10,6 +10,9 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    // Lắng nghe trên mọi địa chỉ (0.0.0.0) để điện thoại cùng Wi-Fi mở được http://<IP-máy>:5173.
+    // Mặc định Vite chỉ nghe localhost nên máy khác trong mạng không kết nối được.
+    host: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
