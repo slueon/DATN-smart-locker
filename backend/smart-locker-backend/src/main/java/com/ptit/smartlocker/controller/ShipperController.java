@@ -194,16 +194,33 @@ public class ShipperController {
      * <p><b>Quyền:</b> SHIPPER hoặc ADMIN (xem {@code SecurityConfig}). ADMIN cần đọc được vì
      * cùng một màn hình giám sát được dùng khi trực ca.
      *
-     * <p>Không lọc theo người dùng: bộ đệm gắn theo TỦ, và mọi shipper đứng cùng tủ đều phải
-     * thấy cùng sự kiện phần cứng.
+     * <p>Bộ đệm gắn theo TỦ, mọi shipper đứng cùng tủ thấy cùng sự kiện phần cứng — <b>trừ</b>
+     * sự kiện xác thực QR shipper (GĐ75 #9): SHIPPER_VERIFIED/SHIPPER_REJECTED của mã thuộc
+     * shipper KHÁC bị lọc bỏ khi người gọi là SHIPPER. Trước đây shipper B quét QR ở tủ thì
+     * màn hình shipper A cũng báo "Đã xác thực" và nút mở cửa sáng lên, bấm vào ra 400.
+     * Sự kiện từ chối mã không tra được chủ ({@code shipperId == null}) vẫn trả cho mọi người.
+     * ADMIN thấy tất cả.
      */
     @GetMapping("/kiosk-events")
     public ResponseEntity<ApiResponse<KioskEventDTO>> getKioskEvents(
             @RequestParam(required = false) String lockerId,
-            @RequestParam(required = false) Long after) {
+            @RequestParam(required = false) Long after,
+            org.springframework.security.core.Authentication authentication) {
+        List<com.ptit.smartlocker.dto.KioskEvent> events = kioskEventService.since(lockerId, after);
+        boolean isShipper = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SHIPPER".equals(a.getAuthority()));
+        if (isShipper) {
+            String me = authentication.getName();
+            events = events.stream()
+                    .filter(e -> !(KioskEventService.SHIPPER_VERIFIED.equals(e.getType())
+                                    || KioskEventService.SHIPPER_REJECTED.equals(e.getType()))
+                            || e.getShipperId() == null
+                            || e.getShipperId().equals(me))
+                    .toList();
+        }
         KioskEventDTO payload = KioskEventDTO.builder()
                 .latestSeq(kioskEventService.latestSeq())
-                .events(kioskEventService.since(lockerId, after))
+                .events(events)
                 .build();
         return ResponseEntity.ok(ApiResponse.ok("Lấy sự kiện Kiosk thành công", payload));
     }

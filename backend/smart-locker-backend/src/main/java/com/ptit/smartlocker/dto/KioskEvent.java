@@ -44,5 +44,13 @@ public class KioskEvent {
     /** Câu hiển thị cho shipper (tiếng Việt), backend soạn sẵn để web không phải đoán. */
     private String message;
 
+    /**
+     * GĐ75 (#9) — shipper sở hữu QR vừa quét (chỉ có ở SHIPPER_VERIFIED/SHIPPER_REJECTED khi mã
+     * tra được chủ). Dùng để lọc phía server: shipper A không được thấy "đã xác thực" khi shipper
+     * B quét ở cùng tủ. KHÔNG trả ra JSON để không lộ danh tính shipper cho client khác.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String shipperId;
+
     private LocalDateTime at;
 }

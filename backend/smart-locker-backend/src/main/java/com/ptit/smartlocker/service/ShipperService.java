@@ -243,6 +243,18 @@ public class ShipperService {
     }
 
     /**
+     * GĐ75 (#9) — chủ sở hữu của một mã QR shipper; {@code null} nếu mã rỗng/không tồn tại.
+     * Chỉ đọc, không đổi trạng thái token.
+     */
+    @Transactional(readOnly = true)
+    public String findShipperIdByToken(String dynamicToken) {
+        if (dynamicToken == null || dynamicToken.isBlank()) return null;
+        return tokenRepository.findByDynamicToken(dynamicToken)
+                .map(ShipperIdentityToken::getShipperId)
+                .orElse(null);
+    }
+
+    /**
      * Có phiên shipper ĐÃ xác thực tại ĐÚNG tủ này và CÒN hiệu lực hay không.
      *
      * <p>Dùng để chặn topic `ptit/QR_send`. Bắt buộc lọc theo {@code lockerId}:

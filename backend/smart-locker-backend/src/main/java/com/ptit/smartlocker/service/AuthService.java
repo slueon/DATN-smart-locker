@@ -123,6 +123,12 @@ public class AuthService {
      */
     @Transactional
     public AuthDTO.UserResponse login(AuthDTO.LoginRequest request) {
+        // GĐ75 (#13) — thiếu username/password thì báo lỗi nghiệp vụ, không để NullPointerException
+        // rò rỉ tên lớp nội bộ ra client.
+        if (request == null || request.getUsername() == null || request.getUsername().isBlank()
+                || request.getPassword() == null || request.getPassword().isBlank()) {
+            throw new IllegalArgumentException("Vui lòng nhập tên đăng nhập và mật khẩu!");
+        }
         String loginKey = request.getUsername().trim();
         User user = userRepository.findByUsername(loginKey)
                 .or(() -> userRepository.findByPhone(loginKey))

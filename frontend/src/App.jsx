@@ -44,6 +44,13 @@ export default function App() {
   );
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // GĐ75 (#2) — dưới md sidebar là drawer: mặc định ẩn, mở bằng nút ☰ ở Header.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Chọn tab xong thì đóng drawer (trên desktop state này luôn false nên không ảnh hưởng).
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [activeTab]);
 
   // Đảm bảo mỗi vai trò chỉ được truy cập các tab thuộc thẩm quyền của mình
   useEffect(() => {
@@ -92,8 +99,19 @@ export default function App() {
         currentUser={currentUser}
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
         onLogout={handleLogout}
       />
+
+      {/* GĐ75 (#2) — lớp phủ khi drawer mở trên mobile; bấm ra ngoài để đóng. */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 bg-slate-900/50 z-30 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
       {/* Main Workspace Frame */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen relative z-10">
@@ -102,6 +120,7 @@ export default function App() {
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           currentUser={currentUser}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
         />
 
         {/* Dynamic Tab Content Area */}

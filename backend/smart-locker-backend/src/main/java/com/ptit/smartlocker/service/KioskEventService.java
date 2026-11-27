@@ -102,6 +102,18 @@ public class KioskEventService {
                              Integer compartment,
                              Boolean reserved,
                              String message) {
+        return record(lockerId, type, orderId, trackingCode, compartment, reserved, message, null);
+    }
+
+    /** Như {@link #record(String, String, String, String, Integer, Boolean, String)} kèm chủ QR shipper (GĐ75 #9). */
+    public KioskEvent record(String lockerId,
+                             String type,
+                             String orderId,
+                             String trackingCode,
+                             Integer compartment,
+                             Boolean reserved,
+                             String message,
+                             String shipperId) {
         KioskEvent event = KioskEvent.builder()
                 .seq(seq.incrementAndGet())
                 .lockerId(lockerId)
@@ -111,6 +123,7 @@ public class KioskEventService {
                 .compartment(compartment)
                 .reserved(reserved)
                 .message(message)
+                .shipperId(shipperId)
                 .at(LocalDateTime.now())
                 .build();
 

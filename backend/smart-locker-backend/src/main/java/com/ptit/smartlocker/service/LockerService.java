@@ -4,6 +4,7 @@ import com.ptit.smartlocker.dto.CapacityDTO;
 import com.ptit.smartlocker.entity.Compartment;
 import com.ptit.smartlocker.entity.Locker;
 import com.ptit.smartlocker.entity.LockerSlotSchedule;
+import com.ptit.smartlocker.entity.MaintenanceLog;
 import com.ptit.smartlocker.entity.Order;
 import com.ptit.smartlocker.repository.CompartmentRepository;
 import com.ptit.smartlocker.repository.LockerRepository;
@@ -336,13 +337,26 @@ public class LockerService {
                 ? null
                 : lockerId.trim();
 
-        return maintenanceLogRepository
-                .findRecentWithLocker(filter, org.springframework.data.domain.PageRequest.of(0, safeLimit))
-                .stream()
+        List<MaintenanceLog> logs = maintenanceLogRepository
+                .findRecentWithLocker(filter, org.springframework.data.domain.PageRequest.of(0, safeLimit));
+
+        // GĐ75 (#15) — đổi khoá chính ngăn → số ngăn hiển thị. Nạp một lượt (tránh N+1).
+        java.util.Set<Integer> compIds = logs.stream()
+                .map(MaintenanceLog::getCompartmentId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.Map<Integer, Integer> idToIndex = new java.util.HashMap<>();
+        if (!compIds.isEmpty()) {
+            compartmentRepository.findAllById(compIds)
+                    .forEach(c -> idToIndex.put(c.getCompartmentId(), c.getCompIndex()));
+        }
+
+        return logs.stream()
                 .map(m -> com.ptit.smartlocker.dto.MaintenanceLogDTO.builder()
                         .logId(m.getLogId())
                         .lockerId(m.getLocker() != null ? m.getLocker().getLockerId() : null)
                         .compartmentId(m.getCompartmentId())
+                        .compIndex(m.getCompartmentId() != null ? idToIndex.get(m.getCompartmentId()) : null)
                         .action(m.getAction())
                         .reasonCode(m.getReasonCode())
                         .note(m.getNote())

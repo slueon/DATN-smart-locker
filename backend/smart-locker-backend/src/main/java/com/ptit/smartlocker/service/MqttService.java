@@ -1180,10 +1180,12 @@ public class MqttService implements MqttCallbackExtended {
 
         // Sự kiện cho web: thiếu hai dòng này thì shipper quét QR ở tủ mà màn hình web im
         // lặng, không biết tủ đã nhận hay từ chối mã.
+        // GĐ75 (#9) — gắn chủ QR để web chỉ báo "đã xác thực" cho ĐÚNG shipper vừa quét.
         kioskEventService.record(locker.getLockerId(),
                 verified ? KioskEventService.SHIPPER_VERIFIED : KioskEventService.SHIPPER_REJECTED,
                 null, null, null, null,
-                verified ? "Xác thực shipper thành công" : "QR shipper không hợp lệ");
+                verified ? "Xác thực shipper thành công" : "QR shipper không hợp lệ",
+                shipperService.findShipperIdByToken(token));
     }
 
     /**

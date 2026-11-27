@@ -72,6 +72,10 @@ public class OrderService {
         String orderId = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         BigDecimal totalAmount = request.getTotalAmount() != null ? request.getTotalAmount() : BigDecimal.ZERO;
+        // GĐ75 (#3) — chặn số tiền âm: trước đây đơn −999.999 đ vẫn được ghi PAID.
+        if (totalAmount.signum() < 0) {
+            throw new IllegalArgumentException("Giá trị đơn hàng không được là số âm!");
+        }
         // GĐ65a — `requiredSize` KHÔNG còn đọc: tạo đơn không chọn ngăn nữa (xem khối trong nhánh
         // LOCKER). Field vẫn nằm trong DTO để không vỡ contract với frontend cũ.
         String productName = request.getProductName() != null && !request.getProductName().isBlank()
@@ -82,8 +86,10 @@ public class OrderService {
             throw new IllegalArgumentException("Ngày nhận hàng không thể là ngày trong quá khứ!");
         }
         String payMethod = request.getPaymentMethod() != null ? request.getPaymentMethod() : "ONLINE_VIETQR";
-        String payStatus = request.getPaymentStatus() != null ? request.getPaymentStatus() :
-                ("COD".equalsIgnoreCase(payMethod) ? "UNPAID" : "PAID");
+        // GĐ75 (#3) — server tự quyết trạng thái thanh toán, KHÔNG tin `paymentStatus` client gửi
+        // (trước đây đơn COD gửi kèm "PAID" là được ghi đã thanh toán). Field vẫn nằm trong DTO
+        // để không vỡ contract, nhưng bị bỏ qua.
+        String payStatus = "COD".equalsIgnoreCase(payMethod) ? "UNPAID" : "PAID";
 
         Order order = Order.builder()
                 .orderId(orderId)
@@ -197,13 +203,16 @@ public class OrderService {
     @Transactional(readOnly = true)
     public OrderDTO.OrderResponse getOrderById(String orderId, String phone) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy đơn hàng: " + orderId));
+                // GĐ75 (#12) — 404 thay vì 400 (handler ánh xạ ResourceNotFoundException → 404).
+                .orElseThrow(() -> new com.ptit.smartlocker.exception.ResourceNotFoundException(
+                        "Không tìm thấy đơn hàng: " + orderId));
 
         boolean isAuthorized = phone != null && !phone.isBlank() && order.getCustomerPhone().equalsIgnoreCase(phone.trim());
 
         // Ràng buộc chống IDOR: Nếu có cung cấp số điện thoại, bắt buộc phải khớp với đơn
         if (phone != null && !phone.isBlank() && !isAuthorized) {
-            throw new RuntimeException("Bạn không có quyền truy cập thông tin đơn hàng này!");
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Bạn không có quyền truy cập thông tin đơn hàng này!");
         }
 
         // Chỉ tiết lộ mã mở tủ khi đã xác thực đúng số điện thoại và đơn hàng đã ở trong tủ (DEPOSITED)

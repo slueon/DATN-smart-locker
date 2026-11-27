@@ -20,8 +20,13 @@ public class MaintenanceLogDTO {
 
     private Long logId;
     private String lockerId;
-    /** NULL = bảo trì toàn tủ; có giá trị = chỉ bảo trì ngăn đó (1-based). */
+    /**
+     * NULL = bảo trì toàn tủ; có giá trị = KHOÁ CHÍNH {@code compartments.compartment_id} của ngăn
+     * (KHÔNG phải số ngăn hiển thị — xem {@link #compIndex}).
+     */
     private Integer compartmentId;
+    /** GĐ75 (#15) — số ngăn 1-based ({@code comp_index}) để hiển thị; NULL khi bảo trì toàn tủ. */
+    private Integer compIndex;
     /** {@code LOCK} hoặc {@code UNLOCK}. */
     private String action;
     private String reasonCode;

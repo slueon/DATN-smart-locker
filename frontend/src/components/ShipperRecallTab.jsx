@@ -70,6 +70,9 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
   const [recallPhase, setRecallPhase] = useState('IDLE'); // 'IDLE' | 'DOOR_OPEN' | 'PROCESSING' | 'SUCCESS' | 'FAILSAFE_ERROR'
   const [doorSensorState, setDoorSensorState] = useState('CLOSED'); // 'CLOSED' | 'OPEN'
   const [loadcellWeight, setLoadcellWeight] = useState(0); // KG
+  // GĐ75 (#6) — trạng thái THẬT các ngăn của tủ đang thu hồi. Thiếu prop này thì
+  // LockerCabinetVisualizer rơi về `defaultSlots` gõ cứng ⇒ báo "Ngăn Trống" cho đơn đang có hàng.
+  const [recallCompartments, setRecallCompartments] = useState(null);
   // GĐ5 — khối lượng THẬT đọc từ cảm biến HX711, dùng làm mốc khi vào quy trình thu hồi.
   //
   // Vì sao KHÔNG dùng `activeRecallOrder.weight` nữa: `OrderDTO.OrderResponse` **không có**
@@ -430,6 +433,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     if (!activeRecallOrder) {
       setSensorWeightKg(null);
       setLoadcellWeight(0);
+      setRecallCompartments(null);
       return undefined;
     }
     setDoorSensorState('CLOSED');
@@ -443,6 +447,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
     if (!lockerId || compIndex == null) {
       setSensorWeightKg(null);
       setLoadcellWeight(0);
+      setRecallCompartments(null);
       return undefined;
     }
 
@@ -451,7 +456,17 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
       try {
         const res = await lockerApi.getCompartments(lockerId);
         if (cancelled) return;
-        const comp = (res?.data?.data || []).find((c) => c.compIndex === compIndex);
+        const list = res?.data?.data || [];
+        // GĐ75 (#6) — cùng cách map với CustomerPickupTab (DB gram → kg, comp_index làm id).
+        setRecallCompartments(list.length
+          ? list.map((c) => ({
+              id: c.compIndex,
+              status: c.status || null,
+              weight: c.currentWeight != null ? Number(c.currentWeight) / 1000 : 0,
+              door: c.isDoorClosed === false ? 'OPEN' : 'CLOSED',
+            }))
+          : null);
+        const comp = list.find((c) => c.compIndex === compIndex);
         // DB gram → UI kg.
         const kg = comp?.currentWeight != null ? Number(comp.currentWeight) / 1000 : 0;
         setSensorWeightKg(kg);
@@ -461,6 +476,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
         // Mất mạng: không bịa số, để 0 và UI hiện "—".
         setSensorWeightKg(null);
         setLoadcellWeight(0);
+        setRecallCompartments(null);
       }
     })();
     return () => { cancelled = true; };
@@ -1017,6 +1033,7 @@ export default function ShipperRecallTab({ currentUser, onNavigateToDeposit }) {
                   lockerName={activeRecallOrder.lockerName}
                   lockerId={activeRecallOrder.lockerId}
                   activeSlotId={activeRecallOrder.compartmentIndex}
+                  compartments={recallCompartments}
                   doorState={doorSensorState}
                   sensorWeight={loadcellWeight}
                   compact={true}

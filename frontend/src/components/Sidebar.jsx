@@ -14,10 +14,14 @@ export default function Sidebar({
   activeTab,
   setActiveTab,
   currentUser,
-  collapsed,
+  collapsed: collapsedProp,
   setCollapsed,
+  mobileOpen = false,
+  onCloseMobile,
   onLogout
 }) {
+  // GĐ75 (#2) — drawer mobile luôn hiện đủ nhãn (256px), bất kể trạng thái thu gọn desktop.
+  const collapsed = collapsedProp && !mobileOpen;
   /**
    * GĐ7 — badge "quá hạn" lấy từ API THẬT, và chọn nguồn theo VAI TRÒ.
    *
@@ -110,9 +114,11 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col justify-between shrink-0 z-40 select-none relative ${
-        collapsed ? 'w-20' : 'w-64'
-      }`}
+      // GĐ75 (#2) — dưới md: drawer `fixed` trượt bằng `left` (KHÔNG dùng transform trên phần tử
+      // fixed — điều cấm #3), mặc định ẩn ngoài màn hình. Từ md trở lên: giữ y hệt bố cục cũ.
+      className={`bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col justify-between shrink-0 z-40 select-none fixed inset-y-0 w-64 md:relative md:inset-auto md:left-auto ${
+        mobileOpen ? 'left-0' : '-left-64'
+      } ${collapsed ? 'md:w-20' : 'md:w-64'}`}
     >
       {/* Top Branding Section — GĐ49a: chữ sáng trên nền tối, logo giữ màu chủ đạo blue-600. */}
       <div>
@@ -136,7 +142,8 @@ export default function Sidebar({
           </div>
 
           <button
-            onClick={() => setCollapsed(!collapsed)}
+            // Trên mobile nút này đóng drawer; trên desktop thu gọn/mở rộng như cũ.
+            onClick={() => (mobileOpen && onCloseMobile ? onCloseMobile() : setCollapsed(!collapsed))}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
             title={collapsed ? 'Mở rộng sidebar' : 'Thu gọn sidebar'}
           >

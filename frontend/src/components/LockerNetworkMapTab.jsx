@@ -1318,7 +1318,8 @@ export default function LockerNetworkMapTab({ currentUser, onNavigateToPickup, o
                           {m.createdAt ? new Date(m.createdAt).toLocaleString('vi-VN') : '—'}
                         </td>
                         <td className="py-1.5 pr-3 text-slate-700">
-                          {m.compartmentId != null ? `Ngăn #${m.compartmentId}` : 'Toàn tủ'}
+                          {/* GĐ75 (#15) — `compartmentId` là KHOÁ CHÍNH, số ngăn hiển thị là `compIndex`. */}
+                          {m.compartmentId != null ? `Ngăn #${m.compIndex ?? '?'}` : 'Toàn tủ'}
                         </td>
                         <td className="py-1.5 pr-3 text-slate-700">
                           <span

@@ -57,12 +57,10 @@ public class OrderController {
                 && !phone.equalsIgnoreCase(nullToEmpty(currentPhone(authentication)))) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(DENY_PHONE));
         }
-        try {
-            OrderDTO.OrderResponse order = orderService.getOrderById(orderId, phone);
-            return ResponseEntity.ok(ApiResponse.ok(order));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        // GĐ75 (#12) — bỏ `catch (Exception) → 400`: để GlobalExceptionHandler trả đúng mã
+        // (404 không tìm thấy, 403 không có quyền, 409 nghiệp vụ).
+        OrderDTO.OrderResponse order = orderService.getOrderById(orderId, phone);
+        return ResponseEntity.ok(ApiResponse.ok(order));
     }
 
     /**

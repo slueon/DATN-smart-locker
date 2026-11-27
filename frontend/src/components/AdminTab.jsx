@@ -278,20 +278,15 @@ export default function AdminTab() {
         fetchUsers();
         return;
       }
+      setUserMsg({ text: res.data?.message || 'Không cấp được tài khoản. Vui lòng thử lại.', type: 'error' });
     } catch (err) {
-      const newUser = {
-        id: users.length + 1,
-        username: newUsername,
-        fullName: newFullName,
-        phone: newPhone,
-        role: newRole,
-      };
-      setUsers([newUser, ...users]);
-      setUserMsg({ text: `Đã cấp tài khoản ${newRole} cho '${newFullName}' thành công!`, type: 'success' });
-      setNewFullName('');
-      setNewPhone('');
-      setNewUsername('');
-      setNewPassword('');
+      // GĐ75 (#1) — trước đây nhánh này tự chèn user giả vào danh sách và báo "thành công" dù
+      // backend từ chối (vd. trùng username). Nay báo đúng lỗi backend trả về, giữ nguyên form
+      // để admin sửa lại.
+      setUserMsg({
+        text: err.response?.data?.message || 'Không kết nối được máy chủ, tài khoản CHƯA được tạo.',
+        type: 'error',
+      });
     }
   };
 

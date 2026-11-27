@@ -528,7 +528,10 @@ public class PickupService {
     private void recordLockerFailure(String lockerId) {
         if (lockerId == null || lockerId.isBlank()) return;
         lockerFailureMap.compute(lockerId, (id, tracker) -> {
-            if (tracker == null) {
+            // GĐ75 (#16) — đợt khoá trước đã hết hạn ⇒ đếm lại từ 0. Trước đây `failures` vẫn ≥ 5
+            // nên chỉ 1 lần sai sau khi hết khoá là trạm bị khoá tiếp 2 phút.
+            if (tracker == null || (tracker.lockoutUntil != null
+                    && !LocalDateTime.now().isBefore(tracker.lockoutUntil))) {
                 tracker = new LockerFailureTracker();
             }
             tracker.failures++;

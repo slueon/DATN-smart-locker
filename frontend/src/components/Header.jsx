@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Bell, CheckCheck, X,
   ChevronRight, Package, Radio, Sparkles,
-  AlertTriangle, CheckCircle2, Key, Info
+  AlertTriangle, CheckCircle2, Key, Info, Menu
 } from 'lucide-react';
 import { store, NOTIFS_UPDATED_EVENT } from '../services/store';
 import { getAuthToken } from '../services/api';
@@ -14,7 +14,8 @@ const NOTIF_POLL_MS = 5000;
 export default function Header({
   activeTab,
   setActiveTab,
-  currentUser
+  currentUser,
+  onOpenMobileNav
 }) {
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -139,6 +140,17 @@ export default function Header({
     <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-30 select-none">
       {/* Breadcrumb Path */}
       <div className="flex items-center gap-3 text-xs min-w-0">
+        {/* GĐ75 (#2) — nút mở menu chỉ hiện dưới md (sidebar thành drawer ẩn trên mobile). */}
+        {onOpenMobileNav && (
+          <button
+            type="button"
+            onClick={onOpenMobileNav}
+            className="md:hidden p-2 -ml-2 rounded-lg text-slate-600 hover:bg-slate-100 cursor-pointer shrink-0"
+            aria-label="Mở menu điều hướng"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-slate-500 hidden sm:inline font-medium">{breadcrumb.category}</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-300 hidden sm:inline shrink-0" />
