@@ -118,8 +118,8 @@ public class SecurityConfig {
                 .requestMatchers("/error").permitAll()
 
                 // --- Công khai: phải đăng nhập được mới có token ---
-                .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/login/replace-session",
-                        "/api/auth/register").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/login/replace-session")
+                        .permitAll() // bỏ /api/auth/register: khách không tự đăng ký, tài khoản do Admin cấp
 
                 // --- Swagger / OpenAPI ---
                 // Mặc định TẮT (app.swagger.enabled=false) → CHẶN HẲN, kể cả khi có token.

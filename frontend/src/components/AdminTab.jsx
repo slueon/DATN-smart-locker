@@ -1469,6 +1469,8 @@ export default function AdminTab({ currentUser }) {
                   {users.map((u) => {
                     const isCurrentUser = currentUser?.username?.toLowerCase() === u.username?.toLowerCase();
                     const isProtectedAccount = u.username?.toLowerCase() === 'admin';
+                    // Admin không được đổi vai trò hay xoá quản trị viên KHÁC (backend cũng chặn).
+                    const isOtherAdmin = u.role === 'ADMIN' && !isCurrentUser;
                     const isPendingDelete = pendingDeleteUser?.id === u.id;
                     return (
                       <tr key={u.id} className="hover:bg-slate-50/50 transition">
@@ -1482,9 +1484,13 @@ export default function AdminTab({ currentUser }) {
                             <select
                               aria-label={`Đổi vai trò cho ${u.username}`}
                               value={u.role}
-                              disabled={isCurrentUser || roleUpdatingId === u.id}
+                              disabled={isCurrentUser || isOtherAdmin || roleUpdatingId === u.id}
                               onChange={(e) => handleUpdateUserRole(u, e.target.value)}
-                              title={isCurrentUser ? 'Không thể tự đổi vai trò tài khoản đang đăng nhập' : 'Đổi vai trò người dùng'}
+                              title={isCurrentUser
+                                ? 'Không thể tự đổi vai trò tài khoản đang đăng nhập'
+                                : isOtherAdmin
+                                ? 'Không thể đổi vai trò của quản trị viên khác'
+                                : 'Đổi vai trò người dùng'}
                               className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <option value="CUSTOMER">Khách hàng</option>
@@ -1517,12 +1523,14 @@ export default function AdminTab({ currentUser }) {
                             <button
                               type="button"
                               onClick={() => setPendingDeleteUser(u)}
-                              disabled={isCurrentUser || isProtectedAccount || deletingUserId != null}
+                              disabled={isCurrentUser || isProtectedAccount || isOtherAdmin || deletingUserId != null}
                               title={
                                 isCurrentUser
                                   ? 'Không thể xóa tài khoản đang đăng nhập'
                                   : isProtectedAccount
                                   ? 'Không thể xóa tài khoản quản trị mặc định'
+                                  : isOtherAdmin
+                                  ? 'Không thể xóa tài khoản của quản trị viên khác'
                                   : 'Xóa tài khoản'
                               }
                               className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"

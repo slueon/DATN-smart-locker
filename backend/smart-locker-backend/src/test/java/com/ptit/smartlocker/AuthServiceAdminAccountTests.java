@@ -171,7 +171,6 @@ class AuthServiceAdminAccountTests {
                 .role("ADMIN")
                 .build();
         when(userRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(user));
-        when(userRepository.findByRoleForUpdate("ADMIN")).thenReturn(List.of(user));
 
         assertThrows(RuntimeException.class, () -> authService.deleteUser(1L, "admin"));
 
@@ -287,5 +286,40 @@ class AuthServiceAdminAccountTests {
         assertThrows(RuntimeException.class, () -> authService.updateUserRole(1L, "CUSTOMER", "other-admin"));
 
         verify(userRepository, never()).save(user);
+    }
+
+    @Test
+    void changingRoleOfAnotherAdminIsRejected() {
+        User other = User.builder().id(11L).username("admin2").phone("0900000011").role("ADMIN").build();
+        when(userRepository.findByIdForUpdate(11L)).thenReturn(Optional.of(other));
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> authService.updateUserRole(11L, "SHIPPER", "admin"));
+
+        assertTrue(ex.getMessage().contains("quản trị viên khác"));
+        verify(userRepository, never()).save(other);
+        verify(authSessionRepository, never()).deleteByUser_Id(11L);
+    }
+
+    @Test
+    void deletingAnotherAdminIsRejected() {
+        User other = User.builder().id(12L).username("admin3").phone("0900000012").role("ADMIN").build();
+        when(userRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(other));
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> authService.deleteUser(12L, "admin"));
+
+        assertTrue(ex.getMessage().contains("quản trị viên khác"));
+        verify(userRepository, never()).delete(other);
+    }
+
+    @Test
+    void promotingShipperToAdminIsStillAllowed() {
+        User shipper = User.builder().id(13L).username("shipper13").phone("0900000013").role("SHIPPER").build();
+        when(userRepository.findByIdForUpdate(13L)).thenReturn(Optional.of(shipper));
+        when(userRepository.save(shipper)).thenReturn(shipper);
+
+        AuthDTO.UserResponse res = authService.updateUserRole(13L, "ADMIN", "admin");
+
+        assertEquals("ADMIN", res.getRole());
     }
 }

@@ -55,19 +55,6 @@ public class AuthController {
     }
 
     /**
-     * 2. Đăng ký tài khoản: CHỈ DÀNH CHO KHÁCH HÀNG
-     */
-    @PostMapping("/register")
-    public ResponseEntity<ApiResponse<AuthDTO.UserResponse>> register(@RequestBody AuthDTO.RegisterRequest request) {
-        try {
-            AuthDTO.UserResponse user = authService.registerCustomer(request);
-            return ResponseEntity.ok(ApiResponse.ok("Đăng ký tài khoản Khách hàng thành công!", user));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
-    }
-
-    /**
      * 3. Cấp tài khoản mới: CHỈ QUẢN TRỊ VIÊN CÓ QUYỀN CẤP
      */
     @PostMapping("/admin/create-user")

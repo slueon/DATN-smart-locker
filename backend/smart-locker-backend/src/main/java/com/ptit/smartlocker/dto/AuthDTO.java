@@ -27,27 +27,6 @@ public class AuthDTO {
     @Getter
     @Setter
     @Builder
-    public static class RegisterRequest {
-        private String username;
-        private String password;
-        private String fullName;
-        private String phone;
-        // Role cố định là CUSTOMER, không cho phép client truyền role khác
-
-        public RegisterRequest() {
-        }
-
-        public RegisterRequest(String username, String password, String fullName, String phone) {
-            this.username = username;
-            this.password = password;
-            this.fullName = fullName;
-            this.phone = phone;
-        }
-    }
-
-    @Getter
-    @Setter
-    @Builder
     public static class CreateAccountByAdminRequest {
         private String username;
         private String password;
