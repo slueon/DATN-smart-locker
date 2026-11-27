@@ -1098,29 +1098,6 @@ export default function CustomerPickupTab({ currentUser, lockerFilterId = null }
                       <span className="font-mono">{conHan.label}</span>
                     </div>
 
-                    {/* 2 nút QR / OTP — DÙNG LẠI NGUYÊN handler hiện có (điều cấm #1). */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      {/* GĐ72 — quá hạn lưu kho thì khoá cả 2 nút: mã đã chết, xin OTP cũng vô ích. */}
-                      <button
-                        onClick={() => handleOpenQrModal(ord)}
-                        disabled={conHan.isOverdue}
-                        className="ios-btn px-3 py-3 rounded-lg border-2 border-blue-600 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        <QrCode className="w-4 h-4" />
-                        <span>Mã QR Nhận Hàng</span>
-                      </button>
-                      <button
-                        onClick={() => handleGenerateOtp(ord)}
-                        disabled={generatingOtpId === ord.orderId || conHan.isOverdue}
-                        className="ios-btn px-3 py-3 rounded-lg border-2 border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-                      >
-                        <Key className="w-4 h-4 text-blue-600" />
-                        <span>
-                          {generatingOtpId === ord.orderId ? 'Đang tạo OTP...' : 'Tạo Mã OTP (5 phút)'}
-                        </span>
-                      </button>
-                    </div>
-
                     {/* Nếu OTP đã có: hiện luôn mã + nút phóng to / đổi mã (tái dùng handler). */}
                     {(() => {
                       const st = getOtpStatus(ord);
@@ -1406,125 +1383,41 @@ export default function CustomerPickupTab({ currentUser, lockerFilterId = null }
                       hệ thống "tự mở" modal. */}
                   <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 leading-snug">
                     Tủ đang chờ bạn chọn cách nhận: hãy bấm <strong>QR</strong> hoặc <strong>OTP</strong> trên
-                    màn hình tủ — mã tương ứng sẽ tự hiện ở đây. Bạn cũng có thể bấm nút bên dưới.
+                    màn hình tủ — mã sẽ được gửi về <strong>thông báo</strong> (biểu tượng chuông), bấm vào để mở mã.
                   </p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                    {/* Method 1: QR nhận hàng */}
-                    <button
-                      onClick={() => handleOpenQrModal(selectedOrder)}
-                      className="p-4.5 rounded-2xl liquid-glass border border-white/80 hover:bg-white/70 text-left transition cursor-pointer shadow-sm group hover:-translate-y-0.5"
-                    >
-                      <div className="flex items-center gap-2 text-blue-600 font-bold text-xs mb-1">
-                        <QrCode className="w-4 h-4" />
-                        <span>Mã QR Nhận Hàng</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500">
-                        Quét tại camera Kiosk để mở tủ.
-                      </p>
-                    </button>
-
-                    {/* Method 2: OTP 5 Phút */}
-                    {(() => {
-                      const otpStatus = getOtpStatus(selectedOrder);
-                      return (
-                        <div className="p-4.5 rounded-2xl liquid-glass border border-white/80 shadow-sm flex flex-col justify-between">
-                          {otpStatus.isGenerated && !otpStatus.isExpired && (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                                <span className="flex items-center gap-1.5 text-slate-800">
-                                  <ShieldCheck className="w-4 h-4 text-emerald-600" /> Mã OTP Mở Tủ:
-                                </span>
-                                <span className={`font-mono text-xs px-2 py-0.5 rounded-md font-bold flex items-center gap-1 ${
-                                  otpStatus.remainingSeconds <= 60 
-                                    ? 'bg-rose-50 text-rose-700 border border-rose-200 animate-pulse' 
-                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                }`}>
-                                  <Timer className="w-3 h-3" />
-                                  {formatSeconds(otpStatus.remainingSeconds)}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center justify-between bg-white/70 border border-white/90 rounded-2xl p-2.5 px-3.5 shadow-inner">
-                                <div className="font-mono text-lg font-black text-blue-700 tracking-widest">
-                                  {selectedOrder.otpCode}
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    onClick={() => handleCopyOtp(selectedOrder.otpCode)}
-                                    title="Sao chép OTP"
-                                    className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-white/80 rounded-lg transition cursor-pointer"
-                                  >
-                                    {copiedOtp ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                                  </button>
-                                  <button
-                                    onClick={() => handleGenerateOtp(selectedOrder)}
-                                    disabled={generatingOtpId === selectedOrder.orderId}
-                                    title="Đổi mã mới (5 phút)"
-                                    className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-white/80 rounded-lg transition cursor-pointer"
-                                  >
-                                    <RefreshCw className={`w-3.5 h-3.5 ${generatingOtpId === selectedOrder.orderId ? 'animate-spin text-blue-600' : ''}`} />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                <span>Nhập 6 số tại Kiosk</span>
-                                <button
-                                  onClick={() => setOtpModalOrder(selectedOrder)}
-                                  className="text-blue-600 hover:underline font-bold cursor-pointer"
-                                >
-                                  Phóng to
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {otpStatus.isGenerated && otpStatus.isExpired && (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-xs font-bold">
-                                <span className="flex items-center gap-1.5 text-slate-700">
-                                  <AlertCircle className="w-4 h-4 text-rose-500" /> Mã OTP Mở Tủ:
-                                </span>
-                                <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-md">
-                                  Hết hạn (quá 5p)
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => handleGenerateOtp(selectedOrder)}
-                                disabled={generatingOtpId === selectedOrder.orderId}
-                                className="ios-btn w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-3 rounded-2xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/20"
-                              >
-                                <RefreshCw className={`w-3.5 h-3.5 ${generatingOtpId === selectedOrder.orderId ? 'animate-spin' : ''}`} />
-                                <span>Tạo Mã OTP Mới (5 phút)</span>
-                              </button>
-                            </div>
-                          )}
-
-                          {!otpStatus.isGenerated && (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                                <span className="flex items-center gap-1.5">
-                                  <Key className="w-3.5 h-3.5 text-blue-600" /> Mã OTP Mở Tủ:
-                                </span>
-                                <span className="text-[10px] text-slate-500 bg-white/60 px-2 py-0.5 rounded font-bold border border-white/80">
-                                  5 phút
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => handleGenerateOtp(selectedOrder)}
-                                disabled={generatingOtpId === selectedOrder.orderId}
-                                className="ios-btn w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-3 rounded-2xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-blue-500/25"
-                              >
-                                <ShieldCheck className={`w-4 h-4 ${generatingOtpId === selectedOrder.orderId ? 'animate-spin' : ''}`} />
-                                <span>{generatingOtpId === selectedOrder.orderId ? 'Đang tạo OTP...' : 'Tạo Mã OTP (5 phút)'}</span>
-                              </button>
-                            </div>
-                          )}
+                  {/* Bỏ nút "Mã QR Nhận Hàng" / "Tạo Mã OTP": mã chỉ lấy qua THÔNG BÁO sau khi khách chọn
+                      QR/OTP trên màn hình tủ (bấm thông báo ⇒ tự mở modal QR hoặc tự tạo OTP). Nếu OTP đang còn
+                      hiệu lực thì chỉ HIỂN THỊ lại mã (không tạo/đổi mã ở đây). */}
+                  {(() => {
+                    const otpStatus = getOtpStatus(selectedOrder);
+                    if (!otpStatus.isGenerated || otpStatus.isExpired) return null;
+                    return (
+                      <div className="flex items-center justify-between bg-white/70 border border-white/90 rounded-2xl p-2.5 px-3.5 shadow-inner">
+                        <div>
+                          <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Mã OTP đang hiệu lực · còn {formatSeconds(otpStatus.remainingSeconds)}
+                          </span>
+                          <div className="font-mono text-lg font-black text-blue-700 tracking-widest">{selectedOrder.otpCode}</div>
                         </div>
-                      );
-                    })()}
-                  </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleCopyOtp(selectedOrder.otpCode)}
+                            title="Sao chép OTP"
+                            className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-white/80 rounded-lg transition cursor-pointer"
+                          >
+                            {copiedOtp ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            onClick={() => setOtpModalOrder(selectedOrder)}
+                            className="text-[11px] text-blue-600 hover:underline font-bold cursor-pointer"
+                          >
+                            Phóng to
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 

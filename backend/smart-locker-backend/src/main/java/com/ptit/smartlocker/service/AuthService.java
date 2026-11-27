@@ -236,43 +236,6 @@ public class AuthService {
     }
 
     /**
-     * Đăng ký tài khoản: CHỈ DÀNH RIÊNG CHO KHÁCH HÀNG (CUSTOMER)
-     */
-    @Transactional
-    public AuthDTO.UserResponse registerCustomer(AuthDTO.RegisterRequest request) {
-        if (request.getUsername() == null || request.getUsername().isBlank() ||
-            request.getPassword() == null || request.getPassword().isBlank() ||
-            request.getFullName() == null || request.getFullName().isBlank() ||
-            request.getPhone() == null || request.getPhone().isBlank()) {
-            throw new RuntimeException("Vui lòng điền đầy đủ tất cả thông tin đăng ký!");
-        }
-
-        String cleanPhone = request.getPhone().trim();
-        if (!cleanPhone.matches("^(0|84)[3|5|7|8|9][0-9]{8}$")) {
-            throw new RuntimeException("Số điện thoại không đúng định dạng Việt Nam (10 chữ số)!");
-        }
-
-        if (userRepository.existsByUsername(request.getUsername().trim())) {
-            throw new RuntimeException("Tên đăng nhập '" + request.getUsername() + "' đã được sử dụng!");
-        }
-
-        if (userRepository.existsByPhone(cleanPhone)) {
-            throw new RuntimeException("Số điện thoại '" + request.getPhone() + "' đã được đăng ký!");
-        }
-
-        User user = User.builder()
-                .username(request.getUsername().trim())
-                .password(passwordEncoder.encode(request.getPassword()))
-                .fullName(request.getFullName().trim())
-                .phone(cleanPhone)
-                .role("CUSTOMER") // Bắt buộc là CUSTOMER
-                .build();
-
-        user = userRepository.save(user);
-        return mapToResponse(user);
-    }
-
-    /**
      * Cấp tài khoản mới: DO QUẢN TRỊ VIÊN (ADMIN) THỰC HIỆN
      * Dùng để cấp tài khoản cho SHIPPER hoặc ADMIN phụ
      */
@@ -343,6 +306,11 @@ public class AuthService {
         if (sameUsername(user.getUsername(), actorUsername) && !role.equals(user.getRole())) {
             throw new RuntimeException("Không thể tự thay đổi vai trò tài khoản đang đăng nhập.");
         }
+        // Admin không được đổi vai trò của một quản trị viên KHÁC (chỉ được nâng người khác lên ADMIN).
+        if ("ADMIN".equals(user.getRole()) && !role.equals(user.getRole())
+                && !sameUsername(user.getUsername(), actorUsername)) {
+            throw new RuntimeException("Không thể thay đổi vai trò của quản trị viên khác.");
+        }
         if ("ADMIN".equals(user.getRole()) && !"ADMIN".equals(role)
                 && PROTECTED_ACCOUNT_USERNAMES.contains(user.getUsername().toLowerCase())) {
             throw new RuntimeException("Không thể hạ vai trò tài khoản quản trị mặc định.");
@@ -370,6 +338,10 @@ public class AuthService {
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy tài khoản."));
         if (sameUsername(user.getUsername(), actorUsername)) {
             throw new RuntimeException("Không thể xóa tài khoản đang đăng nhập.");
+        }
+        // Cùng quy tắc với đổi vai trò: admin không được xoá tài khoản của quản trị viên khác.
+        if ("ADMIN".equals(user.getRole())) {
+            throw new RuntimeException("Không thể xóa tài khoản của quản trị viên khác.");
         }
         if (PROTECTED_ACCOUNT_USERNAMES.contains(user.getUsername().toLowerCase())) {
             throw new RuntimeException("Không thể xóa tài khoản quản trị mặc định.");

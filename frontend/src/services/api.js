@@ -13,7 +13,7 @@ const api = axios.create({
 /* ─────────────────────────────────────────────────────────────────────────────
  * W4 — Xác thực Bearer token.
  *
- * Backend đã bật Spring Security: mọi endpoint (trừ /auth/login và /auth/register)
+ * Backend đã bật Spring Security: mọi endpoint (trừ /auth/login và /auth/login/replace-session)
  * đều đòi `Authorization: Bearer <token>`. Token được cấp khi login và lưu trong
  * sessionStorage.smart_locker_user.token để mỗi tab có phiên riêng.
  *
@@ -110,7 +110,6 @@ export const authApi = {
   login: (data) => api.post('/auth/login', data),
   replaceSession: (data) => api.post('/auth/login/replace-session', data),
   logout: () => api.post('/auth/logout'),
-  register: (data) => api.post('/auth/register', data),
   createAccountByAdmin: (data) => api.post('/auth/admin/create-user', data),
   getUsers: (role) => api.get(`/auth/users${role ? `?role=${role}` : ''}`),
   updateUserRole: (userId, role) =>

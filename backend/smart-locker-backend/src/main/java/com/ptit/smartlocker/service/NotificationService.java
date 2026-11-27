@@ -129,7 +129,7 @@ public class NotificationService {
                     "Bưu kiện đã về tủ",
                     "Kiện hàng" + productPart(order) + " đã được nạp vào tủ" + lockerPart(order)
                             + (compIndex != null ? " ngăn #" + compIndex : "")
-                            + ". Bấm để xem mã QR/OTP mở tủ.");
+                            + ". Chọn cách nhận (QR hoặc OTP) trên màn hình tủ, mã sẽ gửi về thông báo.");
         } catch (RuntimeException ex) {
             log.warn("depositSuccess: {}", ex.toString());
         }
