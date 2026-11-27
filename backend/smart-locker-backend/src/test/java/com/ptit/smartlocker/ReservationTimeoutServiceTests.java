@@ -103,7 +103,11 @@ class ReservationTimeoutServiceTests {
                 .shipperReservedAt(LocalDateTime.now().minusMinutes(phut))
                 .reserveExpiresAt(hanRiengPhut == null
                         ? null
-                        : LocalDateTime.now().plusMinutes(hanRiengPhut))
+                        // Cắt phần lẻ giây: cột `reserve_expires_at` là DATETIME (0 chữ số lẻ), MySQL
+                        // LÀM TRÒN LÊN khi phần lẻ ≥ 0,5 s ⇒ hạn "+0 phút" bị đẩy sang giây sau và
+                        // query `reserve_expires_at < now` bỏ sót đơn (test chập chờn có từ trước).
+                        : LocalDateTime.now().plusMinutes(hanRiengPhut)
+                                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS))
                 .build();
         return orderRepository.save(order);
     }
