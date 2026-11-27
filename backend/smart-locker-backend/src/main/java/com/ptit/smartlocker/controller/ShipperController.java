@@ -113,32 +113,6 @@ public class ShipperController {
         return ResponseEntity.ok(ApiResponse.ok("Lấy danh sách đơn chờ gửi thành công", response));
     }
 
-    @PostMapping("/orders/{orderId}/claim")
-    public ResponseEntity<ApiResponse<Void>> claimPendingOrder(
-            @PathVariable String orderId,
-            java.security.Principal principal) {
-        try {
-            shipperService.claimPendingOrder(orderId, principal.getName());
-            return ResponseEntity.ok(ApiResponse.ok("Đã nhận đơn giao hàng.", null));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
-    }
-
-    /**
-     * Xoá đơn PENDING đã tạo nhầm. Không cho xoá đơn đã nạp hoặc đang xử lý.
-     */
-    @DeleteMapping("/orders/{orderId}")
-    public ResponseEntity<ApiResponse<Void>> deletePendingOrder(
-            @PathVariable String orderId, java.security.Principal principal) {
-        try {
-            shipperService.deletePendingOrder(orderId, principal.getName());
-            return ResponseEntity.ok(ApiResponse.ok("Đã xoá đơn " + orderId + ".", null));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
-    }
-
     /**
      * T3 — Đặt trước một ngăn cụ thể cho đơn PENDING (shipper chọn trên WEB, Q2).
      *

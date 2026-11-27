@@ -552,30 +552,6 @@ public class ShipperService {
     }
 
     @Transactional
-    public void claimPendingOrder(String orderId, String shipperUsername) {
-        User shipper = userRepository.findByUsernameForUpdate(shipperUsername)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản shipper."));
-        if (!"SHIPPER".equals(shipper.getRole())) {
-            throw new IllegalArgumentException("Chỉ tài khoản shipper mới được nhận đơn.");
-        }
-
-        Order order = orderRepository.findByIdForShipperClaim(orderId)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng."));
-        if (!"PENDING".equals(order.getStatus()) && !"PENDING_OPENED".equals(order.getStatus())) {
-            throw new IllegalArgumentException("Đơn hàng không còn ở trạng thái chờ giao.");
-        }
-
-        User assignedShipper = order.getAssignedShipper();
-        if (assignedShipper != null && !assignedShipper.getId().equals(shipper.getId())) {
-            throw new IllegalArgumentException("Đơn hàng đã được shipper khác nhận.");
-        }
-        if (assignedShipper == null) {
-            throw new IllegalArgumentException(
-                    "Đơn chưa được Admin phân công. Shipper không thể tự nhận.");
-        }
-    }
-
-    @Transactional
     public OrderDTO.OrderResponse createOrderByAdmin(ShipperDTO.CreateOrderByAdminRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("Thiếu dữ liệu tạo đơn.");
@@ -970,60 +946,8 @@ public class ShipperService {
         return false;
     }
 
-    /**
-     * Xoá một đơn PENDING do shipper/admin thêm nhầm.
-     *
-     * <p>Chỉ cho phép xoá đơn chưa nạp. Nhả ngăn đang giữ và xoá mã nhận hàng
-     * đi kèm để dữ liệu không còn đơn mồ côi.
-     */
-    @Transactional
-    public void deletePendingOrder(String orderId, String shipperUsername) {
-        if (orderId == null || orderId.isBlank()) {
-            throw new IllegalArgumentException("Thiếu mã đơn hàng cần xoá!");
-        }
-
-        // Review bảo mật #7 — khoá dòng đơn để không xoá đè lúc admin đang chuyển phân công.
-        Order order = orderRepository.findByIdForUpdate(orderId.trim())
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đơn hàng: " + orderId));
-
-        if (order.getAssignedShipper() == null
-                || !order.getAssignedShipper().getUsername().equalsIgnoreCase(shipperUsername)) {
-            throw new IllegalArgumentException("Shipper không có quyền xoá đơn chưa thuộc phụ trách.");
-        }
-
-        if (!"PENDING".equalsIgnoreCase(order.getStatus())) {
-            throw new IllegalArgumentException(
-                    "Chỉ xoá được đơn đang chờ nạp. Đơn " + orderId
-                            + " hiện ở trạng thái " + order.getStatus() + ".");
-        }
-
-        Compartment compartment = order.getCompartment();
-
-        if (compartment != null) {
-            String compartmentStatus = compartment.getStatus();
-            if ("OCCUPIED".equalsIgnoreCase(compartmentStatus)
-                    || "OVERDUE".equalsIgnoreCase(compartmentStatus)) {
-                throw new IllegalArgumentException(
-                        "Không xoá được đơn " + orderId
-                                + " vì ngăn đang có hàng hoặc hàng quá hạn.");
-            }
-            compartment.setStatus("EMPTY");
-            compartmentRepository.save(compartment);
-        }
-
-        credentialRepository.findByOrder_OrderId(orderId.trim())
-                .ifPresent(credentialRepository::delete);
-
-        orderRepository.delete(order);
-    }
-
     @Transactional
     public void deletePendingOrderByAdmin(String orderId) {
-        deletePendingOrderCore(orderId);
-    }
-
-    @Transactional
-    public void deletePendingOrder(String orderId) {
         deletePendingOrderCore(orderId);
     }
 

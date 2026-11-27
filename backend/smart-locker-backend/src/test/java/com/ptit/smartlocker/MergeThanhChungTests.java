@@ -46,12 +46,12 @@ class MergeThanhChungTests {
     }
 
     @Test
-    @DisplayName("Q1: đơn SHIPPER tự tạo được gán cho chính shipper đó; ADMIN tạo qua checkout thì để trống")
-    void donShipperTuTaoDuocGanChoNguoiTao() {
+    @DisplayName("Chỉ Admin tạo đơn: checkout không tự gán shipper — phân công ở tab Đơn & phân công")
+    void checkoutKhongTuGanShipper() {
         String lockerId = lockerRepository.findAll().stream()
                 .filter(l -> !"MAINTENANCE".equalsIgnoreCase(l.getConnectionStatus()))
                 .findFirst().orElseThrow().getLockerId();
-        OrderDTO.CheckoutRequest req = OrderDTO.CheckoutRequest.builder()
+        OrderDTO.OrderResponse res = orderService.createOrder(OrderDTO.CheckoutRequest.builder()
                 .customerName("Khách gộp")
                 .customerPhone("0912345678")
                 .deliveryType("LOCKER")
@@ -59,15 +59,9 @@ class MergeThanhChungTests {
                 .deliveryDate(LocalDate.now())
                 .productName("Kiện gộp")
                 .totalAmount(BigDecimal.valueOf(1000))
-                .build();
+                .build());
 
-        OrderDTO.OrderResponse cuaShipper = orderService.createOrder(req, "shipper");
-        Order luu = orderRepository.findById(cuaShipper.getOrderId()).orElseThrow();
-        assertNotNull(luu.getAssignedShipper());
-        assertEquals("shipper", luu.getAssignedShipper().getUsername());
-        assertEquals("shipper", cuaShipper.getAssignedShipperUsername());
-
-        OrderDTO.OrderResponse cuaAdmin = orderService.createOrder(req, "admin");
-        assertNull(orderRepository.findById(cuaAdmin.getOrderId()).orElseThrow().getAssignedShipper());
+        assertNull(orderRepository.findById(res.getOrderId()).orElseThrow().getAssignedShipper());
+        assertNull(res.getAssignedShipperUsername());
     }
 }

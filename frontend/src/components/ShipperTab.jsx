@@ -4,16 +4,15 @@ import { QRCodeSVG } from 'qrcode.react';
 // File `CircularTimer.jsx` VẪN GIỮ vì `CustomerPickupTab` + `ShipperRecallTab` còn dùng cho OTP khách.
 import LockerCabinetVisualizer from './LockerCabinetVisualizer';
 import { store } from '../services/store';
-import { shipperApi, lockerApi, orderApi } from '../services/api';
+import { shipperApi, lockerApi } from '../services/api';
 // GĐ40 — suy trạng thái tủ từ `lastHeartbeat` (dùng chung với màn admin, không tự viết ngưỡng mới).
 import { getLockerHealth } from '../utils/lockerHealth';
-import { ngayDiaPhuong } from '../utils/dateTime';
 import {
   Truck, QrCode, Timer, ShieldCheck, CheckCircle2, AlertTriangle,
   RefreshCw, MapPin, Package, Check, Box, AlertCircle, X,
   DoorOpen, Weight, Layers, ArrowRight, User, PackageX,
   Barcode, Scan, Camera, Sparkles, ChevronRight,
-  Shield, Volume2, Cpu, Clock, PlusCircle, Trash2
+  Shield, Volume2, Cpu, Clock
 } from 'lucide-react';
 
 /**
@@ -98,16 +97,8 @@ function DepositSteps({ buocHienTai }) {
 export default function ShipperTab({ currentUser, onNavigateToRecall }) {
   const [orders, setOrders] = useState([]);
   const [allLockers, setAllLockers] = useState([]);
-  const [sampleToast, setSampleToast] = useState(null);
   const [depositFailureInfo, setDepositFailureInfo] = useState(null);
 
-  // GĐ21 — danh sách khách để chọn khi tạo đơn hộ. TRƯỚC ĐÂY hàm tạo đơn ghi cứng
-  // "Đoàn Viết Hoàng / 0988123456" nên mọi đơn tạo từ màn shipper đều gán cho đúng một người,
-  // bất kể khách thật là ai. Nay đọc từ `GET /api/shipper/customers`.
-  const [customers, setCustomers] = useState([]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
-  const [loadingCustomers, setLoadingCustomers] = useState(true);
-  const [customersError, setCustomersError] = useState(null);
   const [selectedLockerFilter, setSelectedLockerFilter] = useState('ALL');
   const [selectedOrderId, setSelectedOrderId] = useState(null);
 
@@ -288,10 +279,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     // GĐ40 — tải danh sách tủ THẬT từ API để có `lastHeartbeat`/`isVirtual` (cache localStorage
     // không có nhịp tim, dùng nó sẽ ra telemetry sai). Chỉ để hiện header sơ đồ, không đổi luồng đơn.
     loadLockerTelemetry();
-    // GĐ21 — nạp danh sách khách MỘT LẦN cho hộp chọn "+ Thêm đơn" (không gọi lại mỗi lần bấm).
-    // Gộp ThanhChung (Q1) — bản ThanhChung gỡ cả nút lẫn lời gọi này; gắn lại cùng nút.
-    loadCustomers();
-
     const handleUpdate = () => {
       loadOrders();
       setAllLockers(store.getLockers());
@@ -370,15 +357,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
       return true;
     }
 
-    try {
-      await shipperApi.claimPendingOrder(orderId);
-    } catch (err) {
-      setSampleToast(err?.response?.data?.message || 'Không thể nhận đơn này.');
-      setTimeout(() => setSampleToast(null), 5000);
-      await loadOrders();
-      return false;
-    }
-
     setSelectedOrderId(orderId);
     if (!isDepositing) {
       setScannedBarcode(null);
@@ -386,130 +364,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
     }
     await loadOrders();
     return true;
-  };
-
-  /**
-   * GĐ21 — nạp danh sách khách MỘT LẦN khi mở tab.
-   *
-   * <p>Mặc định chọn khách ĐẦU TIÊN backend trả — không tự chọn tên ai trong code. Nếu API lỗi
-   * hoặc danh sách rỗng thì để `customersError` bật cờ, nút "+ Thêm đơn" sẽ bị tắt kèm lý do;
-   * TUYỆT ĐỐI không rơi về một tên mặc định (đó chính là lỗi thẻ này muốn bỏ).
-   */
-  const loadCustomers = async () => {
-    setLoadingCustomers(true);
-    try {
-      const res = await shipperApi.getCustomers();
-      const list = res?.data?.data || [];
-      setCustomers(list);
-      setCustomersError(list.length === 0 ? 'Hệ thống chưa có tài khoản khách hàng nào.' : null);
-      setSelectedCustomerId((prev) => {
-        if (prev != null && list.some((c) => c.userId === prev)) return prev;
-        return list.length > 0 ? list[0].userId : null;
-      });
-    } catch (err) {
-      setCustomers([]);
-      setSelectedCustomerId(null);
-      setCustomersError(
-        err?.response?.data?.message
-          || 'Không tải được danh sách khách hàng. Kiểm tra backend đang chạy và đăng nhập SHIPPER.'
-      );
-    } finally {
-      setLoadingCustomers(false);
-    }
-  };
-
-  const handleDeletePendingOrder = async (orderId) => {
-    if (!orderId) return;
-    try {
-      await shipperApi.deletePendingOrder(orderId);
-      if (selectedOrderId === orderId) setSelectedOrderId(null);
-      await loadOrders();
-      setSampleToast(`Đã xoá đơn ${orderId}.`);
-      setTimeout(() => setSampleToast(null), 3500);
-    } catch (err) {
-      setSampleToast(
-        err?.response?.data?.message
-          || `Không xoá được đơn ${orderId}.`
-      );
-      setTimeout(() => setSampleToast(null), 5000);
-    }
-  };
-
-  const handleCreateSampleOrder = async () => {
-    const sampleProducts = [
-      { name: 'Áo Hoodie PTIT Sinh Viên 2026', price: 280000, size: 'S' },
-      { name: 'Tai nghe Bluetooth True Wireless Pro', price: 450000, size: 'S' },
-      { name: 'Balo Laptop Chống Nước PTIT', price: 520000, size: 'L' },
-      { name: 'Chuột Công Thái Học Không Dây Logitech MX Master', price: 650000, size: 'S' },
-      { name: 'Pin Sạc Dự Phòng Polymer 20.000mAh 22.5W', price: 380000, size: 'S' },
-      { name: 'Bình Giữ Nhiệt Thông Minh LED 500ml', price: 195000, size: 'S' },
-      { name: 'Bàn Phím Cơ Không Dây RGB Low-Profile', price: 850000, size: 'L' },
-    ];
-    const randProd = sampleProducts[Math.floor(Math.random() * sampleProducts.length)];
-
-    // GĐ21 — bắt buộc có khách được chọn. Không có thì dừng hẳn, KHÔNG rơi về tên mặc định.
-    const chosen = customers.find((c) => c.userId === selectedCustomerId) || null;
-    if (!chosen) {
-      setSampleToast(
-        customersError
-          ? `Không tạo được đơn: ${customersError}`
-          : 'Không tạo được đơn: chưa chọn khách hàng.'
-      );
-      setTimeout(() => setSampleToast(null), 5000);
-      return;
-    }
-
-    const chosenLocker = allLockers.find((lk) => lk.lockerId === selectedLockerFilter) || null;
-    if (!chosenLocker) {
-      setSampleToast('Không tạo được đơn: chưa chọn tủ giao hàng.');
-      setTimeout(() => setSampleToast(null), 5000);
-      return;
-    }
-
-    try {
-      // 1. Gửi request tạo đơn hàng thật vào Backend CSDL
-      // GĐ72 (#4) — ngày theo giờ máy; toISOString() là UTC nên 00:00–06:59 giờ VN ra hôm qua.
-      const today = ngayDiaPhuong();
-      const res = await orderApi.checkout({
-        customerName: chosen.fullName,
-        customerPhone: chosen.phone,
-        deliveryType: 'LOCKER',
-        lockerId: chosenLocker.lockerId,
-        deliveryDate: today,
-        productName: randProd.name,
-        // GĐ21 (1c) — KHÔNG gửi `requiredSize` nữa: GĐ18 đã bỏ phân biệt size nên field này
-        // không còn tác dụng. Backend vẫn nhận (giữ tương thích) nhưng gửi lên chỉ gây hiểu nhầm.
-        totalAmount: randProd.price,
-        paymentMethod: 'ONLINE_VIETQR',
-        paymentStatus: 'PAID',
-      });
-
-      if (res?.data?.success && res.data.data) {
-        const ord = res.data.data;
-        // GĐ13 — ĐÃ XOÁ `store.createOrder({...})` ở đây.
-        //
-        // `POST /api/orders/checkout` đã tạo đơn THẬT trong CSDL và trả về `ord`. Chép thêm một
-        // bản vào localStorage là dựng nguồn sự thật thứ hai: nó khác dần DB (không có cập nhật
-        // trạng thái sau đó), và nếu `loadOrders()` lỗi thì UI hiện bản sao cũ này như đơn thật.
-        // Đơn mới hiện ra bằng `await loadOrders()` ngay bên dưới — đọc thẳng từ API.
-        await loadOrders();
-        // GĐ21 — thông báo nêu TÊN KHÁCH VỪA CHỌN, không ghi cứng tên ai.
-        setSampleToast(
-          `Đã tạo đơn THẬT ${ord.orderId} cho ${chosen.fullName} (${chosen.phone}). Chọn đơn để nhận giao.`
-        );
-        setTimeout(() => setSampleToast(null), 3500);
-        return;
-      }
-
-    } catch (err) {
-      console.warn('[ShipperTab] Gọi API checkout thất bại, dùng đơn mẫu trong trình duyệt:', err?.message);
-      setSampleToast(
-        err?.response?.data?.message
-          || 'Không tạo được đơn. Máy chủ từ chối hoặc backend không phản hồi.'
-      );
-      setTimeout(() => setSampleToast(null), 5000);
-      return;
-    }
   };
 
   /**
@@ -1267,38 +1121,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
               Hàng Chờ Nạp ({filteredPending.length})
             </span>
             <div className="flex items-center gap-2">
-              {/* GĐ21 — CHỌN KHÁCH HÀNG cho đơn tạo hộ.
-                  Trước đây không có hộp này và hàm tạo đơn ghi cứng "Đoàn Viết Hoàng", nên mọi
-                  đơn tạo từ màn shipper đều gán cho đúng một khách dù khách thật là ai. */}
-              <select
-                value={selectedCustomerId ?? ''}
-                onChange={(e) => setSelectedCustomerId(Number(e.target.value))}
-                disabled={loadingCustomers || customers.length === 0}
-                className="text-[11px] bg-white/90 backdrop-blur-md border border-slate-200/90 rounded-xl px-2 py-1.5 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs cursor-pointer max-w-[190px] truncate disabled:opacity-50"
-                title={customersError || 'Chọn khách hàng sẽ nhận đơn này'}
-              >
-                {loadingCustomers && <option value="">Đang tải khách…</option>}
-                {!loadingCustomers && customers.length === 0 && (
-                  <option value="">Không có khách hàng</option>
-                )}
-                {customers.map((c) => (
-                  <option key={c.userId} value={c.userId}>
-                    {c.fullName} · {c.phone}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                onClick={handleCreateSampleOrder}
-                disabled={loadingCustomers || customers.length === 0}
-                className="ios-btn text-[11px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                title={customersError || 'Tạo thêm 1 đơn hàng chờ nạp cho khách đã chọn'}
-              >
-                <PlusCircle className="w-3.5 h-3.5" />
-                <span>+ Thêm đơn</span>
-              </button>
-
               <select
                 value={selectedLockerFilter}
                 onChange={(e) => setSelectedLockerFilter(e.target.value)}
@@ -1321,20 +1143,6 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
             </div>
           )}
 
-          {sampleToast && (
-            <div className="p-2.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-xl flex items-center justify-between animate-in fade-in duration-200 shadow-2xs">
-              <div className="flex items-center gap-1.5 font-medium truncate">
-                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
-                <span className="truncate">{sampleToast}</span>
-              </div>
-              <button
-                onClick={() => setSampleToast(null)}
-                className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer ml-1"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
 
           <div className="space-y-3 max-h-[750px] overflow-y-auto pr-1">
             {filteredPending.length === 0 ? (
@@ -1362,10 +1170,7 @@ export default function ShipperTab({ currentUser, onNavigateToRecall }) {
                         {ord.orderId}
                       </span>
                       <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full border border-amber-200">
-                        {/* Gộp ThanhChung (Q1) — hàng chờ chỉ có đơn giao cho chính shipper này, do
-                            Admin phân công HOẶC do shipper tự tạo; nhãn cũ "Đơn Admin phân công" sai
-                            với trường hợp sau. */}
-                        Đã giao cho bạn
+                        Đơn Admin phân công
                       </span>
                     </div>
 

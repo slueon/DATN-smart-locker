@@ -155,8 +155,6 @@ export const shipperApi = {
   generateToken: () => api.post('/shipper/token/generate'),
   verifyToken: (lockerId, dynamicToken) => api.post('/shipper/token/verify', { lockerId, dynamicToken }),
   depositPackage: (data) => api.post('/shipper/deposit', data),
-  deletePendingOrder: (orderId) =>
-    api.delete(`/shipper/orders/${encodeURIComponent(orderId)}`),
   getOverdueOrders: (lockerId) => api.get(`/shipper/overdue-orders${lockerId ? `?lockerId=${lockerId}` : ''}`),
 
   /**
@@ -195,14 +193,10 @@ export const shipperApi = {
   // T3 — đặt trước ngăn trên web.
   getPendingOrders: (lockerId) =>
     api.get('/shipper/orders/pending' + (lockerId ? '?lockerId=' + encodeURIComponent(lockerId) : '')),
-  claimPendingOrder: (orderId) =>
-    api.post('/shipper/orders/' + encodeURIComponent(orderId) + '/claim'),
-
   /**
-   * GĐ21 — danh sách khách hàng để shipper chọn khi tạo đơn hộ.
-   *
-   * Trước đây màn "+ Thêm đơn" ghi cứng một khách nên mọi đơn tạo từ shipper đều gán cho cùng
-   * một người. Trả `{userId, fullName, phone}` — backend cố ý không trả `password`/`role`.
+   * GĐ21 — danh sách khách hàng cho nút "Thêm đơn quá hạn" ở tab Thu hồi (đơn thường do Admin
+   * tạo ở tab "Đơn & phân công"; shipper không còn "+ Thêm đơn").
+   * Trả `{userId, fullName, phone}` — backend cố ý không trả `password`/`role`.
    */
   getCustomers: () => api.get('/shipper/customers'),
   reserveCompartment: (orderId, body) =>

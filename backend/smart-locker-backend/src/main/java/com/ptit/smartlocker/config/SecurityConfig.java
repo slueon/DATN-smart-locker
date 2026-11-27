@@ -174,7 +174,7 @@ public class SecurityConfig {
                 // --- Nghiệp vụ khách hàng & tạo đơn ---
                 // GĐ11 — khách KHÔNG còn checkout: mô hình mới là khách chỉ NHẬN hàng, shipper
                 // chọn tủ rồi nạp hàng. Mở lại cho CUSTOMER là quay về mô hình thương mại điện tử.
-                .requestMatchers(HttpMethod.POST, "/api/orders/checkout").hasAnyRole("SHIPPER", "ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/orders/checkout").hasRole("ADMIN") // chỉ Admin tạo đơn; shipper bỏ "+ Thêm đơn"
                 .requestMatchers(HttpMethod.POST, "/api/pickup/**").hasRole("CUSTOMER")
 
                 // --- Nghiệp vụ shipper ---
@@ -206,10 +206,6 @@ public class SecurityConfig {
                         .hasRole("SHIPPER")
                 // T3: đặt trước ngăn. Thiếu 3 dòng này là 403 vì anyRequest().denyAll() ở dưới.
                 .requestMatchers(HttpMethod.GET, "/api/shipper/orders/pending").hasRole("SHIPPER")
-                .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/claim").hasRole("SHIPPER")
-                // Gộp ThanhChung (review #1) — shipper xoá đơn PENDING tạo nhầm; thiếu dòng này là 403.
-                // Service tự chặn IDOR (chỉ xoá đơn được phân công cho chính mình).
-                .requestMatchers(HttpMethod.DELETE, "/api/shipper/orders/*").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.POST, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.DELETE, "/api/shipper/orders/*/reserve").hasRole("SHIPPER")
                 .requestMatchers(HttpMethod.GET, "/api/shipper/overdue-orders").hasAnyRole("SHIPPER", "ADMIN")

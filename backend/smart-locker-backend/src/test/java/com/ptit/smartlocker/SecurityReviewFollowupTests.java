@@ -205,13 +205,13 @@ class SecurityReviewFollowupTests {
     }
 
     @Test
-    @DisplayName("#7: xoá đơn PENDING cũng chờ khoá dòng đơn")
+    @DisplayName("#7: admin xoá đơn PENDING cũng chờ khoá dòng đơn (shipper không còn quyền xoá)")
     void xoaDonChoKhoa() throws Exception {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         CountDownLatch daKhoa = new CountDownLatch(1);
         CountDownLatch thaKhoa = new CountDownLatch(1);
 
-        // Luồng A giả lập admin đang chuyển phân công đơn sang shipper khác.
+        // Luồng A giữ khoá dòng đơn rồi chuyển đơn sang DEPOSITED (giả lập shipper vừa nạp xong).
         CompletableFuture<Void> luongA = CompletableFuture.runAsync(() -> tx.executeWithoutResult(s -> {
             Order o = orderRepository.findByIdForUpdate(ORD_PENDING).orElseThrow();
             daKhoa.countDown();
@@ -221,13 +221,13 @@ class SecurityReviewFollowupTests {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException(e);
             }
-            o.setAssignedShipper(userRepository.findByUsername(OTHER_USERNAME).orElseThrow());
+            o.setStatus("DEPOSITED");
             orderRepository.save(o);
         }));
         assertTrue(daKhoa.await(10, TimeUnit.SECONDS));
 
         CompletableFuture<Void> luongB = CompletableFuture.runAsync(
-                () -> shipperService.deletePendingOrder(ORD_PENDING, "shipper"));
+                () -> shipperService.deletePendingOrderByAdmin(ORD_PENDING));
         Thread.sleep(700);
         assertFalse(luongB.isDone(), "Xoá đơn phải chờ khoá dòng đơn");
 
@@ -236,7 +236,7 @@ class SecurityReviewFollowupTests {
 
         ExecutionException ex = assertThrows(ExecutionException.class, () -> luongB.get(15, TimeUnit.SECONDS));
         assertInstanceOf(IllegalArgumentException.class, ex.getCause(),
-                "Shipper cũ không còn quyền xoá sau khi đơn đã chuyển: " + ex.getCause());
+                "Sau khi A commit, admin phải đọc lại DEPOSITED và bị chặn xoá: " + ex.getCause());
         assertTrue(orderRepository.findById(ORD_PENDING).isPresent(), "Đơn không được bị xoá");
     }
 
