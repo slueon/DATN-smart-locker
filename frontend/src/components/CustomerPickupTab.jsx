@@ -1279,20 +1279,6 @@ export default function CustomerPickupTab({ currentUser, lockerFilterId = null }
                       <span className="flex items-center gap-1">
                         <MapPin className="w-3.5 h-3.5 text-blue-500" /> {ord.lockerName || 'Tủ KTX A1'}
                       </span>
-                      <div className="flex items-center gap-1.5">
-                        {ord.paymentStatus === 'PAID' ? (
-                          <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded font-bold">
-                            Đã TT
-                          </span>
-                        ) : (
-                          <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.2 rounded font-bold">
-                            COD
-                          </span>
-                        )}
-                        <span className="font-mono font-bold text-slate-800">
-                          {new Intl.NumberFormat('vi-VN').format(ord.totalAmount || 0)} đ
-                        </span>
-                      </div>
                     </div>
                   </div>
                 );
@@ -1320,19 +1306,6 @@ export default function CustomerPickupTab({ currentUser, lockerFilterId = null }
                   <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-1.5">
                     {selectedOrder.productName || 'Kiện hàng Smart Locker'}
                   </h3>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    {selectedOrder.paymentStatus === 'PAID' ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Đã thanh toán Online ({selectedOrder.paymentMethod?.replace('ONLINE_', '') || 'VietQR'})
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-lg">
-                        <Clock className="w-3.5 h-3.5 text-amber-600" />
-                        Thanh toán COD khi nhận hàng
-                      </span>
-                    )}
-                  </div>
                 </div>
 
                 <div>
