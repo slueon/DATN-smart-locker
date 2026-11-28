@@ -41,7 +41,6 @@ export default function AdminTab({ currentUser }) {
     totalSlots: 20,
     deliveredCount: 0,
     overdueCount: 0,
-    totalRevenue: 0,
   });
 
   const [lockers, setLockers] = useState([]);
@@ -67,7 +66,6 @@ export default function AdminTab({ currentUser }) {
     lockerId: '',
     shipperUserId: '',
     productName: '',
-    totalAmount: '',
   });
   const [orderBusy, setOrderBusy] = useState(false);
   const [orderMessage, setOrderMessage] = useState(null);
@@ -147,7 +145,6 @@ export default function AdminTab({ currentUser }) {
       // giữ số cũ nếu lỗi thay vì ghi đè bằng 0.
       let deliveredCount = 0;
       let overdueCount = 0;
-      let totalRevenue = 0;
       try {
         const ordersRes = await adminApi.getOrders('ALL');
         const apiOrders = ordersRes?.data?.data || [];
@@ -156,7 +153,6 @@ export default function AdminTab({ currentUser }) {
           (o) => o.status === 'DEPOSITED' || o.status === 'COMPLETED'
         ).length;
         overdueCount = apiOrders.filter((o) => o.status === 'OVERDUE').length;
-        totalRevenue = apiOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0);
       } catch (orderErr) {
         // 403 (không phải ADMIN) / mất mạng: giữ số 0 thay vì bịa, và nói rõ trong console.
         console.warn('[AdminTab] Không tải được danh sách đơn:', orderErr?.message);
@@ -168,7 +164,6 @@ export default function AdminTab({ currentUser }) {
         totalSlots,
         deliveredCount,
         overdueCount,
-        totalRevenue,
       });
     } catch (err) {
       // Mất mạng / 401: giữ số liệu cũ trên màn hình thay vì xoá trắng dashboard.
@@ -301,7 +296,8 @@ export default function AdminTab({ currentUser }) {
         lockerId: orderForm.lockerId,
         shipperUserId: orderForm.shipperUserId ? Number(orderForm.shipperUserId) : null,
         productName: orderForm.productName.trim(),
-        totalAmount: orderForm.totalAmount ? Number(orderForm.totalAmount) : 0,
+        // Web không còn hiển thị/nhập tiền: luôn gửi 0 (cột total_amount vẫn giữ ở backend).
+        totalAmount: 0,
         paymentMethod: 'ONLINE_VIETQR',
         paymentStatus: 'PAID',
       });
@@ -318,7 +314,6 @@ export default function AdminTab({ currentUser }) {
       setOrderForm((prev) => ({
         ...prev,
         productName: '',
-        totalAmount: '',
       }));
       refreshAllData();
     } catch (err) {
@@ -675,7 +670,7 @@ export default function AdminTab({ currentUser }) {
       {/* TAB 1: KPI OVERVIEW */}
       {activeAdminSubTab === 'kpi' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md relative overflow-hidden">
               <div className="flex justify-between items-center text-xs font-bold text-slate-600 uppercase tracking-wider">
                 <span>Tỷ lệ lấp đầy tủ</span>              </div>
@@ -730,17 +725,6 @@ export default function AdminTab({ currentUser }) {
               </div>
             </div>
 
-            <div className="liquid-glass-card p-5 sm:p-6 rounded-3xl border border-white/90 shadow-md">
-              <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                Tổng giá trị đơn hàng
-              </div>
-              <div className="text-2xl font-extrabold text-slate-900 mt-2 font-mono">
-                {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(kpi.totalRevenue)}
-              </div>
-              <div className="text-xs text-slate-600 mt-2.5 font-medium">
-                Từ các giao dịch qua trạm tủ PTIT
-              </div>
-            </div>
           </div>
 
           {/* Station Occupancy Overview — GĐ49d: TÁCH "Tủ thật" (lên đầu) và "Tủ ảo (demo)".
@@ -898,18 +882,6 @@ export default function AdminTab({ currentUser }) {
                 value={orderForm.productName}
                 onChange={(e) => setOrderForm((prev) => ({ ...prev, productName: e.target.value }))}
                 placeholder="VD: Pin sạc dự phòng"
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
-              />
-            </label>
-
-            <label className="block space-y-1">
-              <span className="text-[11px] font-bold text-slate-700">Tổng tiền</span>
-              <input
-                type="number"
-                min="0"
-                value={orderForm.totalAmount}
-                onChange={(e) => setOrderForm((prev) => ({ ...prev, totalAmount: e.target.value }))}
-                placeholder="0"
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
               />
             </label>
